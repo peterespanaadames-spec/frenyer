@@ -1,0 +1,1 @@
+import {Card} from '../ui/Card'; export function Kpi({label,value,change}:{label:string;value:string;change:string}){return <Card><div className="kpi-label">{label}</div><div className="kpi-value">{value}</div><div className="positive" style={{fontSize:12}}>{change}</div></Card>}

@@ -1,0 +1,1 @@
+import type {ReactNode} from 'react'; export function Badge({children,tone='brand'}:{children:ReactNode;tone?:'brand'|'success'|'warning'|'danger'}){return <span className={`badge ${tone}`}>{children}</span>}

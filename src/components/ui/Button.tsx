@@ -1,0 +1,1 @@
+import type {ButtonHTMLAttributes,ReactNode} from 'react'; export function Button({children,variant='secondary',...p}:{children:ReactNode;variant?:'primary'|'secondary'|'ghost'}&ButtonHTMLAttributes<HTMLButtonElement>){return <button className={`btn ${variant}`} {...p}>{children}</button>}
