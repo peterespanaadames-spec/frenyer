@@ -184,8 +184,7 @@ export function SuppliersPage() {
         }
       } else {
         const created = await createSupplierInSupabase({
-          ...payload,
-          code: `PRV-${Math.floor(1000 + Math.random() * 9000)}`
+          ...payload
         });
         if (created) {
           showToast('✅ Proveedor registrado con éxito.');

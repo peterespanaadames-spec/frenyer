@@ -1,2 +1,18 @@
-import { MessageCircle, Send, ShieldCheck } from 'lucide-react'; import { Card } from '../../../components/ui/Card'; import { Button } from '../../../components/ui/Button';
-export function Alma(){const suggestions=['¿Cuánto vendí hoy?','¿Cuáles son mis productos con bajo stock?','¿Cuánto debo cobrar esta semana?','¿Qué clientes tienen saldo vencido?','¿Cuál fue mi margen este mes?'];return <div className="content"><div className="page-head"><div><h1>Alma</h1><p>Tu copiloto para consultar la operación de Frenyer.</p></div><div className="badge brand"><ShieldCheck size={13}/> Consultas protegidas</div></div><div className="grid grid-2"><Card className="alma-chat"><div className="alma-title"><div className="avatar"><MessageCircle size={18}/></div><div><b>Alma</b><div className="muted small">Asistente de negocio</div></div></div><div className="bubble assistant">Hola. Puedo ayudarte a consultar ventas, inventario, cuentas por cobrar y otros indicadores disponibles para tu empresa. ¿Qué quieres saber?</div><div className="bubble hint">Ejemplo: “¿Cuáles fueron mis cinco productos más vendidos esta semana?”</div><div className="chat-input"><input className="input" placeholder="Escribe una consulta..."/><Button variant="primary"><Send size={16}/>Enviar</Button></div></Card><Card><h3>Consultas sugeridas</h3>{suggestions.map(q=><button key={q} className="btn suggestion">{q}</button>)}<div className="notice">Alma debe consultar herramientas autorizadas del servidor. No tiene acceso directo a credenciales ni ejecuta SQL arbitrario.</div></Card></div></div>}
+import { EmptyState } from '../../../components/ui/EmptyState';
+
+export function Alma() {
+  return (
+    <div className="content">
+      <div className="page-head">
+        <div>
+          <h1>Alma</h1>
+          <p>Asistente inteligente corporativo.</p>
+        </div>
+      </div>
+      <EmptyState
+        title="El asistente no está conectado"
+        description="El chat estará disponible cuando las herramientas autorizadas del servidor estén configuradas."
+      />
+    </div>
+  );
+}

@@ -22,6 +22,7 @@ import { Badge } from '../../../components/ui/Badge';
 import { formatUSD, formatVES, getActiveExchangeRate } from '../../../lib/currency';
 import { supabase } from '../../../lib/supabase/client';
 import { authenticatedFetch } from '../../../lib/supabase/api';
+import { getActiveOrgId } from '../../../lib/supabase/db';
 
 interface ReceivableRecord {
   id: string;
@@ -72,13 +73,9 @@ export function Accounts() {
   const [isExportDropdownOpen, setIsExportDropdownOpen] = useState(false);
 
   // Manual Account Form State
-  const [manualType, setManualType] = useState<'CxC' | 'CxP'>('CxC');
   const [manualEntity, setManualEntity] = useState('');
-  const [manualConcept, setManualConcept] = useState('');
-  const [manualDescription, setManualDescription] = useState('');
+  const [manualDocNumber, setManualDocNumber] = useState('');
   const [manualTotal, setManualTotal] = useState('');
-  const [manualInitial, setManualInitial] = useState('');
-  const [manualIssueDate, setManualIssueDate] = useState(new Date().toISOString().slice(0, 10));
   const [manualDueDate, setManualDueDate] = useState('');
 
   // Payment Modal State
@@ -116,75 +113,42 @@ export function Accounts() {
         `)
         .order('created_at', { ascending: false });
 
-      if (!error && data && data.length > 0) {
-        const mapped: ReceivableRecord[] = data.map((item: any) => {
-          const total = Number(item.total_usd) || Number(item.total_amount) || 0;
+      if (error) {
+        throw error;
+      }
+
+      const mapped: ReceivableRecord[] = (data || []).map((item: any) => {
+          const total = Number(item.total_usd ?? item.total_amount ?? 0);
           const history = (item.receivable_payments || []).map((p: any) => ({
-            date: p.payment_date ? p.payment_date.slice(0, 10) : new Date().toISOString().slice(0, 10),
+            date: p.payment_date ? p.payment_date.slice(0, 10) : '',
             amount: Number(p.amount_usd) || 0,
-            bank_name: p.payment_method || 'Banco',
-            ref: p.reference || 'S/R'
+            bank_name: p.payment_method || '',
+            ref: p.reference || ''
           }));
           const paidFromHistory = history.reduce((sum: number, h: any) => sum + h.amount, 0);
-          const balance = Number(item.balance_usd) !== undefined && !isNaN(Number(item.balance_usd)) 
-            ? Number(item.balance_usd) 
+          const balance = item.balance_usd != null && Number.isFinite(Number(item.balance_usd))
+            ? Number(item.balance_usd)
             : Math.max(0, total - paidFromHistory);
           const paid = total - balance;
           const st = balance <= 0 || item.status === 'PAGADO' || item.status === 'Pagada' ? 'Pagada' : balance < total && balance > 0 ? 'Parcial' : 'Pendiente';
 
           return {
             id: item.id,
-            customer_name: item.customers?.name || item.customer_name || 'Cliente General',
-            doc_number: item.doc_number || 'FAC-0001',
-            concept: item.concept || `Venta a crédito (${item.doc_number || 'Factura'})`,
+            customer_name: item.customers?.name || item.customer_name || '',
+            doc_number: item.doc_number || '',
+            concept: item.concept || '',
             total_amount: total,
             paid_amount: paid,
             remaining_amount: balance,
-            issue_date: item.created_at ? item.created_at.slice(0, 10) : new Date().toISOString().slice(0, 10),
-            due_date: item.due_date || new Date(Date.now() + 15 * 86400000).toISOString().slice(0, 10),
+            issue_date: item.created_at ? item.created_at.slice(0, 10) : '',
+            due_date: item.due_date || '',
             status: st,
             type: 'CxC',
-            description: item.description || `Crédito asociado a documento ${item.doc_number}`,
+            description: item.description || '',
             payments_history: history
           };
         });
-        setAccounts(mapped);
-      } else {
-        // Fallback demo records if empty
-        const defaultDemo: ReceivableRecord[] = [
-          {
-            id: '1',
-            customer_name: 'Distribuciones Norte',
-            doc_number: 'FAC-203',
-            concept: 'Factura #203 - Suministros',
-            total_amount: 1240.00,
-            paid_amount: 0,
-            remaining_amount: 1240.00,
-            issue_date: '2026-10-04',
-            due_date: '2026-10-10',
-            status: 'Pendiente',
-            type: 'CxC',
-            description: 'Venta a crédito de suministros de ferretería.',
-            payments_history: []
-          },
-          {
-            id: '2',
-            customer_name: 'Inversiones Delta',
-            doc_number: 'FAC-198',
-            concept: 'Factura #198 - Repuestos',
-            total_amount: 820.00,
-            paid_amount: 0,
-            remaining_amount: 820.00,
-            issue_date: '2026-10-01',
-            due_date: '2026-10-08',
-            status: 'Pendiente',
-            type: 'CxC',
-            description: 'Compra de repuestos para motor.',
-            payments_history: []
-          }
-        ];
-        setAccounts(defaultDemo);
-      }
+      setAccounts(mapped);
     } catch {
       showToast('Error cargando cuentas por cobrar.', 'info');
     } finally {
@@ -221,89 +185,57 @@ export function Accounts() {
   // Handle Save Manual Account
   const handleSaveManualAccount = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!manualEntity.trim() || !manualTotal) {
-      showToast('Complete la entidad y el monto total.', 'info');
+    const total = Number(manualTotal);
+    if (!manualEntity.trim() || !manualDocNumber.trim() || !Number.isFinite(total) || total <= 0) {
+      showToast('Selecciona un cliente registrado, indica el documento y un monto mayor a cero.', 'info');
       return;
     }
 
-    const total = parseFloat(manualTotal) || 0;
-    const initial = parseFloat(manualInitial) || 0;
-    const remaining = Math.max(0, total - initial);
-
-    const newRecord: ReceivableRecord = {
-      id: 'acc_' + Date.now(),
-      customer_name: manualEntity.trim(),
-      doc_number: `DOC-${Math.floor(Math.random() * 9000 + 1000)}`,
-      concept: manualConcept.trim() || 'Cuenta manual',
-      total_amount: total,
-      paid_amount: initial,
-      remaining_amount: remaining,
-      issue_date: manualIssueDate,
-      due_date: manualDueDate || new Date(Date.now() + 15 * 86400000).toISOString().slice(0, 10),
-      status: remaining === 0 ? 'Pagada' : initial > 0 ? 'Parcial' : 'Pendiente',
-      type: manualType,
-      description: manualDescription.trim(),
-      payments_history: initial > 0 ? [{ date: manualIssueDate, amount: initial, bank_name: 'Abono Inicial', ref: 'INI-01' }] : []
-    };
-
     try {
-      const { data: orgData } = await supabase.from('organizations').select('id').limit(1).single();
-      const orgId = orgData?.id || '00000000-0000-0000-0000-000000000000';
+      const organizationId = await getActiveOrgId();
+      if (!organizationId) {
+        throw new Error('Inicia sesión con una membresía válida para registrar la cuenta.');
+      }
 
-      let customerId: string | null = null;
-      const { data: existingCust } = await supabase
+      const { data: customer, error: customerError } = await supabase
         .from('customers')
         .select('id')
+        .eq('organization_id', organizationId)
         .eq('name', manualEntity.trim())
-        .limit(1)
-        .single();
-
-      if (existingCust) {
-        customerId = existingCust.id;
-      } else {
-        const { data: newCust } = await supabase
-          .from('customers')
-          .insert({
-            organization_id: orgId,
-            name: manualEntity.trim(),
-            doc_number: 'V-' + Math.floor(Math.random() * 9000000 + 1000000),
-            phone: '0414-0000000'
-          })
-          .select('id')
-          .single();
-        if (newCust) customerId = newCust.id;
+        .maybeSingle();
+      if (customerError) {
+        throw customerError;
+      }
+      if (!customer) {
+        throw new Error('El cliente no existe en esta organización. Regístralo primero en Clientes.');
       }
 
-      if (customerId) {
-        const { data: insertedRec } = await supabase
-          .from('accounts_receivable')
-          .insert({
-            organization_id: orgId,
-            customer_id: customerId,
-            doc_number: newRecord.doc_number,
-            total_usd: newRecord.total_amount,
-            balance_usd: newRecord.remaining_amount,
-            status: newRecord.status === 'Pagada' ? 'PAGADO' : newRecord.status === 'Parcial' ? 'PARCIAL' : 'PENDIENTE',
-            due_date: newRecord.due_date
-          })
-          .select('id')
-          .single();
-
-        if (insertedRec) newRecord.id = insertedRec.id;
+      const dueDate = manualDueDate || new Date(Date.now() + 15 * 86400000).toISOString().slice(0, 10);
+      const { error: insertError } = await supabase.from('accounts_receivable').insert({
+        organization_id: organizationId,
+        customer_id: customer.id,
+        doc_number: manualDocNumber.trim(),
+        total_usd: total,
+        balance_usd: total,
+        status: 'PENDIENTE',
+        due_date: dueDate
+      });
+      if (insertError) {
+        throw insertError;
       }
 
-      setAccounts(prev => [newRecord, ...prev]);
-      showToast('Cuenta pendiente agregada con éxito.');
+      showToast('Cuenta por cobrar registrada en Supabase.');
       setIsManualModalOpen(false);
       setManualEntity('');
-      setManualConcept('');
-      setManualDescription('');
+      setManualDocNumber('');
       setManualTotal('');
-      setManualInitial('');
       setManualDueDate('');
-      loadData();
-    } catch {
-      showToast('Error al guardar la cuenta.', 'info');
+      await loadData();
+    } catch (error) {
+      showToast(
+        error instanceof Error ? error.message : 'Error al guardar la cuenta en Supabase.',
+        'info'
+      );
     }
   };
 
@@ -931,10 +863,10 @@ export function Accounts() {
               </div>
 
               <div className="field">
-                <label style={{ fontSize: 12, fontWeight: 700, color: '#334155' }}>Asunto / Entidad Principal (Cliente / Acreedor):</label>
+                <label style={{ fontSize: 12, fontWeight: 700, color: '#334155' }}>Cliente registrado:</label>
                 <input
                   required
-                  placeholder="Ej. Distribuciones Norte, Inversiones Delta..."
+                  placeholder="Nombre del cliente en Supabase"
                   value={manualEntity}
                   onChange={(e) => setManualEntity(e.target.value)}
                   className="input"
@@ -943,77 +875,41 @@ export function Accounts() {
               </div>
 
               <div className="field">
-                <label style={{ fontSize: 12, fontWeight: 700, color: '#334155' }}>Concepto / Sub-asunto (Ej. Factura #00001):</label>
+                <label style={{ fontSize: 12, fontWeight: 700, color: '#334155' }}>Número de documento:</label>
                 <input
                   required
-                  placeholder="Ej. Factura #12345, Suministros..."
-                  value={manualConcept}
-                  onChange={(e) => setManualConcept(e.target.value)}
+                  placeholder="Número real de factura o documento"
+                  value={manualDocNumber}
+                  onChange={(e) => setManualDocNumber(e.target.value)}
                   className="input"
                   style={{ height: 38, fontSize: 13 }}
                 />
               </div>
 
               <div className="field">
-                <label style={{ fontSize: 12, fontWeight: 700, color: '#334155' }}>Descripción detallada:</label>
-                <textarea
-                  placeholder="Notas u observaciones de la operación..."
-                  value={manualDescription}
-                  onChange={(e) => setManualDescription(e.target.value)}
+                <label style={{ fontSize: 12, fontWeight: 700, color: '#334155' }}>Monto Total (USD):</label>
+                <input
+                  required
+                  type="number"
+                  min="0.01"
+                  step="0.01"
+                  placeholder="0.00"
+                  value={manualTotal}
+                  onChange={(e) => setManualTotal(e.target.value)}
                   className="input"
-                  style={{ height: 64, fontSize: 13, padding: '8px 12px', resize: 'vertical' }}
+                  style={{ height: 38, fontSize: 13 }}
                 />
               </div>
 
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-                <div className="field">
-                  <label style={{ fontSize: 12, fontWeight: 700, color: '#334155' }}>Monto Total (USD):</label>
-                  <input
-                    required
-                    type="number"
-                    step="0.01"
-                    placeholder="0.00"
-                    value={manualTotal}
-                    onChange={(e) => setManualTotal(e.target.value)}
-                    className="input"
-                    style={{ height: 38, fontSize: 13 }}
-                  />
-                </div>
-                <div className="field">
-                  <label style={{ fontSize: 12, fontWeight: 700, color: '#334155' }}>Abono Inicial (Opcional):</label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    placeholder="0"
-                    value={manualInitial}
-                    onChange={(e) => setManualInitial(e.target.value)}
-                    className="input"
-                    style={{ height: 38, fontSize: 13 }}
-                  />
-                </div>
-              </div>
-
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-                <div className="field">
-                  <label style={{ fontSize: 12, fontWeight: 700, color: '#334155' }}>Fecha de Emisión:</label>
-                  <input
-                    type="date"
-                    value={manualIssueDate}
-                    onChange={(e) => setManualIssueDate(e.target.value)}
-                    className="input"
-                    style={{ height: 38, fontSize: 13 }}
-                  />
-                </div>
-                <div className="field">
-                  <label style={{ fontSize: 12, fontWeight: 700, color: '#334155' }}>Fecha de Vencimiento:</label>
-                  <input
-                    type="date"
-                    value={manualDueDate}
-                    onChange={(e) => setManualDueDate(e.target.value)}
-                    className="input"
-                    style={{ height: 38, fontSize: 13 }}
-                  />
-                </div>
+              <div className="field">
+                <label style={{ fontSize: 12, fontWeight: 700, color: '#334155' }}>Fecha de Vencimiento:</label>
+                <input
+                  type="date"
+                  value={manualDueDate}
+                  onChange={(e) => setManualDueDate(e.target.value)}
+                  className="input"
+                  style={{ height: 38, fontSize: 13 }}
+                />
               </div>
 
               <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 10, borderTop: '1px solid var(--border)', paddingTop: 14 }}>

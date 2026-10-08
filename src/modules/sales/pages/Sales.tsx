@@ -86,112 +86,33 @@ interface PaymentEntry {
   bank_account_id?: string;
 }
 
-const INITIAL_CATALOG: PosProduct[] = [
-  {
-    sku: 'PAP-0002',
-    name: 'ESPIRALES DE ENCUADERNADO',
-    category: 'Papelería y Oficina',
-    priceUSD: 1.50,
-    stock: 20
-  },
-  {
-    sku: 'MOT-0001',
-    name: 'Kit de Cilindro Completo con Pistón 150 cc',
-    category: 'Equipos y Repuestos',
-    priceUSD: 52.00,
-    stock: 14
-  },
-  {
-    sku: 'TRA-0001',
-    name: 'Cadena de Transmisión Reforzada 428H Oro',
-    category: 'Equipos y Repuestos',
-    priceUSD: 26.00,
-    stock: 30
-  },
-  {
-    sku: 'OFI-0001',
-    name: 'Caja Resmas Papel Bond Carta 75g (5 Resmas)',
-    category: 'Papelería y Oficina',
-    priceUSD: 36.00,
-    stock: 50
-  },
-  {
-    sku: 'PRD-ZKD1R6',
-    name: 'Fotocopias o Impresiones en B/N',
-    category: 'Impresiones y Copiado',
-    priceUSD: 0.12,
-    stock: 3331
-  },
-  {
-    sku: 'PRD-S98Q11',
-    name: 'Fotocopias o Impresiones en Color',
-    category: 'Impresiones y Copiado',
-    priceUSD: 0.36,
-    stock: 243
-  },
-  {
-    sku: 'PRD-RWSS54',
-    name: 'Ganchos para carpetas',
-    category: 'Papelería y Oficina',
-    priceUSD: 0.09,
-    stock: 19
-  },
-  {
-    sku: 'PRD-RWSS13',
-    name: 'Carpetas marrón con gancho tipo oficio',
-    category: 'Papelería y Oficina',
-    priceUSD: 0.57,
-    stock: 28
-  },
-  {
-    sku: 'PRD-EGEL5W',
-    name: 'Fotos Tipo Carnet 5 unidades',
-    category: 'Servicios',
-    priceUSD: 0.80,
-    stock: 428
-  },
-  {
-    sku: 'PRD-RWSS46',
-    name: 'Funda Plásticas para hojas carta',
-    category: 'Escolares y Útiles',
-    priceUSD: 0.11,
-    stock: 1932
-  },
-  {
-    sku: 'PRD-RWSS47',
-    name: 'Funda Plásticas para hojas oficio',
-    category: 'Escolares y Útiles',
-    priceUSD: 0.12,
-    stock: 52
-  }
-];
+async function getNextDocumentNumber(type: 'FACTURA' | 'NOTA'): Promise<string> {
+  const { data, error } = await supabase
+    .from('sales')
+    .select('doc_number')
+    .eq('doc_type', type)
+    .order('created_at', { ascending: false })
+    .limit(1);
 
-const INITIAL_CUSTOMERS: Customer[] = [
-  {
-    rif: 'V-99999999',
-    name: 'Consumidor final',
-    phone: '04125556677',
-    email: 'mostrador@frenyer.com',
-    address: 'Mostrador'
-  },
-  {
-    rif: 'V-18765432',
-    name: 'María González',
-    phone: '04141234567',
-    email: 'maria.gonzalez@gmail.com',
-    address: 'Av. Libertador, Edif. Centro, Caracas'
-  },
-  {
-    rif: 'J-50987654-3',
-    name: 'Inversiones Delta, C.A.',
-    phone: '02125559090',
-    email: 'administracion@inversionesdelta.com',
-    address: 'Calle 20 entre carreras 3 y 4, Caracas'
+  if (error) {
+    throw error;
   }
-];
+
+  const lastNumber = data?.[0]?.doc_number;
+  if (!lastNumber) {
+    return '0001';
+  }
+
+  const digits = String(lastNumber).match(/\d+/);
+  if (!digits) {
+    throw new Error('No se pudo determinar el siguiente correlativo de ventas.');
+  }
+
+  return String(Number(digits[0]) + 1).padStart(4, '0');
+}
 
 export function Sales() {
-  const [catalog, setCatalog] = useState<PosProduct[]>(INITIAL_CATALOG);
+  const [catalog, setCatalog] = useState<PosProduct[]>([]);
   const [cart, setCart] = useState<CartItem[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('Todas');
@@ -226,15 +147,15 @@ export function Sales() {
   const [checkoutStep, setCheckoutStep] = useState<number | null>(null);
 
   // Step 1: Customer Data
-  const [customers, setCustomers] = useState<Customer[]>(INITIAL_CUSTOMERS);
+  const [customers, setCustomers] = useState<Customer[]>([]);
   const [dbAccounts, setDbAccounts] = useState<any[]>([]);
   const [customerSearch, setCustomerSearch] = useState('');
   const [isCustomerDropdownOpen, setIsCustomerDropdownOpen] = useState(false);
-  const [clientRif, setClientRif] = useState('V-99999999');
+  const [clientRif, setClientRif] = useState('');
   const [clientName, setClientName] = useState('Consumidor final');
-  const [clientPhone, setClientPhone] = useState('04125556677');
+  const [clientPhone, setClientPhone] = useState('');
   const [clientEmail, setClientEmail] = useState('');
-  const [clientAddress, setClientAddress] = useState('Mostrador');
+  const [clientAddress, setClientAddress] = useState('');
 
   // Modal: Nuevo Cliente en Ventas Flash
   const [isNewCustomerModalOpen, setIsNewCustomerModalOpen] = useState(false);
@@ -325,7 +246,7 @@ export function Sales() {
 
   // Step 3: Document Type & Emission
   const [documentType, setDocumentType] = useState<'FACTURA' | 'NOTA' | 'ESPERA'>('FACTURA');
-  const [invoiceNumber, setInvoiceNumber] = useState('0001');
+  const [invoiceNumber, setInvoiceNumber] = useState('');
   const [observations, setObservations] = useState('');
 
   // Print view state
@@ -363,8 +284,7 @@ export function Sales() {
       }
     }
 
-    if (dbProds && dbProds.length > 0) {
-      setCatalog(dbProds.map(p => ({
+    setCatalog((dbProds || []).map(p => ({
         sku: p.sku,
         name: p.name,
         category: p.category || 'General',
@@ -372,10 +292,8 @@ export function Sales() {
         stock: Number(p.stock) || 0,
         image: p.image_url
       })));
-    }
 
-    if (dbCusts && dbCusts.length > 0) {
-      setCustomers(dbCusts.map(c => ({
+    setCustomers((dbCusts || []).map(c => ({
         id: c.id,
         rif: c.doc_number,
         name: c.name,
@@ -383,7 +301,6 @@ export function Sales() {
         email: c.email,
         address: c.address
       })));
-    }
 
     // Filter to only display Active accounts in Checkout Form Payment dropdowns
     let rawAccounts = accountsRes?.data || [];
@@ -396,56 +313,28 @@ export function Sales() {
     const activeAccs = (rawAccounts || []).filter((a: any) => a.status === 'Activo');
     setDbAccounts(activeAccs);
 
-    // Fetch next consecutive correlative number from Supabase sales table for current doc type
     try {
-      const { data: lastSales, error: lastSalesError } = await supabase
-        .from('sales')
-        .select('doc_number')
-        .eq('doc_type', documentType)
-        .order('created_at', { ascending: false })
-        .limit(1);
-
-      if (!lastSalesError && lastSales && lastSales.length > 0) {
-        const lastNumStr = lastSales[0].doc_number || '';
-        const digitsMatch = lastNumStr.match(/\d+/);
-        if (digitsMatch) {
-          const nextNum = parseInt(digitsMatch[0], 10) + 1;
-          const padded = nextNum.toString().padStart(4, '0');
-          setInvoiceNumber(padded);
-        } else {
-          setInvoiceNumber('0001');
-        }
-      } else {
-        setInvoiceNumber('0001');
-      }
-    } catch {
-      setInvoiceNumber('0001');
+      setInvoiceNumber(
+        documentType === 'ESPERA' ? '' : await getNextDocumentNumber(documentType)
+      );
+    } catch (error) {
+      setInvoiceNumber('');
+      showToast(
+        error instanceof Error ? error.message : 'No se pudo consultar el correlativo en Supabase.',
+        'info'
+      );
     }
   };
 
   const updateCorrelativeForDocType = async (type: 'FACTURA' | 'NOTA') => {
     try {
-      const { data: lastSales, error: lastSalesError } = await supabase
-        .from('sales')
-        .select('doc_number')
-        .eq('doc_type', type)
-        .order('created_at', { ascending: false })
-        .limit(1);
-
-      if (!lastSalesError && lastSales && lastSales.length > 0) {
-        const lastNumStr = lastSales[0].doc_number || '';
-        const digitsMatch = lastNumStr.match(/\d+/);
-        if (digitsMatch) {
-          const nextNum = parseInt(digitsMatch[0], 10) + 1;
-          setInvoiceNumber(nextNum.toString().padStart(4, '0'));
-        } else {
-          setInvoiceNumber('0001');
-        }
-      } else {
-        setInvoiceNumber('0001');
-      }
-    } catch {
-      setInvoiceNumber('0001');
+      setInvoiceNumber(await getNextDocumentNumber(type));
+    } catch (error) {
+      setInvoiceNumber('');
+      showToast(
+        error instanceof Error ? error.message : 'No se pudo consultar el correlativo en Supabase.',
+        'info'
+      );
     }
   };
 
@@ -716,7 +605,7 @@ export function Sales() {
       showToast(`Pago asignado a ${acc.bank_name}`);
     } else {
       const newPayment: PaymentEntry = {
-        id: `PAY-${Date.now().toString().slice(-4)}-${Math.floor(Math.random() * 100)}`,
+        id: crypto.randomUUID(),
         method: `${acc.bank_name} (${acc.currency})`,
         amountUSD,
         amountVES,
@@ -742,8 +631,8 @@ export function Sales() {
 
     const parked: ParkedInvoice = {
       id: `ESP-${Date.now().toString().slice(-4)}`,
-      clientName: clientName || 'Cliente sin nombre',
-      clientRif: clientRif || 'V-99999999',
+      clientName,
+      clientRif,
       clientPhone,
       clientAddress,
       items: [...cart],
@@ -800,7 +689,7 @@ export function Sales() {
         return;
       }
       const cleanRif = clientRif.trim();
-      if (!cleanRif || cleanRif === 'V-99999999' || cleanRif === 'V-00000000') {
+      if (!cleanRif) {
         showToast('Para ventas a crédito, se requiere una Cédula o RIF válido.', 'info');
         setCheckoutStep(1);
         return;
@@ -810,14 +699,18 @@ export function Sales() {
         setCheckoutStep(1);
         return;
       }
-      if (!clientAddress.trim() || clientAddress === 'Mostrador') {
+      if (!clientAddress.trim()) {
         showToast('Se requiere una dirección física para respaldar el crédito.', 'info');
         setCheckoutStep(1);
         return;
       }
     }
 
-    const docCorrelative = invoiceNumber.trim() || '0001';
+    const docCorrelative = invoiceNumber.trim();
+    if (!docCorrelative) {
+      showToast('No se pudo obtener el correlativo de la venta desde Supabase.', 'info');
+      return;
+    }
 
     // Get the customer ID matching the clientRif
     const matchedCustomer = customers.find(c => c.rif === clientRif);
@@ -869,28 +762,42 @@ export function Sales() {
       paymentsPayload
     );
 
+    if (!saleResult.success) {
+      showToast(saleResult.error || 'No se pudo registrar la venta en Supabase.', 'info');
+      return;
+    }
+
     // 2. Adjust Bank Accounts and log Bank Movements for Contado payments
-    if (saleResult.success && paymentType === 'CONTADO') {
+    const bankMovementErrors: string[] = [];
+    if (paymentType === 'CONTADO') {
       for (const p of payments) {
         if (p.bank_account_id) {
           const acc = dbAccounts.find(a => a.id === p.bank_account_id);
           // If VES account, take original VES amount, else take USD amount
           const originalAmount = acc && acc.currency === 'VES' ? p.amountVES : p.amountUSD;
 
-          await authenticatedFetch('/api/bank-movements', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              bank_account_id: p.bank_account_id,
-              type: 'ENTRADA',
-              concept: `Abono de Venta POS - ${docCorrelative} (${clientName})`,
-              reference: docCorrelative,
-              user_name: 'Cajero POS',
-              rate: activeRate,
-              commission: 0,
-              amount: originalAmount
-            })
-          });
+          try {
+            const response = await authenticatedFetch('/api/bank-movements', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                bank_account_id: p.bank_account_id,
+                type: 'ENTRADA',
+                concept: `Abono de Venta POS - ${docCorrelative} (${clientName})`,
+                reference: docCorrelative,
+                user_name: 'Cajero POS',
+                rate: activeRate,
+                commission: 0,
+                amount: originalAmount
+              })
+            });
+            const result = await response.json();
+            if (!response.ok || !result.success) {
+              bankMovementErrors.push(result.error || 'No se pudo registrar un movimiento bancario.');
+            }
+          } catch (error) {
+            bankMovementErrors.push(error instanceof Error ? error.message : 'Error de conexión con movimientos bancarios.');
+          }
         }
       }
     }
@@ -929,7 +836,12 @@ export function Sales() {
     // Reset cart and checkout
     setCart([]);
     setCheckoutStep(null);
-    showToast(`${documentType === 'FACTURA' ? 'Factura' : 'Nota'} ${docCorrelative} emitida exitosamente.`);
+    showToast(
+      bankMovementErrors.length > 0
+        ? `La venta se registró, pero falló un movimiento bancario: ${bankMovementErrors[0]}`
+        : `${documentType === 'FACTURA' ? 'Factura' : 'Nota'} ${docCorrelative} emitida exitosamente.`,
+      bankMovementErrors.length > 0 ? 'info' : undefined
+    );
     
     // Reload database data (updates stocks, bank balances, and next invoice number in real time)
     await loadSupabaseData();
@@ -1480,13 +1392,13 @@ export function Sales() {
               {isCustomerDropdownOpen && (
                 <div style={{ border: '1px solid var(--border)', borderRadius: 8, background: '#f8fafc', padding: 8, display: 'flex', flexDirection: 'column', gap: 4, maxHeight: 220, overflowY: 'auto' }}>
                   <div style={{ fontSize: 10, fontWeight: 700, color: '#64748b', padding: '2px 6px', textTransform: 'uppercase' }}>
-                    Clientes Registrados / Predeterminados (Haz clic para seleccionar):
+                    Clientes registrados (haz clic para seleccionar):
                   </div>
                   {customers
                     .filter(c => customerSearch.trim() === '' || c.name.toLowerCase().includes(customerSearch.toLowerCase()) || c.rif.toLowerCase().includes(customerSearch.toLowerCase()) || (c.phone && c.phone.includes(customerSearch)))
-                    .map(c => (
+                    .map((c, index) => (
                       <div
-                        key={c.rif || c.id || Math.random()}
+                        key={c.id || c.rif || index}
                         onClick={() => {
                           setClientRif(c.rif);
                           setClientName(c.name);
@@ -1569,7 +1481,7 @@ export function Sales() {
                   className="input"
                   value={clientAddress}
                   onChange={(e) => setClientAddress(e.target.value)}
-                  placeholder="Mostrador / Dirección del cliente"
+                  placeholder="Dirección del cliente"
                 />
               </div>
 
@@ -1913,9 +1825,9 @@ export function Sales() {
                     {(() => {
                       const isCustomerValid = 
                         Boolean(clientName && clientName.trim() !== '' && clientName.trim() !== 'Consumidor final') &&
-                        Boolean(clientRif && clientRif.trim() !== '' && clientRif !== 'V-99999999' && clientRif !== 'V-00000000') &&
+                        Boolean(clientRif && clientRif.trim() !== '') &&
                         Boolean(clientPhone && clientPhone.trim() !== '') &&
-                        Boolean(clientAddress && clientAddress.trim() !== '' && clientAddress !== 'Mostrador');
+                        Boolean(clientAddress && clientAddress.trim() !== '');
 
                       return isCustomerValid ? (
                         <div style={{ background: '#f8fafc', padding: 16, borderRadius: 8, border: '1px solid #cbd5e1', display: 'flex', flexDirection: 'column', gap: 10 }}>
@@ -1996,7 +1908,7 @@ export function Sales() {
                     disabled={
                       paymentType === 'CONTADO' 
                         ? (payments.length === 0 && (!currentPaymentMethod || (parseFloat(currentPaymentAmountUSD) <= 0 && parseFloat(currentPaymentAmountVES) <= 0)))
-                        : !(clientName && clientName.trim() !== '' && clientName.trim() !== 'Consumidor final' && clientRif && clientRif.trim() !== '' && clientRif !== 'V-99999999' && clientRif !== 'V-00000000' && clientPhone && clientPhone.trim() !== '' && clientAddress && clientAddress.trim() !== '' && clientAddress !== 'Mostrador')
+                        : !(clientName && clientName.trim() !== '' && clientName.trim() !== 'Consumidor final' && clientRif && clientRif.trim() !== '' && clientPhone && clientPhone.trim() !== '' && clientAddress && clientAddress.trim() !== '')
                     }
                   >
                     Siguiente &gt;
@@ -2479,7 +2391,7 @@ export function Sales() {
                 <span className="muted" style={{ display: 'block', fontSize: 10 }}>CLIENTE</span>
                 <b>{printDocument.client.name}</b>
                 <span className="muted" style={{ display: 'block', marginTop: 6, fontSize: 10 }}>DIRECCIÓN</span>
-                <span>{printDocument.client.address || 'Mostrador'}</span>
+                <span>{printDocument.client.address || '—'}</span>
               </div>
               <div>
                 <span className="muted" style={{ display: 'block', fontSize: 10 }}>C.I. / RIF</span>

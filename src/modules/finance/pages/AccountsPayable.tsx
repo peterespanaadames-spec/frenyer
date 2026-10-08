@@ -233,15 +233,15 @@ export function AccountsPayablePage() {
           sups.map((supplier) => [supplier.id, supplier] as const)
         );
         const mapped: PayableRecord[] = data.map((item: any) => {
-          const total = Number(item.total_usd) || Number(item.total_amount) || 0;
+          const total = Number(item.total_usd ?? item.total_amount ?? 0);
           const history = (item.payable_payments || []).map((p: any) => ({
-            date: p.payment_date ? p.payment_date.slice(0, 10) : new Date().toISOString().slice(0, 10),
+            date: p.payment_date ? p.payment_date.slice(0, 10) : '',
             amount: Number(p.amount_usd) || 0,
-            bank_name: p.payment_method || 'Banco',
-            ref: p.reference || 'S/R'
+            bank_name: p.payment_method || '',
+            ref: p.reference || ''
           }));
           const paidFromHistory = history.reduce((sum: number, h: any) => sum + h.amount, 0);
-          const balance = Number(item.balance_usd) !== undefined && !isNaN(Number(item.balance_usd))
+          const balance = item.balance_usd != null && Number.isFinite(Number(item.balance_usd))
             ? Number(item.balance_usd)
             : Math.max(0, total - paidFromHistory);
           const paid = total - balance;
@@ -251,17 +251,17 @@ export function AccountsPayablePage() {
           return {
             id: item.id,
             supplier_id: item.supplier_id || null,
-            supplier_name: suppliersById.get(item.supplier_id)?.name || item.supplier_name || 'Proveedor General',
-            doc_number: item.doc_number || 'COMP-001',
-            concept: item.concept || 'Obligación comercial',
+            supplier_name: suppliersById.get(item.supplier_id)?.name || item.supplier_name || '',
+            doc_number: item.doc_number || '',
+            concept: item.concept || '',
             origin: item.origin || 'Manual',
             total_amount: total,
             paid_amount: paid,
             remaining_amount: balance,
-            issue_date: item.created_at ? item.created_at.slice(0, 10) : new Date().toISOString().slice(0, 10),
-            due_date: item.due_date || new Date(Date.now() + 15 * 86400000).toISOString().slice(0, 10),
+            issue_date: item.created_at ? item.created_at.slice(0, 10) : '',
+            due_date: item.due_date || '',
             status: st,
-            description: item.description || 'Cuenta por pagar registrada en sistema.',
+            description: item.description || '',
             payments_history: history
           };
         });

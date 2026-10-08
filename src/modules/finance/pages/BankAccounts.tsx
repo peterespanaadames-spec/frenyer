@@ -557,11 +557,6 @@ export function BankAccountsPage() {
     const rate = parseFloat(tfRate) || activeRate;
     const comm = parseFloat(tfCommission) || 0;
 
-    let calculatedCommissionAmount = comm;
-    if (tfCommissionType === 'Porcentual') {
-      calculatedCommissionAmount = (amt * comm) / 100;
-    }
-
     let depositAmount = amt;
     if (srcAccount.currency !== tgtAccount.currency) {
       if (srcAccount.currency === 'VES' && tgtAccount.currency === 'USD') {
@@ -571,49 +566,24 @@ export function BankAccountsPage() {
       }
     }
 
-    const sourcePayload = {
-      bank_account_id: tfSourceId,
-      type: 'SALIDA' as const,
-      concept: tfNotes.trim() || `Transferencia enviada a ${tgtAccount.bank_name}`,
-      reference: tfReference.trim() || 'Transferencia',
-      user_name: userRole === 'Gerente General' ? 'Gerente General' : 'Cajero',
-      rate,
-      commission: calculatedCommissionAmount,
-      amount: amt
-    };
-
-    const targetPayload = {
-      bank_account_id: tfTargetId,
-      type: 'ENTRADA' as const,
-      concept: tfNotes.trim() || `Transferencia recibida de ${srcAccount.bank_name}`,
-      reference: tfReference.trim() || 'Transferencia',
-      user_name: userRole === 'Gerente General' ? 'Gerente General' : 'Cajero',
-      rate,
-      commission: 0,
-      amount: depositAmount
-    };
-
     try {
-      const res1 = await authenticatedFetch('/api/bank-movements', {
+      const response = await authenticatedFetch('/api/bank-transfers', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(sourcePayload)
+        body: JSON.stringify({
+          source_account_id: tfSourceId,
+          target_account_id: tfTargetId,
+          source_amount: amt,
+          target_amount: depositAmount,
+          rate,
+          commission: comm,
+          commission_type: tfCommissionType,
+          concept: tfNotes.trim() || 'Transferencia entre cuentas bancarias',
+          reference: tfReference.trim() || 'Transferencia'
+        })
       });
-      const json1 = await res1.json();
-
-      if (!json1.success) {
-        showToast(json1.error || 'Error al debitar de origen.', 'info');
-        return;
-      }
-
-      const res2 = await authenticatedFetch('/api/bank-movements', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(targetPayload)
-      });
-      const json2 = await res2.json();
-
-      if (json2.success) {
+      const result = await response.json();
+      if (response.ok && result.success) {
         showToast('Transferencia realizada con éxito.');
         setIsTransferModalOpen(false);
         setTfAmount('');
@@ -622,10 +592,13 @@ export function BankAccountsPage() {
         setTfCommission('0');
         loadAllData();
       } else {
-        showToast(json2.error || 'Error al depositar en destino.', 'info');
+        showToast(result.error || 'No se pudo completar la transferencia.', 'info');
       }
-    } catch {
-      showToast('Error de red al procesar transferencia.', 'info');
+    } catch (error) {
+      showToast(
+        error instanceof Error ? error.message : 'Error de red al procesar transferencia.',
+        'info'
+      );
     }
   };
 

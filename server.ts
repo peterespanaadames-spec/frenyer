@@ -123,6 +123,7 @@ app.use([
   '/api/bank-accounts',
   '/api/payment-methods',
   '/api/bank-movements',
+  '/api/bank-transfers',
   '/api/suppliers'
 ], authenticateSupabaseRequest);
 
@@ -224,9 +225,6 @@ app.get('/api/bcv/rates', async (req, res) => {
   const timeInfo = getCaracasTimeInfo();
 
   const forceRefresh = req.query.refresh === 'true';
-  if (!forceRefresh && lastCertifiedRate && lastCertifiedRate.source === 'MANUAL') {
-    return res.json(lastCertifiedRate);
-  }
 
   let usdRate = 0;
   let eurRate = 0;
@@ -266,7 +264,8 @@ app.get('/api/bcv/rates', async (req, res) => {
         sourceDetails = 'Portal oficial BCV (https://www.bcv.org.ve/glosario/cambio-oficial)';
       }
     }
-  } catch {
+  } catch (error) {
+    console.warn('No se pudo consultar directamente la tasa BCV:', error);
     bcvSuccess = false;
   }
 
@@ -297,11 +296,34 @@ app.get('/api/bcv/rates', async (req, res) => {
         const euroJson: any = await euroRes.json();
         eurRate = Number(euroJson.promedio || euroJson.precio) || 0;
       }
-    } catch {
-      usdRate = lastCertifiedRate?.usdRate || 872.3927;
-      eurRate = lastCertifiedRate?.eurRate || 977.2194;
-      sourceDetails = 'Caché de contingencia offline';
+    } catch (error) {
+      console.warn('No se pudo consultar el servicio alternativo de tasas:', error);
+      if (lastCertifiedRate && lastCertifiedRate.source !== 'MANUAL') {
+        return res.json({
+          ...lastCertifiedRate,
+          sourceDetails: 'Última tasa externa certificada disponible en caché',
+          checkedAt: new Date().toISOString()
+        });
+      }
+      return res.status(503).json({
+        success: false,
+        error: 'No hay una tasa BCV disponible. Intenta de nuevo cuando el servicio esté accesible.'
+      });
     }
+  }
+
+  if (!Number.isFinite(usdRate) || usdRate <= 0) {
+    if (lastCertifiedRate && lastCertifiedRate.source !== 'MANUAL') {
+      return res.json({
+        ...lastCertifiedRate,
+        sourceDetails: 'Última tasa externa certificada disponible en caché',
+        checkedAt: new Date().toISOString()
+      });
+    }
+    return res.status(503).json({
+      success: false,
+      error: 'El servicio de tasas no devolvió un valor válido.'
+    });
   }
 
   const isDateFuture = valueDate > timeInfo.todayCaracasStr || valueDate > timeInfo.todayCaracasIso;
@@ -441,7 +463,6 @@ app.post('/api/bcv/rates/manual', async (req, res: AuthenticatedResponse) => {
     });
   }
 
-  lastCertifiedRate = certifiedRate;
   return res.json({
     success: true,
     certifiedRate,
@@ -792,12 +813,11 @@ app.get('/api/payment-methods', async (_req, res) => {
   try {
     const result = await authenticatedSupabaseRestRequest(res, 'payment_methods?select=*&order=name.asc');
     if (result.error) {
-      // Fallback if table doesn't exist yet
-      return res.json({ success: true, data: [] });
+      return res.status(502).json({ success: false, error: result.error });
     }
-    return res.json({ success: true, data: result.data || [] });
+    return res.json({ success: true, data: result.data });
   } catch (err: any) {
-    return res.status(200).json({ success: false, error: err?.message, data: [] });
+    return res.status(502).json({ success: false, error: err?.message });
   }
 });
 
@@ -853,72 +873,120 @@ app.delete('/api/payment-methods/:id', async (req, res) => {
   }
 });
 
-// 6.3 BANK MOVEMENTS WITH ATOMIC BALANCE ADJUSTMENT & MEMORY FALLBACK
-let memoryBankMovements: any[] = [];
-
+// 6.3 BANK MOVEMENTS WITH BALANCE ADJUSTMENT
 app.get('/api/bank-movements', async (_req, res) => {
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
   try {
     const result = await authenticatedSupabaseRestRequest(res, 'bank_movements?select=*&order=created_at.desc');
-    const dbList = result.error || !result.data ? [] : result.data;
-    const combined = [...dbList, ...memoryBankMovements.filter(m => !dbList.some((d: any) => d.id === m.id))];
-    return res.json({ success: true, data: combined });
+    if (result.error) {
+      return res.status(502).json({ success: false, error: result.error });
+    }
+    if (!Array.isArray(result.data)) {
+      return res.status(502).json({ success: false, error: 'Supabase devolvió una respuesta inválida al consultar movimientos.' });
+    }
+    return res.json({ success: true, data: result.data });
   } catch (err: any) {
-    return res.json({ success: true, data: memoryBankMovements });
+    return res.status(502).json({ success: false, error: err?.message });
   }
 });
 
 app.post('/api/bank-movements', async (req, res) => {
   try {
-    const movement = req.body;
-    const { bank_account_id, type, amount, commission } = movement;
-
-    // 1. Fetch current account balance
-    const accResult = await authenticatedSupabaseRestRequest(res, `bank_accounts?id=eq.${bank_account_id}`);
-    if (accResult.error || !accResult.data || accResult.data.length === 0) {
-      return res.status(200).json({ success: false, error: 'Cuenta bancaria no encontrada.' });
+    const movement = req.body || {};
+    const {
+      bank_account_id: bankAccountId,
+      type,
+      amount,
+      rate,
+      commission = 0,
+      commission_type: commissionType = 'Fija'
+    } = movement;
+    if (!bankAccountId || !['ENTRADA', 'SALIDA'].includes(type)) {
+      return res.status(400).json({ success: false, error: 'La cuenta y el tipo de movimiento son obligatorios.' });
+    }
+    if (!Number.isFinite(Number(amount)) || Number(amount) <= 0 ||
+        !Number.isFinite(Number(rate)) || Number(rate) <= 0 ||
+        !Number.isFinite(Number(commission)) || Number(commission) < 0 ||
+        !['Fija', 'Porcentual'].includes(commissionType) ||
+        typeof movement.concept !== 'string' || !movement.concept.trim()) {
+      return res.status(400).json({ success: false, error: 'Los datos del movimiento no son válidos.' });
     }
 
-    const currentBalance = Number(accResult.data[0].balance) || 0;
-    const movAmt = Number(amount) || 0;
-    const commAmt = Number(commission) || 0;
-
-    let newBalance = currentBalance;
-    if (type === 'ENTRADA') {
-      newBalance += movAmt;
-    } else if (type === 'SALIDA') {
-      newBalance -= (movAmt + commAmt);
-    }
-
-    // 2. Atomic update of bank account balance
-    const updateResult = await authenticatedSupabaseRestRequest(res, `bank_accounts?id=eq.${bank_account_id}`, {
-      method: 'PATCH',
-      body: { balance: newBalance }
-    });
-
-    if (updateResult.error) {
-      return res.status(200).json({ success: false, error: 'Error actualizando saldo de la cuenta: ' + updateResult.error });
-    }
-
-    const newMov = {
-      id: movement.id || 'mov_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5),
-      created_at: new Date().toISOString(),
-      ...movement
-    };
-
-    // 3. Try insert movement log in Supabase
-    const result = await authenticatedSupabaseRestRequest(res, 'bank_movements', {
+    const result = await authenticatedSupabaseRestRequest(res, 'rpc/record_bank_movement', {
       method: 'POST',
-      headers: { 'Prefer': 'return=representation' },
-      body: newMov
+      body: {
+        p_bank_account_id: bankAccountId,
+        p_type: type,
+        p_amount: Number(amount),
+        p_rate: Number(rate),
+        p_concept: movement.concept.trim(),
+        p_reference: typeof movement.reference === 'string' ? movement.reference.trim() : null,
+        p_commission: Number(commission),
+        p_commission_type: commissionType
+      }
     });
+    if (result.error) {
+      const status = result.status >= 400 && result.status < 500 ? result.status : 502;
+      return res.status(status).json({ success: false, error: result.error });
+    }
+    if (!result.data) {
+      return res.status(502).json({ success: false, error: 'Supabase no devolvió el movimiento registrado.' });
+    }
 
-    const created = result.error || !result.data ? newMov : (Array.isArray(result.data) ? result.data[0] : result.data);
-    memoryBankMovements.unshift(created);
+    return res.json({ success: true, data: result.data });
+  } catch (error) {
+    return res.status(502).json({ success: false, error: error instanceof Error ? error.message : 'Error procesando el movimiento.' });
+  }
+});
 
-    return res.json({ success: true, data: created });
-  } catch (err: any) {
-    return res.status(200).json({ success: false, error: err?.message });
+app.post('/api/bank-transfers', async (req, res) => {
+  try {
+    const transfer = req.body || {};
+    const {
+      source_account_id: sourceAccountId,
+      target_account_id: targetAccountId,
+      source_amount: sourceAmount,
+      target_amount: targetAmount,
+      rate,
+      commission = 0,
+      commission_type: commissionType = 'Fija'
+    } = transfer;
+    if (!sourceAccountId || !targetAccountId || sourceAccountId === targetAccountId) {
+      return res.status(400).json({ success: false, error: 'Selecciona cuentas de origen y destino diferentes.' });
+    }
+    if (!Number.isFinite(Number(sourceAmount)) || Number(sourceAmount) <= 0 ||
+        !Number.isFinite(Number(targetAmount)) || Number(targetAmount) <= 0 ||
+        !Number.isFinite(Number(rate)) || Number(rate) <= 0 ||
+        !Number.isFinite(Number(commission)) || Number(commission) < 0 ||
+        !['Fija', 'Porcentual'].includes(commissionType) ||
+        typeof transfer.concept !== 'string' || !transfer.concept.trim()) {
+      return res.status(400).json({ success: false, error: 'Los datos de la transferencia no son válidos.' });
+    }
+
+    const result = await authenticatedSupabaseRestRequest(res, 'rpc/record_bank_transfer', {
+      method: 'POST',
+      body: {
+        p_source_account_id: sourceAccountId,
+        p_target_account_id: targetAccountId,
+        p_source_amount: Number(sourceAmount),
+        p_target_amount: Number(targetAmount),
+        p_rate: Number(rate),
+        p_concept: transfer.concept.trim(),
+        p_reference: typeof transfer.reference === 'string' ? transfer.reference.trim() : null,
+        p_commission: Number(commission),
+        p_commission_type: commissionType
+      }
+    });
+    if (result.error) {
+      const status = result.status >= 400 && result.status < 500 ? result.status : 502;
+      return res.status(status).json({ success: false, error: result.error });
+    }
+    if (!result.data) {
+      return res.status(502).json({ success: false, error: 'Supabase no devolvió los movimientos de la transferencia.' });
+    }
+    return res.json({ success: true, data: result.data });
+  } catch (error) {
+    return res.status(502).json({ success: false, error: error instanceof Error ? error.message : 'Error procesando la transferencia.' });
   }
 });
 

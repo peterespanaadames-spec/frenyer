@@ -53,89 +53,6 @@ interface Product {
   image?: string;
 }
 
-const INITIAL_PRODUCTS: Product[] = [
-  {
-    sku: 'PAP-0002',
-    name: 'ESPIRALES DE ENCUADERNADO',
-    barcode: '7501234567890',
-    category: 'Papelería',
-    unit: 'UND',
-    currency: 'Dólar (USD)',
-    cost: 1.00,
-    price: 1.50,
-    iva: 'General (16%)',
-    stock: 20,
-    minStock: 2,
-    status: 'Activo',
-    expiry: '—',
-    location: 'Pasillo A'
-  },
-  {
-    sku: 'MOT-0001',
-    name: 'Kit de Cilindro Completo con Pistón 150 cc',
-    barcode: '7509876543210',
-    category: 'Motores',
-    unit: 'UND',
-    currency: 'Dólar (USD)',
-    cost: 38.00,
-    price: 52.00,
-    iva: 'General (16%)',
-    stock: 14,
-    minStock: 5,
-    status: 'Activo',
-    expiry: '—',
-    location: '—'
-  },
-  {
-    sku: 'TRA-0001',
-    name: 'Cadena de Transmisión Reforzada 428H Oro',
-    barcode: '7504561237890',
-    category: 'Transmisión',
-    unit: 'UND',
-    currency: 'Dólar (USD)',
-    cost: 17.00,
-    price: 26.00,
-    iva: 'General (16%)',
-    stock: 30,
-    minStock: 5,
-    status: 'Activo',
-    expiry: '—',
-    location: 'Repisa B3'
-  },
-  {
-    sku: 'OFI-0001',
-    name: 'Caja Resmas Papel Bond Carta 75g (5 Resmas)',
-    barcode: '7503216549870',
-    category: 'Oficina',
-    unit: 'UND',
-    currency: 'Dólar (USD)',
-    cost: 24.00,
-    price: 36.00,
-    iva: 'General (16%)',
-    stock: 50,
-    minStock: 10,
-    status: 'Activo',
-    expiry: '—',
-    location: 'Depósito Sur'
-  },
-  {
-    sku: 'HER-0001',
-    name: 'assasa',
-    barcode: '7501112223334',
-    category: 'Herramienta',
-    unit: 'UND',
-    currency: 'Dólar (USD)',
-    cost: 2.00,
-    price: 58.00,
-    iva: 'General (16%)',
-    stock: 8,
-    minStock: 2,
-    status: 'Activo',
-    expiry: '2028-06-22',
-    location: '—'
-  }
-];
-
 export function Inventory() {
   const [products, setProducts] = useState<Product[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -146,8 +63,7 @@ export function Inventory() {
   const loadProducts = async () => {
     setIsLoading(true);
     const dbProds = await fetchProductsFromSupabase();
-    if (dbProds && dbProds.length > 0) {
-      setProducts(dbProds.map(p => ({
+    const mappedProducts = (dbProds || []).map(p => ({
         sku: p.sku,
         name: p.name,
         barcode: p.barcode || '',
@@ -163,10 +79,9 @@ export function Inventory() {
         expiry: '—',
         location: '—',
         image: p.image_url
-      })));
-    } else {
-      setProducts([]);
-    }
+      }));
+    setProducts(mappedProducts);
+    setCategories(Array.from(new Set(mappedProducts.map((product) => product.category).filter(Boolean))));
     setIsLoading(false);
   };
 
@@ -220,8 +135,12 @@ export function Inventory() {
       const rate = activeExchangeRate;
 
       for (const row of json) {
-        const sku = String(row['SKU'] || row['sku'] || row['Código'] || row['codigo'] || `PRD-${Math.floor(Math.random() * 90000 + 10000)}`);
-        const name = String(row['Nombre'] || row['nombre'] || row['Descripción'] || row['descripcion'] || 'Producto importado');
+        const sku = String(row['SKU'] || row['sku'] || row['Código'] || row['codigo'] || '').trim()
+          || `PRD-${crypto.randomUUID().replace(/-/g, '').slice(0, 12).toUpperCase()}`;
+        const name = String(row['Nombre'] || row['nombre'] || row['Descripción'] || row['descripcion'] || '').trim();
+        if (!name) {
+          throw new Error('Cada fila importada debe incluir el nombre del producto.');
+        }
         const category = String(row['Categoría'] || row['categoria'] || 'General');
         let cost = parseFloat(row['Costo'] || row['costo'] || 0) || 0;
         let price = parseFloat(row['Precio'] || row['precio'] || row['PVP'] || row['pvp'] || 0) || 0;
@@ -247,7 +166,10 @@ export function Inventory() {
           status: 'Activo'
         };
 
-        await createProductInSupabase(dbProductPayload);
+        const result = await createProductInSupabase(dbProductPayload);
+        if (!result.success) {
+          throw new Error(result.error || `No se pudo guardar el producto ${sku}.`);
+        }
         count++;
       }
 
@@ -271,14 +193,7 @@ export function Inventory() {
   const [editingSku, setEditingSku] = useState<string | null>(null);
 
   // Dynamic Categories State
-  const [categories, setCategories] = useState<string[]>([
-    'Sin categoría',
-    'Papelería',
-    'Motores',
-    'Transmisión',
-    'Oficina',
-    'Herramienta'
-  ]);
+  const [categories, setCategories] = useState<string[]>([]);
   const [isAddCategoryOpen, setIsAddCategoryOpen] = useState(false);
   const [newCategoryInput, setNewCategoryInput] = useState('');
   
@@ -375,7 +290,6 @@ export function Inventory() {
   // Export filters
   const [exportCategory, setExportCategory] = useState('Todas');
   const [exportStockLevel, setExportStockLevel] = useState('Todo');
-  const [importMode, setImportMode] = useState<'create_update' | 'only_new' | 'only_stock'>('create_update');
 
   // Notifications
   const [toast, setToast] = useState<{ type: 'success' | 'info'; message: string } | null>(null);
@@ -618,41 +532,11 @@ export function Inventory() {
       const workbook = XLSX.utils.book_new();
 
       // Sheet 1: Plantilla_Inventario
-      const sampleData = [
-        {
-          'SKU': 'MUE-0001',
-          'Nombre': 'Tornillos hexagonales 1/2 pulgada',
-          'Barras': '7591234567890',
-          'Categoría': 'Ferretería',
-          'Unidad': 'UND',
-          'Moneda': 'Bolívar (VES)',
-          'Costo': 0.50,
-          'PVP': 1.20,
-          'IVA': 'General (16%)',
-          'Stock': 100,
-          'Stock_Minimo': 20,
-          'Estado': 'Activo',
-          'Ubicacion': 'Pasillo 4',
-          'Vencimiento': '—'
-        },
-        {
-          'SKU': 'MUE-0002',
-          'Nombre': 'Aceite Sintético 20W50 1L',
-          'Barras': '7599876543210',
-          'Categoría': 'Motores',
-          'Unidad': 'L',
-          'Moneda': 'Dólar (USD)',
-          'Costo': 4.50,
-          'PVP': 8.00,
-          'IVA': 'General (16%)',
-          'Stock': 45,
-          'Stock_Minimo': 10,
-          'Estado': 'Activo',
-          'Ubicacion': 'Repisa A1',
-          'Vencimiento': '15/12/2027'
-        }
+      const inventoryColumns = [
+        'SKU', 'Nombre', 'Barras', 'Categoría', 'Unidad', 'Moneda', 'Costo',
+        'PVP', 'IVA', 'Stock', 'Stock_Minimo', 'Estado', 'Ubicacion', 'Vencimiento'
       ];
-      const wsInventory = XLSX.utils.json_to_sheet(sampleData);
+      const wsInventory = XLSX.utils.aoa_to_sheet([inventoryColumns]);
       XLSX.utils.book_append_sheet(workbook, wsInventory, 'Plantilla_Inventario');
 
       // Sheet 2: Categorias_Referencia
@@ -662,15 +546,15 @@ export function Inventory() {
 
       // Sheet 3: Guia_Instrucciones
       const guideData = [
-        { 'Campo': 'SKU', 'Tipo': 'Texto único', 'Obligatorio': 'Sí (o en blanco para autogenerar)', 'Ejemplo': 'PAP-0001' },
-        { 'Campo': 'Nombre', 'Tipo': 'Texto', 'Obligatorio': 'Sí', 'Ejemplo': 'Aceite 20W50' },
-        { 'Campo': 'Categoría', 'Tipo': 'Texto', 'Obligatorio': 'Opcional', 'Ejemplo': 'Motores, Ferretería, etc.' },
-        { 'Campo': 'Unidad', 'Tipo': 'UND, KG, L, MTS, CJ, PQ, PAR', 'Obligatorio': 'Sí', 'Ejemplo': 'UND' },
-        { 'Campo': 'Moneda', 'Tipo': 'Bolívar (VES), Dólar (USD)', 'Obligatorio': 'Sí', 'Ejemplo': 'Dólar (USD)' },
-        { 'Campo': 'Costo', 'Tipo': 'Numérico (decimal)', 'Obligatorio': 'Sí', 'Ejemplo': '5.50' },
-        { 'Campo': 'PVP', 'Tipo': 'Numérico (decimal)', 'Obligatorio': 'Sí', 'Ejemplo': '10.00' },
-        { 'Campo': 'IVA', 'Tipo': 'General (16%), Reducido (8%), Exento (0%)', 'Obligatorio': 'Sí', 'Ejemplo': 'General (16%)' },
-        { 'Campo': 'Stock', 'Tipo': 'Numérico entero', 'Obligatorio': 'Sí', 'Ejemplo': '25' }
+        { 'Campo': 'SKU', 'Tipo': 'Texto único', 'Obligatorio': 'Sí; puede dejarse en blanco para autogenerar' },
+        { 'Campo': 'Nombre', 'Tipo': 'Texto', 'Obligatorio': 'Sí' },
+        { 'Campo': 'Categoría', 'Tipo': 'Texto', 'Obligatorio': 'Opcional' },
+        { 'Campo': 'Unidad', 'Tipo': 'UND, KG, L, MTS, CJ, PQ, PAR', 'Obligatorio': 'Sí' },
+        { 'Campo': 'Moneda', 'Tipo': 'Bolívar (VES), Dólar (USD)', 'Obligatorio': 'Sí' },
+        { 'Campo': 'Costo', 'Tipo': 'Numérico (decimal)', 'Obligatorio': 'Sí' },
+        { 'Campo': 'PVP', 'Tipo': 'Numérico (decimal)', 'Obligatorio': 'Sí' },
+        { 'Campo': 'IVA', 'Tipo': 'General (16%), Reducido (8%), Exento (0%)', 'Obligatorio': 'Sí' },
+        { 'Campo': 'Stock', 'Tipo': 'Numérico entero', 'Obligatorio': 'Sí' }
       ];
       const wsGuide = XLSX.utils.json_to_sheet(guideData);
       XLSX.utils.book_append_sheet(workbook, wsGuide, 'Guia_Instrucciones');
@@ -680,86 +564,6 @@ export function Inventory() {
     } catch {
       showToast('Error al generar la plantilla Excel.', 'info');
     }
-  };
-
-  // 9. Import CSV or Excel (.xlsx, .xls, .csv)
-  const handleFileImport = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    const reader = new FileReader();
-    reader.onload = (evt) => {
-      try {
-        const data = new Uint8Array(evt.target?.result as ArrayBuffer);
-        const workbook = XLSX.read(data, { type: 'array' });
-        const firstSheetName = workbook.SheetNames[0];
-        const worksheet = workbook.Sheets[firstSheetName];
-        const jsonData: unknown[][] = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
-
-        if (jsonData.length <= 1) {
-          showToast('El archivo está vacío o no contiene filas de datos.', 'info');
-          return;
-        }
-
-        const importedList: Product[] = [];
-        for (let i = 1; i < jsonData.length; i++) {
-          const cells = jsonData[i];
-          if (!cells || cells.length === 0) continue;
-
-          const skuVal = String(cells[0] ?? '').trim();
-          const nameVal = String(cells[1] ?? '').trim();
-          if (!nameVal && !skuVal) continue;
-
-          importedList.push({
-            sku: skuVal || `IMPORT-${Date.now().toString().slice(-4)}-${i}`,
-            name: nameVal || 'Producto importado',
-            barcode: String(cells[2] ?? '').trim(),
-            category: String(cells[3] ?? 'Sin categoría').trim(),
-            unit: String(cells[4] ?? 'UND').trim(),
-            currency: String(cells[5] ?? 'Bolívar (VES)').trim(),
-            cost: parseFloat(String(cells[6] ?? '0')) || 0,
-            price: parseFloat(String(cells[7] ?? '0')) || 0,
-            iva: String(cells[8] ?? 'General (16%)').trim(),
-            stock: parseInt(String(cells[9] ?? '0'), 10) || 0,
-            minStock: parseInt(String(cells[10] ?? '0'), 10) || 0,
-            status: String(cells[11] ?? 'Activo').trim(),
-            expiry: String(cells[12] ?? '—').trim(),
-            location: String(cells[13] ?? '—').trim()
-          });
-        }
-
-        if (importMode === 'create_update') {
-          const updated = [...products];
-          importedList.forEach(imp => {
-            const index = updated.findIndex(p => p.sku === imp.sku);
-            if (index >= 0) {
-              updated[index] = { ...updated[index], ...imp };
-            } else {
-              updated.push(imp);
-            }
-          });
-          setProducts(updated);
-        } else if (importMode === 'only_new') {
-          const filteredNew = importedList.filter(imp => !products.some(p => p.sku === imp.sku));
-          setProducts([...products, ...filteredNew]);
-        } else {
-          const updated = products.map(p => {
-            const match = importedList.find(imp => imp.sku === p.sku);
-            if (match) {
-              return { ...p, stock: p.stock + match.stock, price: match.price || p.price };
-            }
-            return p;
-          });
-          setProducts(updated);
-        }
-
-        showToast(`Se importaron ${importedList.length} productos con éxito.`);
-        setIsManagementOpen(false);
-      } catch {
-        showToast('Error al procesar el archivo Excel / CSV.', 'info');
-      }
-    };
-    reader.readAsArrayBuffer(file);
   };
 
   return (
@@ -1324,7 +1128,7 @@ export function Inventory() {
         </div>
       )}
 
-      {/* MODAL: Nuevo Producto / Editar Producto matching user mockup image EXACTLY */}
+      {/* Modal de creación y edición de producto */}
       {isNewProductOpen && (
         <div
           style={{
@@ -1419,7 +1223,7 @@ export function Inventory() {
                       ))}
                     </select>
                     
-                    {/* Folder Plus button to add dynamic categories inline exactly like user mockup folder-plus */}
+                    {/* Permite agregar una categoría para el producto que se está creando. */}
                     <button
                       type="button"
                       onClick={() => setIsAddCategoryOpen(true)}

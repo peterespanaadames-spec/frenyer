@@ -38,7 +38,12 @@ interface SidebarItem {
   }[];
 }
 
-export function Sidebar() {
+interface SidebarProps {
+  isMobileOpen?: boolean;
+  onNavigate?: () => void;
+}
+
+export function Sidebar({ isMobileOpen = false, onNavigate }: SidebarProps) {
   const location = useLocation();
 
   // Define the menu structure exactly as shown in the image
@@ -137,7 +142,7 @@ export function Sidebar() {
   };
 
   return (
-    <aside className="sidebar">
+    <aside className={`sidebar${isMobileOpen ? ' mobile-open' : ''}`}>
       <div className="brand">
         Fren<span>y</span>er
       </div>
@@ -175,6 +180,7 @@ export function Sidebar() {
                         <NavLink
                           key={child.to}
                           to={child.to}
+                          onClick={onNavigate}
                           className={({ isActive }) =>
                             `sidebar-child ${isActive ? 'active' : ''}`
                           }
@@ -194,6 +200,7 @@ export function Sidebar() {
                 key={item.to}
                 to={item.to!}
                 end={item.to === '/'}
+                onClick={onNavigate}
                 className={({ isActive }) =>
                   `sidebar-parent ${isActive ? 'active' : ''}`
                 }
@@ -211,6 +218,7 @@ export function Sidebar() {
       <div className="sidebar-bottom" style={{ marginTop: 'auto', paddingTop: '16px' }}>
         <NavLink
           to="/configuracion"
+          onClick={onNavigate}
           className={({ isActive }) =>
             `sidebar-parent ${isActive ? 'active-config' : 'config-link'}`
           }

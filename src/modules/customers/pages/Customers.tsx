@@ -229,7 +229,7 @@ export function Customers() {
       const success = await updateCustomerInSupabase(editingId, {
         name: nameInput.trim(),
         doc_type: docTypeInput,
-        doc_number: docNumberInput.trim() || 'V-00000000',
+        doc_number: docNumberInput.trim(),
         phone: phoneInput.trim(),
         email: emailInput.trim(),
         credit_limit: parseFloat(creditLimitInput) || 0,
@@ -248,7 +248,7 @@ export function Customers() {
         code: `CLI-${nextNum.toString().padStart(4, '0')}`,
         name: nameInput.trim(),
         doc_type: docTypeInput,
-        doc_number: docNumberInput.trim() || 'V-00000000',
+        doc_number: docNumberInput.trim(),
         phone: phoneInput.trim(),
         email: emailInput.trim(),
         credit_limit: parseFloat(creditLimitInput) || 0,

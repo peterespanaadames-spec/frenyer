@@ -21,6 +21,7 @@ export function DashboardLayout() {
   const [rateSource, setRateSource] = useState(() => localStorage.getItem('frenyer_bcv_rate_source') || 'BCV');
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isManualModalOpen, setIsManualModalOpen] = useState(false);
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
   // Proposed Rate Notification Banner
   const [proposedRate, setProposedRate] = useState<{
@@ -38,46 +39,46 @@ export function DashboardLayout() {
     setIsRefreshing(true);
     try {
       const res = await fetch(`/api/bcv/rates${forceRefresh ? '?refresh=true' : ''}`);
-      if (res.ok) {
-        const data = await res.json();
-        // Si existe tasa futura, esa es la que se toma; de lo contrario la actual
-        const chosenRate = data.isFutureApplied && data.futureRate
-          ? Number(data.futureRate)
-          : (Number(data.appliedRate) || Number(data.usdRate) || 872.3927);
-
-        const activeCurrent = getActiveExchangeRate();
-        const autoCheckPref = localStorage.getItem('frenyer_auto_update_bcv') !== 'false';
-
-        // Check if there is a discrepancy with manual rate or stored rate
-        if (Math.abs(chosenRate - activeCurrent) > 0.0001 && rateSource === 'MANUAL' && !forceRefresh) {
-          // Si el usuario tenía fijada una tasa manual, proponer el cambio con el aviso sin sustituir silenciosamente
-          const diff = chosenRate - activeCurrent;
-          const pct = activeCurrent > 0 ? (diff / activeCurrent) * 100 : 0;
-          setProposedRate({
-            newRate: chosenRate,
-            currentRate: activeCurrent,
-            difference: diff,
-            percentDiff: pct,
-            isFuture: Boolean(data.isFutureApplied),
-            valueDate: data.valueDate || 'Hoy',
-            source: data.source
-          });
-        } else {
-          setBcvRate(chosenRate);
-          setIsFuture(Boolean(data.isFutureApplied));
-          setRateSource(data.source);
-
-          localStorage.setItem('frenyer_bcv_is_future', data.isFutureApplied ? 'true' : 'false');
-          localStorage.setItem('frenyer_bcv_rate_source', data.source);
-          if (data.valueDate) {
-            localStorage.setItem('frenyer_bcv_rate_date', data.valueDate);
-          }
-
-          setActiveExchangeRate(chosenRate);
-        }
+      if (!res.ok) {
+        throw new Error(`No se pudo consultar la tasa BCV (HTTP ${res.status}).`);
       }
-    } catch {
-      // Silently fail as requested (no logs)
+      const data = await res.json();
+      const chosenRate = data.isFutureApplied && data.futureRate
+        ? Number(data.futureRate)
+        : Number(data.appliedRate ?? data.usdRate);
+      if (!Number.isFinite(chosenRate) || chosenRate <= 0) {
+        throw new Error('El servicio BCV no devolvió una tasa válida.');
+      }
+
+      const activeCurrent = getActiveExchangeRate();
+
+      if (Math.abs(chosenRate - activeCurrent) > 0.0001 && rateSource === 'MANUAL' && !forceRefresh) {
+        const diff = chosenRate - activeCurrent;
+        const pct = activeCurrent > 0 ? (diff / activeCurrent) * 100 : 0;
+        setProposedRate({
+          newRate: chosenRate,
+          currentRate: activeCurrent,
+          difference: diff,
+          percentDiff: pct,
+          isFuture: Boolean(data.isFutureApplied),
+          valueDate: data.valueDate || '',
+          source: data.source
+        });
+      } else {
+        setBcvRate(chosenRate);
+        setIsFuture(Boolean(data.isFutureApplied));
+        setRateSource(data.source);
+
+        localStorage.setItem('frenyer_bcv_is_future', data.isFutureApplied ? 'true' : 'false');
+        localStorage.setItem('frenyer_bcv_rate_source', data.source);
+        if (data.valueDate) {
+          localStorage.setItem('frenyer_bcv_rate_date', data.valueDate);
+        }
+
+        setActiveExchangeRate(chosenRate);
+      }
+    } catch (error) {
+      console.error('No se pudo actualizar la tasa BCV:', error);
     } finally {
       setIsRefreshing(false);
     }
@@ -190,7 +191,18 @@ export function DashboardLayout() {
 
   return (
     <div className="shell">
-      <Sidebar />
+      {isMobileMenuOpen && (
+        <button
+          type="button"
+          className="mobile-sidebar-backdrop"
+          aria-label="Cerrar menú"
+          onClick={() => setIsMobileMenuOpen(false)}
+        />
+      )}
+      <Sidebar
+        isMobileOpen={isMobileMenuOpen}
+        onNavigate={() => setIsMobileMenuOpen(false)}
+      />
       <main className="main" style={{ position: 'relative' }}>
         {!isAuthenticationRequired && (
           <div role="status" style={{
@@ -205,9 +217,15 @@ export function DashboardLayout() {
           </div>
         )}
         <header className="topbar">
-          <div className="mobile-menu">
-            <Menu size={20} />
-          </div>
+          <button
+            type="button"
+            className="mobile-menu"
+            aria-label={isMobileMenuOpen ? 'Cerrar menú' : 'Abrir menú'}
+            aria-expanded={isMobileMenuOpen}
+            onClick={() => setIsMobileMenuOpen((open) => !open)}
+          >
+            {isMobileMenuOpen ? <X size={20} /> : <Menu size={20} />}
+          </button>
           <div className="topbar-title">Frenyer · Gestión empresarial</div>
 
           {/* Right Header Area with BCV Pill & Actions */}

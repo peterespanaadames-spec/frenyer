@@ -1,1 +1,1 @@
-import type {ReactNode} from 'react'; export function Card({children,className='' }:{children:ReactNode;className?:string}){return <section className={`card ${className}`}>{children}</section>}
+import type {ReactNode,CSSProperties} from 'react'; export function Card({children,className='',style}:{children:ReactNode;className?:string;style?:CSSProperties}){return <section className={`card ${className}`} style={style}>{children}</section>}

@@ -200,17 +200,7 @@ export function ConfigPage() {
   const [ticketFooter, setTicketFooter] = useState('¡Gracias por su compra!');
 
   // --- ASSOCIATED USERS STATE ---
-  const [users, setUsers] = useState<AssociatedUser[]>([
-    {
-      id: 1,
-      name: 'pedro montilla',
-      email: 'montillapedro76@gmail.com',
-      role: 'PROPIETARIO',
-      active: true,
-      title: 'Gerente',
-      initials: 'PM'
-    }
-  ]);
+  const users: AssociatedUser[] = [];
   const [userSearch, setUserSearch] = useState('');
   const [isAddUserModalOpen, setIsAddUserModalOpen] = useState(false);
 
@@ -229,11 +219,6 @@ export function ConfigPage() {
     setTimeout(() => setNotification(null), 3000);
   };
 
-  // Save Business configuration handlers
-  const handleSaveBusiness = () => {
-    showNotification('Configuración de la empresa guardada correctamente.');
-  };
-
   const handleConsultBcv = async () => {
     setIsConsultingBcv(true);
     try {
@@ -243,7 +228,11 @@ export function ConfigPage() {
         // Si existe tasa futura, esa es la que se graba; de lo contrario se queda con la actual
         const chosenRate = data.isFutureApplied && data.futureRate
           ? data.futureRate
-          : (data.appliedRate || data.usdRate || 872.3927);
+          : (data.appliedRate || data.usdRate);
+        if (!Number.isFinite(chosenRate) || chosenRate <= 0) {
+          showNotification('El servicio BCV no devolvió una tasa válida.', 'info');
+          return;
+        }
 
         setRateInput(chosenRate.toString());
         setActiveExchangeRate(chosenRate);
@@ -252,7 +241,6 @@ export function ConfigPage() {
         setIsFutureRateActive(Boolean(data.isFutureApplied));
         if (data.valueDate) setRateDate(data.valueDate);
 
-        setActiveExchangeRate(chosenRate);
         localStorage.setItem('frenyer_bcv_is_future', data.isFutureApplied ? 'true' : 'false');
         localStorage.setItem('frenyer_bcv_rate_source', data.source);
         if (data.valueDate) localStorage.setItem('frenyer_bcv_rate_date', data.valueDate);
@@ -288,77 +276,50 @@ export function ConfigPage() {
           })
         });
 
-        if (res.ok) {
-          const data = await res.json();
-          const effective = data.certifiedRate?.usdRate || numericRate;
-          setActiveExchangeRate(effective);
-          setCurrentRate(effective.toFixed(2).replace('.', ','));
-          localStorage.setItem('frenyer_bcv_rate', effective.toString());
-          localStorage.setItem('frenyer_bcv_rate_date', rateDate);
-          localStorage.setItem('frenyer_bcv_rate_source', 'MANUAL');
-
-          window.dispatchEvent(new CustomEvent('frenyer:rate-changed', {
-            detail: { rate: effective, isFutureRate: false, source: 'MANUAL' }
-          }));
-
-          await loadRateHistory();
-          showNotification(`Nueva tasa de cambio guardada en base de datos: Bs. ${effective.toFixed(4)}`);
-        } else {
-          setActiveExchangeRate(numericRate);
-          setCurrentRate(numericRate.toFixed(2).replace('.', ','));
-          showNotification(`Tasa guardada localmente: Bs. ${numericRate}`);
+        if (!res.ok) {
+          throw new Error('No se pudo guardar la tasa en Supabase.');
         }
-      } catch {
-        setActiveExchangeRate(numericRate);
-        setCurrentRate(numericRate.toFixed(2).replace('.', ','));
-        showNotification(`Tasa guardada localmente: Bs. ${numericRate}`);
+        const data = await res.json();
+        const effective = Number(data.certifiedRate?.usdRate);
+        if (!Number.isFinite(effective) || effective <= 0) {
+          throw new Error('Supabase no devolvió una tasa certificada válida.');
+        }
+        setActiveExchangeRate(effective);
+        setCurrentRate(effective.toFixed(2).replace('.', ','));
+        localStorage.setItem('frenyer_bcv_rate', effective.toString());
+        localStorage.setItem('frenyer_bcv_rate_date', rateDate);
+        localStorage.setItem('frenyer_bcv_rate_source', 'MANUAL');
+
+        window.dispatchEvent(new CustomEvent('frenyer:rate-changed', {
+          detail: { rate: effective, isFutureRate: false, source: 'MANUAL' }
+        }));
+
+        await loadRateHistory();
+        showNotification(`Nueva tasa de cambio guardada en base de datos: Bs. ${effective.toFixed(4)}`);
+      } catch (error) {
+        showNotification(
+          error instanceof Error ? error.message : 'Error al guardar la tasa en Supabase.',
+          'info'
+        );
       }
     }
   };
 
   // Associated Users actions
   const toggleUserStatus = (id: number) => {
-    setUsers(users.map(u => u.id === id ? { ...u, active: !u.active } : u));
-    showNotification('Estatus de usuario actualizado.');
+    void id;
+    showNotification('La gestión de usuarios debe habilitarse desde Supabase.', 'info');
   };
 
   const handleDeleteUser = (id: number) => {
-    setUsers(users.filter(u => u.id !== id));
-    showNotification('Usuario asociado removido de la empresa.', 'info');
+    void id;
+    showNotification('La gestión de usuarios debe habilitarse desde Supabase.', 'info');
   };
 
   const handleAddUser = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newUserName || !newUserEmail) return;
-
-    const initials = newUserName
-      .split(' ')
-      .map(n => n[0])
-      .join('')
-      .toUpperCase()
-      .slice(0, 2);
-
-    const newUser: AssociatedUser = {
-      id: Date.now(),
-      name: newUserName.toLowerCase(),
-      email: newUserEmail,
-      role: newUserRole,
-      active: newUserActive,
-      title: newUserTitle,
-      initials: initials || 'US'
-    };
-
-    setUsers([...users, newUser]);
     setIsAddUserModalOpen(false);
-
-    // Reset Form
-    setNewUserName('');
-    setNewUserEmail('');
-    setNewUserRole('ADMINISTRADOR');
-    setNewUserTitle('Gerente');
-    setNewUserActive(true);
-
-    showNotification('Usuario asociado agregado con éxito.');
+    showNotification('La gestión de usuarios debe habilitarse desde Supabase.', 'info');
   };
 
   const filteredUsers = users.filter(
@@ -792,13 +753,6 @@ export function ConfigPage() {
             </div>
           </Card>
 
-          {/* Business tab main save button */}
-          <div style={{ display: 'flex', justifyContent: 'flex-start', marginTop: 8 }}>
-            <Button variant="primary" style={{ height: 42, padding: '0 24px', fontWeight: 600 }} onClick={handleSaveBusiness}>
-              <Save size={16} /> Guardar cambios
-            </Button>
-          </div>
-
         </div>
       )}
 
@@ -812,17 +766,17 @@ export function ConfigPage() {
               <div style={{ display: 'flex', gap: 8, flex: 1, minWidth: 280 }}>
                 <Button
                   variant="primary"
-                  onClick={() => setIsAddUserModalOpen(true)}
+                  disabled
                   style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 700, fontSize: 11, letterSpacing: '0.04em' }}
                 >
-                  <Plus size={15} /> AGREGAR USUARIO ASOCIADO
+                  <Plus size={15} /> GESTIÓN EN SUPABASE
                 </Button>
                 
                 <Button
                   style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, background: '#fff', color: '#5f6572', borderColor: '#d1d5db' }}
-                  onClick={() => showNotification('Base de usuarios asociados sincronizada.', 'info')}
+                  disabled
                 >
-                  <RefreshCw size={13} /> Sincronizar
+                  <RefreshCw size={13} /> Sin sincronización
                 </Button>
               </div>
 
@@ -970,7 +924,7 @@ export function ConfigPage() {
                       className="input"
                       value={newUserName}
                       onChange={(e) => setNewUserName(e.target.value)}
-                      placeholder="Ej: Pedro Montilla"
+                      placeholder="Nombre completo"
                       required
                     />
                   </div>

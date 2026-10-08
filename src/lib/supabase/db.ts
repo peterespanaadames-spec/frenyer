@@ -60,7 +60,7 @@ export interface DbSale {
   branch_id?: string;
   customer_id?: string;
   user_id?: string;
-  doc_type: 'FACTURA' | 'NOTA' | 'ESPERA';
+  doc_type: 'FACTURA' | 'NOTA' | 'ESPERA' | 'COTIZACION';
   doc_number: string;
   status: 'COMPLETADA' | 'EN_ESPERA' | 'ANULADA';
   payment_type: 'CONTADO' | 'CREDITO';
@@ -75,7 +75,42 @@ export interface DbSale {
   total_usd: number;
   total_ves: number;
   notes?: string;
+  quote_status?: 'Creada' | 'Facturada' | 'Rechazada';
+  expires_at?: string;
+  converted_to_sale_id?: string;
   created_at?: string;
+}
+
+export interface DbQuoteItem {
+  id?: string;
+  sale_id: string;
+  product_id?: string;
+  sku: string;
+  name: string;
+  quantity: number;
+  unit_price_usd: number;
+  total_usd: number;
+  total_ves: number;
+}
+
+export interface DbQuote {
+  id: string;
+  organization_id?: string;
+  customer_id?: string;
+  doc_number: string;
+  status: string;
+  payment_type: string;
+  exchange_rate: number;
+  subtotal_usd: number;
+  total_usd: number;
+  total_ves: number;
+  notes?: string;
+  quote_status?: 'Creada' | 'Facturada' | 'Rechazada';
+  expires_at?: string;
+  converted_to_sale_id?: string;
+  created_at?: string;
+  customer?: { name?: string };
+  items?: DbQuoteItem[];
 }
 
 export interface DbSaleItem {
@@ -247,7 +282,7 @@ export async function createSupplierInSupabase(
 
     const payload: any = {
       organization_id: orgId,
-      code: supplier.code || `PRV-${Math.floor(1000 + Math.random() * 9000)}`,
+      code: supplier.code || `PRV-${crypto.randomUUID().replace(/-/g, '').slice(0, 12).toUpperCase()}`,
       name: supplier.name,
       doc_type: supplier.doc_type || 'RIF (J / G / V)',
       doc_number: supplier.doc_number || '',
@@ -543,9 +578,14 @@ export async function recordSaleInSupabase(
   payments: Array<{ method: string; amount_usd: number; amount_ves: number; exchange_rate: number }>
 ): Promise<{ success: boolean; saleId?: string; error?: string }> {
   try {
+    const organizationId = sale.organization_id || await getActiveOrgId();
+    if (!organizationId) {
+      return { success: false, error: 'No hay una organización activa autorizada para registrar la venta.' };
+    }
+
     // Sanitize sale object to strictly match sales table schema in database
     const cleanSale = {
-      organization_id: sale.organization_id || '00000000-0000-0000-0000-000000000001',
+      organization_id: organizationId,
       branch_id: sale.branch_id || null,
       customer_id: sale.customer_id || null,
       user_id: sale.user_id || null,
@@ -573,7 +613,7 @@ export async function recordSaleInSupabase(
 
     if (saleError || !saleData) {
       console.error('Error inserting sale into Supabase:', saleError?.message);
-      return { success: false, error: saleError?.message };
+      return { success: false, error: saleError?.message || 'Supabase no devolvió la venta registrada.' };
     }
 
     const saleId = saleData.id;
@@ -596,7 +636,8 @@ export async function recordSaleInSupabase(
         .insert(itemsToInsert);
 
       if (itemsError) {
-        console.warn('Error inserting sale items:', itemsError.message);
+        console.error('Error inserting sale items:', itemsError.message);
+        return { success: false, saleId, error: `La venta se creó, pero no se guardaron sus productos: ${itemsError.message}` };
       }
     }
 
@@ -615,24 +656,33 @@ export async function recordSaleInSupabase(
         .insert(paymentsToInsert);
 
       if (paymentsError) {
-        console.warn('Error inserting sale payments:', paymentsError.message);
+        console.error('Error inserting sale payments:', paymentsError.message);
+        return { success: false, saleId, error: `La venta se creó, pero no se guardaron sus pagos: ${paymentsError.message}` };
       }
     }
 
     // 4. Deduct Stocks
     for (const item of items) {
-      const { data: currentProd } = await supabase
+      const { data: currentProd, error: productError } = await supabase
         .from('products')
         .select('stock')
         .eq('sku', item.sku)
         .single();
 
+      if (productError) {
+        console.error(`Error loading stock for ${item.sku}:`, productError.message);
+        return { success: false, saleId, error: `La venta se creó, pero no se pudo actualizar el inventario de ${item.sku}.` };
+      }
       if (currentProd) {
         const nextStock = Math.max(0, (Number(currentProd.stock) || 0) - item.quantity);
-        await supabase
+        const { error: stockError } = await supabase
           .from('products')
           .update({ stock: nextStock })
           .eq('sku', item.sku);
+        if (stockError) {
+          console.error(`Error updating stock for ${item.sku}:`, stockError.message);
+          return { success: false, saleId, error: `La venta se creó, pero no se pudo actualizar el inventario de ${item.sku}.` };
+        }
       }
     }
 
@@ -654,6 +704,165 @@ export async function recordSaleInSupabase(
   } catch (err: any) {
     console.error('Network error executing sale in Supabase:', err);
     return { success: false, error: err?.message || 'Error de conexión' };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// COTIZACIONES / PRESUPUESTOS
+// ---------------------------------------------------------------------------
+
+export async function fetchQuotesFromSupabase(): Promise<DbQuote[]> {
+  try {
+    const { data, error } = await supabase
+      .from('sales')
+      .select(`
+        id,
+        organization_id,
+        customer_id,
+        doc_number,
+        status,
+        payment_type,
+        exchange_rate,
+        subtotal_usd,
+        total_usd,
+        total_ves,
+        notes,
+        quote_status,
+        expires_at,
+        converted_to_sale_id,
+        created_at,
+        customers (name),
+        sale_items (
+          id,
+          sku,
+          name,
+          quantity,
+          unit_price_usd,
+          total_usd,
+          total_ves
+        )
+      `)
+      .eq('doc_type', 'COTIZACION')
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      console.error('Error fetching quotes from Supabase:', error.message);
+      return [];
+    }
+
+    return (data || []) as unknown as DbQuote[];
+  } catch (err) {
+    console.error('Network error fetching quotes from Supabase:', err);
+    return [];
+  }
+}
+
+export async function createQuoteInSupabase(input: {
+  customerId: string;
+  validityDays: number;
+  notes: string;
+  items: Array<{ sku: string; name: string; quantity: number; unit_price_usd: number }>;
+  exchangeRate: number;
+  rateSource?: string;
+  isFutureRate?: boolean;
+  rateValueDate?: string;
+}): Promise<{ success: boolean; quoteId?: string; error?: string }> {
+  try {
+    const organizationId = await getActiveOrgId();
+    if (!organizationId) {
+      return { success: false, error: 'No hay una organización activa autorizada para registrar la cotización.' };
+    }
+
+    const payload: Record<string, unknown> = {
+      p_customer_id: input.customerId,
+      p_validity_days: Math.max(1, Math.floor(input.validityDays) || 7),
+      p_notes: input.notes,
+      p_items: JSON.stringify(input.items),
+      p_exchange_rate: input.exchangeRate
+    };
+    if (input.rateSource) payload.p_rate_source = input.rateSource;
+    if (input.isFutureRate !== undefined) payload.p_is_future_rate = input.isFutureRate;
+    if (input.rateValueDate) payload.p_rate_value_date = input.rateValueDate;
+
+    const { data, error } = await supabase.rpc('create_quote', payload);
+
+    if (error) {
+      console.error('Error creating quote in Supabase:', error.message);
+      return { success: false, error: error.message };
+    }
+
+    return { success: true, quoteId: data };
+  } catch (err: any) {
+    console.error('Network error creating quote in Supabase:', err);
+    return { success: false, error: err?.message || 'Error de conexión con Supabase' };
+  }
+}
+
+export async function convertQuoteToInvoiceInSupabase(
+  quoteId: string,
+  paymentType: 'CONTADO' | 'CREDITO' = 'CONTADO'
+): Promise<{
+  success: boolean;
+  invoiceId?: string;
+  invoiceDocNumber?: string;
+  totalUsd?: number;
+  removedItems?: Array<{ sku: string; name: string; quantity: number; available: number; reason: string }>;
+  error?: string;
+}> {
+  try {
+    const organizationId = await getActiveOrgId();
+    if (!organizationId) {
+      return { success: false, error: 'No hay una organización activa autorizada para convertir la cotización.' };
+    }
+
+    const { data, error } = await supabase.rpc('convert_quote_to_invoice', {
+      p_quote_id: quoteId,
+      p_payment_type: paymentType
+    });
+
+    if (error) {
+      console.error('Error converting quote to invoice in Supabase:', error.message);
+      return { success: false, error: error.message };
+    }
+
+    const result = data as {
+      invoice_id?: string;
+      invoice_doc_number?: string;
+      total_usd?: number;
+      removed_items?: Array<{ sku: string; name: string; quantity: number; available: number; reason: string }>;
+    };
+
+    return {
+      success: true,
+      invoiceId: result?.invoice_id,
+      invoiceDocNumber: result?.invoice_doc_number,
+      totalUsd: result?.total_usd,
+      removedItems: result?.removed_items || []
+    };
+  } catch (err: any) {
+    console.error('Network error converting quote to invoice in Supabase:', err);
+    return { success: false, error: err?.message || 'Error de conexión con Supabase' };
+  }
+}
+
+export async function rejectQuoteInSupabase(quoteId: string): Promise<{ success: boolean; error?: string }> {
+  try {
+    const organizationId = await getActiveOrgId();
+    if (!organizationId) {
+      return { success: false, error: 'No hay una organización activa autorizada para rechazar la cotización.' };
+    }
+
+    const { error } = await supabase.rpc('reject_quote', { p_quote_id: quoteId });
+
+    if (error) {
+      console.error('Error rejecting quote in Supabase:', error.message);
+      return { success: false, error: error.message };
+    }
+
+    return { success: true };
+  } catch (err: any) {
+    console.error('Network error rejecting quote in Supabase:', err);
+    return { success: false, error: err?.message || 'Error de conexión con Supabase' };
   }
 }
 
