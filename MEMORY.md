@@ -2,7 +2,13 @@
 Memoria del proyecto entre sesiones. Máximo ~50 líneas: resume o elimina lo que ya no aporte.
 
 ## Estado actual
-- ERP bimonetario Frenyer publicado en GitHub; `npm run build` y `npm run lint` pasan. No hay registro público: crear el primer usuario en Supabase Auth y asignarle membresía de organización desde SQL Editor. No se ha confirmado que las migraciones estén aplicadas en el proyecto remoto.
+- ERP bimonetario Frenyer publicado en GitHub; `npm run build` y `npm run lint` pasan. Autenticación incluye ingreso, registro, recuperación y cambio de contraseña. La migración 0010 crea una organización y rol admin al registrar el primer usuario; las migraciones 0009 y 0010 deben aplicarse en Supabase.
+- **Revisión de código 2026-10-08 (pendiente de corregir)**, por prioridad:
+  1. `server.ts:953` usa `app.get('*')`, inválido en Express 5 → con `NODE_ENV=production` el servidor no arranca (usar `/{*splat}`); verificado con ejecución real.
+  2. Multi-tenant: `lastCertifiedRate` (server.ts:135) y `memoryBankMovements` (server.ts:857) son globales → tasas y movimientos bancarios se mezclan entre organizaciones; saldo bancario actualizado con lectura-modificación-escritura (no atómico, server.ts:894).
+  3. Integridad: `db.ts:548` `organization_id` con fallback hardcodeado `...0001`; `Accounts.tsx:152-186` datos demo como cartera real y cobro sin verificar respuestas; `Sales.tsx:849-935` no valida `saleResult.success`.
+  4. `server.ts` queda fuera de `tsc -b` (solo `src/` y `vite.config.ts`); falta un `tsconfig.server.json`.
+  5. También: fechas de tasa con formatos mezclados (`server.ts:307`, días 20-31 marcan "futura"), CORS abierto, TLS `rejectUnauthorized:false`, IDs de path sin `encodeURIComponent`, HTTP 200 con error disfrazado, redondeo faltante en `Sales/Accounts/BankAccounts`, XSS en HTML de impresión (`Accounts.tsx:462`, `Suppliers.tsx:252`), transferencias no atómicas y `Config.tsx:306` aplicando tasa local aunque falle el servidor.
 - **Protocolo Estandarizado de Tasas BCV Operativo**:
   - Sincronización corregida entre clave `frenyer_bcv_rate` y `frenyer_active_exchange_rate` en `currency.ts`, `Sales.tsx` y `DashboardLayout.tsx`. La venta consulta la tasa oficial BCV viva de `/api/bcv/rates` garantizando facturación precisa en VES.
 - Módulo de **Cuentas por Cobrar (`Accounts.tsx`)**:
@@ -17,6 +23,10 @@ Memoria del proyecto entre sesiones. Máximo ~50 líneas: resume o elimina lo qu
   - La API valida JWT y membresía de organización antes de rutas de datos y reenvía el JWT a PostgREST. El layout exige inicio de sesión y muestra membresía inválida; `authenticatedFetch` adjunta el token a rutas protegidas.
   - La migración `0009_lock_down_api_rls.sql` sustituye políticas abiertas por RLS de organización y rol: miembros autorizados escriben, `viewer` y roles desconocidos solo leen; las tasas manuales requieren rol administrativo. Aplicar migraciones en orden, incluida 0008 y luego 0009, antes de usar la aplicación.
   - Repositorio GitHub público conectado y publicado; `.env` no se versiona.
+- **Autenticación visual y registro (2026-10-08)**:
+  - Pantalla responsive inspirada en la referencia, con visibilidad de contraseña, login, alta de organización, recuperación y actualización de contraseña.
+  - `0010_auth_signup_organization.sql` asigna organización propia y rol `admin` al nuevo usuario (no se confía en metadata de rol del navegador). Habilitar confirmación de email y permitir la URL de retorno en Supabase.
+  - CAPTCHA real opcional con Cloudflare Turnstile; configurar la site key pública en `VITE_TURNSTILE_SITE_KEY` y la secret en Supabase Auth. No mostrar falsa verificación si no está configurada.
 - Módulo de **Proveedores (`Suppliers.tsx`)**:
   - Botón "Nuevo Proveedor" abre una **pantalla completa de formulario dedicado** con proceso de **3 FASES**: 1. Identificación, 2. Contacto, 3. Finanzas.
   - Al guardar, registra de manera persistente en Supabase (`public.suppliers`) evitando fallos de restricción de clave foránea de organización y retorna al directorio con recarga en tiempo real.

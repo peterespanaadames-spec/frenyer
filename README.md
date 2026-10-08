@@ -14,8 +14,10 @@ npm install
 npm run dev
 ```
 
-3. Aplica, en orden numérico, todas las migraciones de `supabase/migrations/` en el SQL Editor de Supabase. La migración `0009_lock_down_api_rls.sql` sustituye las políticas RLS permisivas heredadas y debe estar aplicada para acceder a datos.
-4. Crea el usuario en Supabase Auth y asígnalo a una organización en `organization_members`. El inicio de sesión requiere una membresía válida. El rol `viewer` (y roles desconocidos) es de solo lectura; asigna un rol operativo autorizado para habilitar escrituras. Los cambios manuales de tasa quedan reservados a roles administrativos.
+3. Aplica, en orden numérico, todas las migraciones de `supabase/migrations/` en el SQL Editor de Supabase. Las migraciones `0009` y `0010` son necesarias para RLS seguro y el registro con organización automática.
+4. Habilita la confirmación de correo en Supabase Auth. Cada alta crea una organización aislada y asigna al primer usuario el rol `admin`; nunca se toma el rol desde los datos del navegador. Los roles `viewer` y desconocidos son de solo lectura.
+5. Para CAPTCHA real, define `VITE_TURNSTILE_SITE_KEY` en `.env.local` y configura el secreto Turnstile en **Supabase → Authentication → Bot and Abuse Protection**. Sin claves no se simula una verificación; el formulario sigue funcionando sin el widget.
+6. En Supabase Auth, añade `http://localhost:3000/` (y el dominio de producción) a las URLs de redirección permitidas para confirmar el correo y recuperar contraseñas.
 
 ## Alcance de esta entrega
 Shell visual, dashboard y módulos navegables de Ventas/POS, Inventario, Finanzas, CxC/CxP, Clientes y Alma. Las rutas de datos de la API validan sesión y membresía; PostgreSQL aplica RLS por organización. Cuentas por Pagar requiere también el vínculo a proveedores de la migración `0008_accounts_payable_supplier_link.sql`.

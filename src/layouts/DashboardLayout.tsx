@@ -3,6 +3,7 @@ import { useNavigate, Outlet } from 'react-router-dom';
 import { Menu, Sparkles, RefreshCw, Edit3, ShieldAlert, AlertCircle, ArrowUpRight, Check, X, LogOut } from 'lucide-react';
 import { Sidebar } from '../components/ui/Sidebar';
 import { ManualBcvRateModal } from '../components/modals/ManualBcvRateModal';
+import { AuthScreen } from '../components/auth/AuthScreen';
 import { getActiveExchangeRate, setActiveExchangeRate, isFutureExchangeRate } from '../lib/currency';
 import { isSupabaseConfigured, supabase } from '../lib/supabase/client';
 import { getActiveOrgId } from '../lib/supabase/db';
@@ -11,9 +12,6 @@ export function DashboardLayout() {
   const navigate = useNavigate();
   const [authStatus, setAuthStatus] = useState<'loading' | 'signedOut' | 'noOrganization' | 'authenticated'>('loading');
   const [authMessage, setAuthMessage] = useState('');
-  const [authEmail, setAuthEmail] = useState('');
-  const [authPassword, setAuthPassword] = useState('');
-  const [isSigningIn, setIsSigningIn] = useState(false);
   const [bcvRate, setBcvRate] = useState(() => getActiveExchangeRate());
   const [isFuture, setIsFuture] = useState(() => isFutureExchangeRate());
   const [rateSource, setRateSource] = useState(() => localStorage.getItem('frenyer_bcv_rate_source') || 'BCV');
@@ -101,6 +99,11 @@ export function DashboardLayout() {
   };
 
   const checkAuthenticatedMembership = async () => {
+    if (new URLSearchParams(window.location.search).get('auth') === 'recovery') {
+      setAuthMessage('');
+      setAuthStatus('signedOut');
+      return;
+    }
     if (!isSupabaseConfigured) {
       setAuthMessage('Configure VITE_SUPABASE_URL y VITE_SUPABASE_ANON_KEY para iniciar sesión.');
       setAuthStatus('signedOut');
@@ -128,28 +131,6 @@ export function DashboardLayout() {
     setAuthStatus('authenticated');
   };
 
-  const handleSignIn = async (event: React.FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    setIsSigningIn(true);
-    setAuthMessage('');
-    try {
-      const { error } = await supabase.auth.signInWithPassword({
-        email: authEmail.trim(),
-        password: authPassword
-      });
-      if (error) {
-        throw error;
-      }
-      setAuthPassword('');
-      await checkAuthenticatedMembership();
-    } catch (error) {
-      setAuthMessage(error instanceof Error ? error.message : 'No se pudo iniciar sesión.');
-      setAuthStatus('signedOut');
-    } finally {
-      setIsSigningIn(false);
-    }
-  };
-
   const handleSignOut = async () => {
     const { error } = await supabase.auth.signOut();
     if (error) {
@@ -162,7 +143,8 @@ export function DashboardLayout() {
 
   useEffect(() => {
     void checkAuthenticatedMembership();
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(() => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
+      if (event === 'PASSWORD_RECOVERY') return;
       window.setTimeout(() => {
         void checkAuthenticatedMembership();
       }, 0);
@@ -191,76 +173,14 @@ export function DashboardLayout() {
   }, []);
 
   if (authStatus !== 'authenticated') {
-    return (
-      <main style={{
-        minHeight: '100vh',
-        display: 'grid',
-        placeItems: 'center',
-        padding: 20,
-        background: '#f8fafc'
-      }}>
-        <section className="card" style={{
-          width: '100%',
-          maxWidth: 420,
-          padding: 28,
-          borderRadius: 16,
-          background: '#fff',
-          border: '1px solid var(--border)'
-        }}>
-          <h1 style={{ margin: '0 0 8px', fontSize: 22, color: '#0f172a' }}>Iniciar sesión</h1>
-          <p style={{ margin: '0 0 20px', color: '#64748b', fontSize: 13 }}>
-            Acceda con un usuario miembro de una organización Frenyer.
-          </p>
-          {authStatus === 'loading' ? (
-            <p role="status" style={{ color: '#64748b' }}>Verificando sesión...</p>
-          ) : (
-            <form onSubmit={handleSignIn} style={{ display: 'grid', gap: 12 }}>
-              <label style={{ display: 'grid', gap: 6, fontSize: 13, fontWeight: 600 }}>
-                Correo electrónico
-                <input
-                  type="email"
-                  autoComplete="username"
-                  required
-                  value={authEmail}
-                  onChange={(event) => setAuthEmail(event.target.value)}
-                  style={{ height: 42, padding: '0 12px', borderRadius: 9, border: '1px solid var(--border)' }}
-                />
-              </label>
-              <label style={{ display: 'grid', gap: 6, fontSize: 13, fontWeight: 600 }}>
-                Contraseña
-                <input
-                  type="password"
-                  autoComplete="current-password"
-                  required
-                  value={authPassword}
-                  onChange={(event) => setAuthPassword(event.target.value)}
-                  style={{ height: 42, padding: '0 12px', borderRadius: 9, border: '1px solid var(--border)' }}
-                />
-              </label>
-              {authMessage && (
-                <p role="alert" style={{ margin: 0, color: '#b91c1c', fontSize: 13 }}>{authMessage}</p>
-              )}
-              <button
-                type="submit"
-                disabled={isSigningIn}
-                style={{ height: 42, border: 0, borderRadius: 9, background: '#7c3aed', color: '#fff', fontWeight: 700 }}
-              >
-                {isSigningIn ? 'Ingresando...' : 'Ingresar'}
-              </button>
-              {authStatus === 'noOrganization' && (
-                <button
-                  type="button"
-                  onClick={handleSignOut}
-                  style={{ height: 38, border: '1px solid var(--border)', borderRadius: 9, background: '#fff', color: '#475569' }}
-                >
-                  Cerrar sesión
-                </button>
-              )}
-            </form>
-          )}
-        </section>
-      </main>
-    );
+    return <AuthScreen
+      isLoading={authStatus === 'loading'}
+      isConfigured={isSupabaseConfigured}
+      message={authMessage}
+      canSignOut={authStatus === 'noOrganization'}
+      onAuthenticated={checkAuthenticatedMembership}
+      onSignOut={handleSignOut}
+    />;
   }
 
   return (
