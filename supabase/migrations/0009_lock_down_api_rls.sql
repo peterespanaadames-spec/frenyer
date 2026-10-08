@@ -285,7 +285,7 @@ create policy "authenticated_delete_exchange_rates"
         select 1 from public.organization_members membership
         where membership.organization_id = exchange_rates.organization_id
           and membership.user_id = auth.uid()
-          and lower(membership.role) in ('admin', 'administrador', 'superadmin', 'gerente', 'gerente general', 'owner')
+          and lower(membership.role) in ('admin', 'administrador', 'superadmin', 'gerente', 'gerente general', 'manager', 'owner')
     ));
 
 create policy "authenticated_manage_suppliers"
