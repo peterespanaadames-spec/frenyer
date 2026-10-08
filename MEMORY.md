@@ -2,7 +2,7 @@
 Memoria del proyecto entre sesiones. Máximo ~50 líneas: resume o elimina lo que ya no aporte.
 
 ## Estado actual
-- ERP bimonetario Frenyer; el build y ESLint están pendientes de validar porque `node_modules` no está instalado (`tsc` y `eslint` no disponibles). Todavía no se pudo iniciar el servidor local.
+- ERP bimonetario Frenyer publicado en GitHub; `npm run build` y `npm run lint` pasan. No hay registro público: crear el primer usuario en Supabase Auth y asignarle membresía de organización desde SQL Editor. No se ha confirmado que las migraciones estén aplicadas en el proyecto remoto.
 - **Protocolo Estandarizado de Tasas BCV Operativo**:
   - Sincronización corregida entre clave `frenyer_bcv_rate` y `frenyer_active_exchange_rate` en `currency.ts`, `Sales.tsx` y `DashboardLayout.tsx`. La venta consulta la tasa oficial BCV viva de `/api/bcv/rates` garantizando facturación precisa en VES.
 - Módulo de **Cuentas por Cobrar (`Accounts.tsx`)**:
@@ -16,7 +16,7 @@ Memoria del proyecto entre sesiones. Máximo ~50 líneas: resume o elimina lo qu
   - `.gitignore` excluye configuraciones locales, dependencias y artefactos; `.env.example` contiene placeholders, y se retiraron credenciales embebidas de cliente/servidor.
   - La API valida JWT y membresía de organización antes de rutas de datos y reenvía el JWT a PostgREST. El layout exige inicio de sesión y muestra membresía inválida; `authenticatedFetch` adjunta el token a rutas protegidas.
   - La migración `0009_lock_down_api_rls.sql` sustituye políticas abiertas por RLS de organización y rol: miembros autorizados escriben, `viewer` y roles desconocidos solo leen; las tasas manuales requieren rol administrativo. Aplicar migraciones en orden, incluida 0008 y luego 0009, antes de usar la aplicación.
-  - No hay dependencias instaladas ni repositorio Git/remoto todavía; no se ha publicado el código.
+  - Repositorio GitHub público conectado y publicado; `.env` no se versiona.
 - Módulo de **Proveedores (`Suppliers.tsx`)**:
   - Botón "Nuevo Proveedor" abre una **pantalla completa de formulario dedicado** con proceso de **3 FASES**: 1. Identificación, 2. Contacto, 3. Finanzas.
   - Al guardar, registra de manera persistente en Supabase (`public.suppliers`) evitando fallos de restricción de clave foránea de organización y retorna al directorio con recarga en tiempo real.
