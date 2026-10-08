@@ -8,9 +8,13 @@ import { getActiveExchangeRate, setActiveExchangeRate, isFutureExchangeRate } fr
 import { isSupabaseConfigured, supabase } from '../lib/supabase/client';
 import { getActiveOrgId } from '../lib/supabase/db';
 
+const isAuthenticationRequired = import.meta.env.VITE_AUTH_REQUIRED === 'true';
+
 export function DashboardLayout() {
   const navigate = useNavigate();
-  const [authStatus, setAuthStatus] = useState<'loading' | 'signedOut' | 'noOrganization' | 'authenticated'>('loading');
+  const [authStatus, setAuthStatus] = useState<'loading' | 'signedOut' | 'noOrganization' | 'authenticated'>(
+    isAuthenticationRequired ? 'loading' : 'authenticated'
+  );
   const [authMessage, setAuthMessage] = useState('');
   const [bcvRate, setBcvRate] = useState(() => getActiveExchangeRate());
   const [isFuture, setIsFuture] = useState(() => isFutureExchangeRate());
@@ -142,6 +146,7 @@ export function DashboardLayout() {
   };
 
   useEffect(() => {
+    if (!isAuthenticationRequired) return;
     void checkAuthenticatedMembership();
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
       if (event === 'PASSWORD_RECOVERY') return;
@@ -172,7 +177,7 @@ export function DashboardLayout() {
     return () => window.removeEventListener('frenyer:rate-changed', handleRateEvent);
   }, []);
 
-  if (authStatus !== 'authenticated') {
+  if (isAuthenticationRequired && authStatus !== 'authenticated') {
     return <AuthScreen
       isLoading={authStatus === 'loading'}
       isConfigured={isSupabaseConfigured}
@@ -187,6 +192,18 @@ export function DashboardLayout() {
     <div className="shell">
       <Sidebar />
       <main className="main" style={{ position: 'relative' }}>
+        {!isAuthenticationRequired && (
+          <div role="status" style={{
+            padding: '9px 16px',
+            background: '#fffbeb',
+            borderBottom: '1px solid #fde68a',
+            color: '#92400e',
+            fontSize: 12,
+            textAlign: 'center'
+          }}>
+            Vista previa sin inicio de sesión. Las operaciones de Supabase siguen protegidas y pueden requerir una cuenta.
+          </div>
+        )}
         <header className="topbar">
           <div className="mobile-menu">
             <Menu size={20} />
@@ -230,7 +247,7 @@ export function DashboardLayout() {
               Sucursal Principal
             </span>
             <div className="avatar">FG</div>
-            <button
+            {isAuthenticationRequired && <button
               type="button"
               onClick={handleSignOut}
               title="Cerrar sesión"
@@ -238,7 +255,7 @@ export function DashboardLayout() {
               style={{ border: '1px solid var(--border)', borderRadius: 8, background: '#fff', padding: 7, color: '#475569', cursor: 'pointer' }}
             >
               <LogOut size={16} />
-            </button>
+            </button>}
           </div>
         </header>
 

@@ -2,7 +2,7 @@
 Memoria del proyecto entre sesiones. Máximo ~50 líneas: resume o elimina lo que ya no aporte.
 
 ## Estado actual
-- ERP bimonetario Frenyer publicado en GitHub; `npm run build` y `npm run lint` pasan. Autenticación incluye ingreso, registro, recuperación y cambio de contraseña. La migración 0010 crea una organización y rol admin al registrar el primer usuario; las migraciones 0009 y 0010 deben aplicarse en Supabase.
+- ERP bimonetario Frenyer publicado en GitHub; `npm run build` y `npm run lint` pasan. Autenticación incluye ingreso, registro, recuperación y cambio de contraseña. Modo vista previa (`VITE_AUTH_REQUIRED=false`, predeterminado por ahora) permite navegar sin login; backend/RLS siguen exigiendo sesión para datos Supabase. Usa `true` para exigir login en la app.
 - **Revisión de código 2026-10-08 (pendiente de corregir)**, por prioridad:
   1. `server.ts:953` usa `app.get('*')`, inválido en Express 5 → con `NODE_ENV=production` el servidor no arranca (usar `/{*splat}`); verificado con ejecución real.
   2. Multi-tenant: `lastCertifiedRate` (server.ts:135) y `memoryBankMovements` (server.ts:857) son globales → tasas y movimientos bancarios se mezclan entre organizaciones; saldo bancario actualizado con lectura-modificación-escritura (no atómico, server.ts:894).
@@ -27,6 +27,8 @@ Memoria del proyecto entre sesiones. Máximo ~50 líneas: resume o elimina lo qu
   - Pantalla responsive inspirada en la referencia, con visibilidad de contraseña, login, alta de organización, recuperación y actualización de contraseña.
   - `0010_auth_signup_organization.sql` asigna organización propia y rol `admin` al nuevo usuario (no se confía en metadata de rol del navegador). Habilitar confirmación de email y permitir la URL de retorno en Supabase.
   - CAPTCHA real opcional con Cloudflare Turnstile; configurar la site key pública en `VITE_TURNSTILE_SITE_KEY` y la secret en Supabase Auth. No mostrar falsa verificación si no está configurada.
+- **Vista previa local temporal (2026-10-08)**:
+  - `.env.example` y la app publicada dejan `VITE_AUTH_REQUIRED=false` para vista previa; `true` restaura la pantalla de login. No cambia protección de API/RLS y no permite leer/escribir datos privados sin sesión.
 - Módulo de **Proveedores (`Suppliers.tsx`)**:
   - Botón "Nuevo Proveedor" abre una **pantalla completa de formulario dedicado** con proceso de **3 FASES**: 1. Identificación, 2. Contacto, 3. Finanzas.
   - Al guardar, registra de manera persistente en Supabase (`public.suppliers`) evitando fallos de restricción de clave foránea de organización y retorna al directorio con recarga en tiempo real.
