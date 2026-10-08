@@ -3,10 +3,22 @@ Memoria breve de estado y decisiones. No guardar secretos ni datos personales.
 
 ## Estado
 - ERP React/Vite + Express + Supabase. `.env` es local e ignorado; no versionar credenciales.
-- Última versión publicada en GitHub: `b7741dd`. La limpieza descrita abajo es trabajo local posterior y aún no se ha publicado.
+- Aplicación importada de GitHub (Frenyer).
+- **Conexión a Supabase corregida**:
+  - Resuelto el problema de `TypeError: Failed to fetch` al desacoplar el fallback de `127.0.0.1:54321` cuando Supabase no está configurado.
+  - Implementado sistema de conexión dinámica: endpoint `/api/supabase/config` (POST para conectar y validar credenciales), `/api/supabase/status` (GET estado en vivo) y `/api/supabase/migrations-bundle` (GET script SQL consolidado 0001-0012).
+  - Creado modal `SupabaseConnectionModal` accesible desde la barra superior, `Config.tsx` y `AuthScreen.tsx` para conectar la BD y sincronizar datos.
+  - Corregidos endpoints REST en `server.ts` para `/api/suppliers` (eliminado 401 hardcodeado), `/api/sales`, `/api/accounts-receivable` y `/api/accounts-payable`.
 - `VITE_AUTH_REQUIRED=false` permite vista previa; las rutas API y RLS siguen exigiendo sesión y membresía para datos privados.
-- Aplicar en Supabase las migraciones en orden, incluida `0008_accounts_payable_supplier_link.sql`, `0009_lock_down_api_rls.sql`, `0010_auth_signup_organization.sql` y `0011_quotes_module.sql`.
-- Módulo de Cotizaciones/Presupuestos implementado (`/ventas-flash/cotizaciones`, título "Presupuesto"): las cotizaciones viven en `sales` con `doc_type='COTIZACION'`; columnas `quote_status`, `expires_at`, `converted_to_sale_id` y RPCs `create_quote`, `convert_quote_to_invoice`, `reject_quote` en la migración 0011.
+- Aplicar en Supabase las migraciones en orden (o usar el script unificado de `/api/supabase/migrations-bundle`).
+- Módulo de Cotizaciones/Presupuestos (`/ventas-flash/cotizaciones`): rediseño visual completo según el design system (canvas frío, bordes 1px, radios 16px, acento violeta):
+  - NO se crea tabla aparte: las cotizaciones se almacenan directamente en la tabla core `sales` con `doc_type = 'COTIZACION'` y sus artículos en `sale_items`.
+  - Corregido el guardado de cotizaciones: eliminadas referencias a columnas inexistentes (`rate_source`, `is_future_rate`, `rate_value_date`, `updated_at`) que provocaban error de schema en Supabase.
+  - El histórico carga en vivo desde `sales` y muestra la lista completa de cotizaciones con sus 6 acciones operativas: Ver detalle, Facturar, Imprimir/PDF, Compartir, Modificar y Eliminar.
+  - Cabecera ejecutiva con botón "Actualizar" y "+ Nueva cotización" con selección predictiva de clientes.
+  - Tarjetas KPI métricas superiores: Total Cotizaciones, Vigentes/Pendientes, Facturadas (Cerradas) y Vencidas/Expiradas con desglose bimonetario (USD / VES con tasa BCV activa).
+  - Pestañas segmentadas de estado rápido con contadores en tiempo real (Todas, Pendientes, Facturadas, Vencidas, Rechazadas).
+  - Conversión a factura con deducción transaccional de stock tanto vía RPC como vía directa en `sales` y `sale_items`.
 - Conversión a factura: la RPC valida stock real, remueve ítems sin existencia (se reportan al operador), descuenta inventario, crea la FACTURA con correlativo propio y, en crédito, genera la CxC.
 - CxP asocia proveedores mediante `supplier_id`; pagos, saldo e impacto bancario se registran con la RPC transaccional de la migración 0008.
 - La tasa BCV consulta fuente oficial y servicio alternativo; sin datos válidos responde error y no inventa una tasa. La conversión puede conservar la última tasa del navegador.

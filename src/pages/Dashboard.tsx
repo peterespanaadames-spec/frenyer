@@ -4,7 +4,7 @@ import { Badge } from '../components/ui/Badge';
 import { Card } from '../components/ui/Card';
 import { EmptyState } from '../components/ui/EmptyState';
 import { formatUSD } from '../lib/currency';
-import { supabase } from '../lib/supabase/client';
+import { supabase, isSupabaseConfigured } from '../lib/supabase/client';
 
 interface DashboardSale {
   id: string;
@@ -55,6 +55,13 @@ export function Dashboard() {
     const loadSummary = async () => {
       setIsLoading(true);
       setLoadError('');
+
+      if (!isSupabaseConfigured) {
+        setSummary(EMPTY_SUMMARY);
+        setIsLoading(false);
+        return;
+      }
+
       try {
         const start = getWeekStart();
         const end = new Date();
@@ -121,6 +128,12 @@ export function Dashboard() {
     };
 
     void loadSummary();
+
+    const handleReconfig = () => {
+      void loadSummary();
+    };
+    window.addEventListener('frenyer:supabase-configured', handleReconfig);
+    return () => window.removeEventListener('frenyer:supabase-configured', handleReconfig);
   }, []);
 
   return (

@@ -17,18 +17,34 @@ import {
   Eye,
   RefreshCw,
   Calendar,
-  Percent
+  Percent,
+  Printer,
+  Download,
+  Code,
+  Copy,
+  Check,
+  Edit,
+  Share2,
+  Phone
 } from 'lucide-react';
 import { Card } from '../../../components/ui/Card';
 import { Button } from '../../../components/ui/Button';
 import { Badge } from '../../../components/ui/Badge';
+import { EmptyState } from '../../../components/ui/EmptyState';
 import { getActiveExchangeRate, setActiveExchangeRate, convertUSDtoVES, formatUSD, formatVES } from '../../../lib/currency';
+import {
+  printQuoteDocument,
+  downloadQuoteFile,
+  type QuoteDocumentData
+} from '../utils/quoteDocument';
 import {
   fetchProductsFromSupabase,
   fetchCustomersFromSupabase,
   createCustomerInSupabase,
   fetchQuotesFromSupabase,
   createQuoteInSupabase,
+  updateQuoteInSupabase,
+  deleteQuoteFromSupabase,
   convertQuoteToInvoiceInSupabase,
   rejectQuoteInSupabase,
   type DbQuote
@@ -116,6 +132,26 @@ export function QuotesPage() {
     setTimeout(() => setToast(null), 3500);
   };
 
+  // Archivo y Documento de Cotización
+  const [autoGenerateFile, setAutoGenerateFile] = useState(true);
+  const [lastCreatedQuoteDoc, setLastCreatedQuoteDoc] = useState<QuoteDocumentData | null>(null);
+  const [isSuccessModalOpen, setIsSuccessModalOpen] = useState(false);
+
+  // Edición de cotización
+  const [editingQuote, setEditingQuote] = useState<DbQuote | null>(null);
+
+  // Modal de confirmación para eliminar cotización
+  const [deleteConfirmQuote, setDeleteConfirmQuote] = useState<DbQuote | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+
+  // Modal para compartir cotización
+  const [shareQuote, setShareQuote] = useState<DbQuote | null>(null);
+  const [isCopiedShare, setIsCopiedShare] = useState(false);
+
+  // Modal para código SQL de Supabase (opcional / conservado)
+  const [isSqlModalOpen, setIsSqlModalOpen] = useState(false);
+  const [isCopiedSql, setIsCopiedSql] = useState(false);
+
   const loadData = async () => {
     setIsLoading(true);
     const ts = Date.now();
@@ -162,6 +198,65 @@ export function QuotesPage() {
     return 'Creada';
   };
 
+  const getCustomerPhone = (q: DbQuote): string | null => {
+    const phone = q.customer?.phone || (q as any).customers?.phone;
+    if (phone && phone.trim()) return phone.trim();
+    return null;
+  };
+
+  const getCustomerDoc = (q: DbQuote): string => {
+    const doc = q.customer?.doc_number || (q as any).customers?.doc_number;
+    const docType = q.customer?.doc_type || (q as any).customers?.doc_type || 'CI/RIF';
+    if (doc) return `${docType}: ${doc}`;
+    return 'Cliente comercial';
+  };
+
+  const getConceptPreview = (q: DbQuote): string => {
+    if (q.notes && q.notes.trim()) {
+      return q.notes.trim();
+    }
+    const rawItems = q.sale_items || q.items || [];
+    if (rawItems.length === 0) {
+      return 'Cotización general';
+    }
+    const names = rawItems.map((it: any) => it.name).filter(Boolean);
+    if (names.length === 1) {
+      return names[0];
+    }
+    return `${rawItems.length} ítems (${names.slice(0, 2).join(', ')}${names.length > 2 ? '...' : ''})`;
+  };
+
+  // Indicadores y métricas ejecutivas
+  const metrics = useMemo(() => {
+    const total = quotes.length;
+    const totalUsd = quotes.reduce((acc, q) => acc + (Number(q.total_usd) || 0), 0);
+
+    const pendientes = quotes.filter(q => getQuoteStatus(q) === 'Creada');
+    const pendientesUsd = pendientes.reduce((acc, q) => acc + (Number(q.total_usd) || 0), 0);
+
+    const facturadas = quotes.filter(q => getQuoteStatus(q) === 'Facturada');
+    const facturadasUsd = facturadas.reduce((acc, q) => acc + (Number(q.total_usd) || 0), 0);
+
+    const expiradas = quotes.filter(q => getQuoteStatus(q) === 'Expirada');
+    const expiradasUsd = expiradas.reduce((acc, q) => acc + (Number(q.total_usd) || 0), 0);
+
+    const rechazadas = quotes.filter(q => getQuoteStatus(q) === 'Rechazada');
+    const rechazadasUsd = rechazadas.reduce((acc, q) => acc + (Number(q.total_usd) || 0), 0);
+
+    return {
+      total,
+      totalUsd,
+      pendientesCount: pendientes.length,
+      pendientesUsd,
+      facturadasCount: facturadas.length,
+      facturadasUsd,
+      expiradasCount: expiradas.length,
+      expiradasUsd,
+      rechazadasCount: rechazadas.length,
+      rechazadasUsd
+    };
+  }, [quotes]);
+
   const categories = ['Todas', ...Array.from(new Set(products.map(p => p.category)))];
 
   // Filtered quotes
@@ -170,11 +265,19 @@ export function QuotesPage() {
     const productTerm = productFilter.trim().toLowerCase();
     return quotes.filter(q => {
       const status = getQuoteStatus(q);
-      const customerName = (q.customer?.name || '').toLowerCase();
+      const customerName = (q.customer?.name || (q as any).customers?.name || '').toLowerCase();
+      const customerPhone = (getCustomerPhone(q) || '').toLowerCase();
+      const customerDoc = getCustomerDoc(q).toLowerCase();
+      const notesText = (q.notes || '').toLowerCase();
+
       const matchesSearch = !term
         || q.doc_number.toLowerCase().includes(term)
-        || customerName.includes(term);
-      const matchesCustomer = customerFilter === 'Todos' || (q.customer?.name || '') === customerFilter;
+        || customerName.includes(term)
+        || customerPhone.includes(term)
+        || customerDoc.includes(term)
+        || notesText.includes(term);
+
+      const matchesCustomer = customerFilter === 'Todos' || (q.customer?.name || (q as any).customers?.name || '') === customerFilter;
       const matchesStatus = statusFilter === 'Todas' || status === statusFilter;
       const matchesProduct = !productTerm
         || (q.items || []).some(it =>
@@ -260,6 +363,7 @@ export function QuotesPage() {
   };
 
   const resetDraft = () => {
+    setEditingQuote(null);
     setDraftCustomerId('');
     setCustomerSearch('');
     setIsCustomerDropdownOpen(false);
@@ -276,7 +380,92 @@ export function QuotesPage() {
 
   const openCreateModal = () => {
     resetDraft();
+    if (customers.length > 0) {
+      setDraftCustomerId(customers[0].id);
+      setCustomerSearch(customers[0].name);
+    }
     setIsCreateOpen(true);
+  };
+
+  const handleOpenEditModal = (q: DbQuote) => {
+    resetDraft();
+    setEditingQuote(q);
+    setDraftCustomerId(q.customer_id || '');
+    const cust = customers.find(c => c.id === q.customer_id);
+    setCustomerSearch(q.customer?.name || cust?.name || '');
+    setNotes(q.notes || '');
+
+    if (q.expires_at) {
+      const diffMs = new Date(q.expires_at).getTime() - new Date(q.created_at || Date.now()).getTime();
+      const days = Math.round(diffMs / (1000 * 60 * 60 * 24));
+      if (days > 0) setValidityDays(days);
+    }
+
+    const rawItems = q.sale_items || q.items || [];
+    const loadedItems: QuoteDraftItem[] = rawItems.map((it: any) => {
+      const prod = products.find(p => p.sku === it.sku);
+      return {
+        sku: it.sku || `ITEM-${Math.random().toString(36).substring(7)}`,
+        name: it.name || 'Producto',
+        quantity: Number(it.quantity) || 1,
+        unitPriceUSD: Number(it.unit_price_usd) || 0,
+        stock: prod ? prod.stock : 999
+      };
+    });
+    setDraftItems(loadedItems);
+    setIsCreateOpen(true);
+  };
+
+  const handleDeleteQuote = async () => {
+    if (!deleteConfirmQuote) return;
+    setIsDeleting(true);
+    try {
+      const res = await deleteQuoteFromSupabase(deleteConfirmQuote.id);
+      if (res.success) {
+        showToast(`Cotización COT-${deleteConfirmQuote.doc_number} eliminada del histórico.`);
+        setDeleteConfirmQuote(null);
+        await loadData();
+      } else {
+        showToast(res.error || 'No se pudo eliminar la cotización.', 'info');
+      }
+    } catch (err: any) {
+      showToast(err?.message || 'Error eliminando cotización', 'info');
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
+  const getShareText = (q: DbQuote) => {
+    const docData = getQuoteDocumentData(q);
+    const dateFormatted = docData.createdAt ? new Date(docData.createdAt).toLocaleDateString('es-VE') : '';
+    const itemsText = docData.items.map(it => `• ${it.name} x${it.quantity} = $${(it.totalUSD).toFixed(2)}`).join('\n');
+    return `*COTIZACIÓN FRENYER* — COT-${docData.docNumber}
+Cliente: ${docData.customerName}
+Fecha: ${dateFormatted}
+Tasa de cambio: Bs. ${docData.exchangeRate.toLocaleString('es-VE')} / USD
+
+*DETALLE DE PRODUCTOS:*
+${itemsText}
+
+*Subtotal:* $${docData.subtotalUSD.toFixed(2)}
+*TOTAL USD:* $${docData.totalUSD.toFixed(2)}
+*TOTAL VES:* Bs. ${docData.totalVES.toLocaleString('es-VE')}
+
+_Válida por ${docData.validityDays || 7} días. Cotizado con Frenyer ERP._`;
+  };
+
+  const handleShareWhatsApp = (q: DbQuote) => {
+    const text = getShareText(q);
+    const url = `https://wa.me/?text=${encodeURIComponent(text)}`;
+    window.open(url, '_blank');
+  };
+
+  const handleCopyShareText = (q: DbQuote) => {
+    const text = getShareText(q);
+    navigator.clipboard.writeText(text);
+    setIsCopiedShare(true);
+    showToast('Resumen de cotización copiado al portapapeles');
+    setTimeout(() => setIsCopiedShare(false), 2500);
   };
 
   const handleSaveNewCustomer = async (e: React.FormEvent) => {
@@ -319,11 +508,59 @@ export function QuotesPage() {
     }
   };
 
+  // Conversión de cotización a objeto de documento imprimible/descargable
+  const getQuoteDocumentData = (q: DbQuote): QuoteDocumentData => {
+    const cust = customers.find(c => c.id === q.customer_id);
+    const rawItems = q.sale_items || q.items || [];
+    const items = rawItems.map((it: any) => ({
+      sku: it.sku || '',
+      name: it.name || 'Producto',
+      quantity: Number(it.quantity) || 1,
+      unitPriceUSD: Number(it.unit_price_usd) || 0,
+      totalUSD: Number(it.total_usd) || 0,
+      totalVES: Number(it.total_ves) || (Number(it.total_usd || 0) * (Number(q.exchange_rate) || activeRate))
+    }));
+
+    return {
+      docNumber: q.doc_number || '0001',
+      createdAt: q.created_at || new Date().toISOString(),
+      expiresAt: q.expires_at,
+      customerName: q.customer?.name || cust?.name || 'Cliente General',
+      customerDoc: cust?.docNumber || '',
+      exchangeRate: Number(q.exchange_rate) || activeRate,
+      notes: q.notes,
+      status: getQuoteStatus(q),
+      items: items.length > 0 ? items : [{
+        name: 'Ítems de cotización',
+        quantity: 1,
+        unitPriceUSD: Number(q.total_usd) || 0,
+        totalUSD: Number(q.total_usd) || 0,
+        totalVES: Number(q.total_ves) || convertUSDtoVES(Number(q.total_usd) || 0, Number(q.exchange_rate) || activeRate)
+      }],
+      subtotalUSD: Number(q.subtotal_usd) || Number(q.total_usd) || 0,
+      totalUSD: Number(q.total_usd) || 0,
+      totalVES: Number(q.total_ves) || convertUSDtoVES(Number(q.total_usd) || 0, Number(q.exchange_rate) || activeRate)
+    };
+  };
+
+  const handlePrintQuote = (q: DbQuote) => {
+    const docData = getQuoteDocumentData(q);
+    printQuoteDocument(docData);
+  };
+
+  const handleDownloadQuote = (q: DbQuote) => {
+    const docData = getQuoteDocumentData(q);
+    downloadQuoteFile(docData);
+    showToast(`Archivo de cotización COT-${docData.docNumber} descargado.`);
+  };
+
   const handleCotizar = async () => {
-    if (!draftCustomerId) {
-      showToast('Selecciona un cliente para la cotización.', 'info');
-      return;
+    let effectiveCustomerId = draftCustomerId;
+    if (!effectiveCustomerId && customers.length > 0) {
+      effectiveCustomerId = customers[0].id;
+      setDraftCustomerId(customers[0].id);
     }
+
     if (draftItems.length === 0) {
       showToast('Agrega al menos un producto a la cotización.', 'info');
       return;
@@ -335,8 +572,71 @@ export function QuotesPage() {
       const isFutureRateActive = localStorage.getItem('frenyer_bcv_is_future') === 'true';
       const rateValueDate = localStorage.getItem('frenyer_bcv_rate_date') || new Date().toISOString().split('T')[0];
 
+      const selectedCust = customers.find(c => c.id === effectiveCustomerId);
+
+      if (editingQuote) {
+        // MODIFICACIÓN DE COTIZACIÓN EXISTENTE
+        const result = await updateQuoteInSupabase(editingQuote.id, {
+          customerId: effectiveCustomerId,
+          validityDays,
+          notes,
+          items: draftItems.map(it => ({
+            sku: it.sku,
+            name: it.name,
+            quantity: it.quantity,
+            unit_price_usd: it.unitPriceUSD
+          })),
+          exchangeRate: activeRate
+        });
+
+        if (!result.success) {
+          showToast(result.error || 'No se pudo actualizar la cotización.', 'info');
+          return;
+        }
+
+        const docData: QuoteDocumentData = {
+          docNumber: editingQuote.doc_number,
+          createdAt: editingQuote.created_at || new Date().toISOString(),
+          validityDays,
+          customerName: selectedCust?.name || editingQuote.customer?.name || 'Cliente',
+          customerDoc: selectedCust?.docNumber || '',
+          exchangeRate: activeRate,
+          rateSource: currentRateSource,
+          notes,
+          items: draftItems.map(it => ({
+            sku: it.sku,
+            name: it.name,
+            quantity: it.quantity,
+            unitPriceUSD: it.unitPriceUSD,
+            totalUSD: Math.round(it.quantity * it.unitPriceUSD * 100) / 100,
+            totalVES: convertUSDtoVES(it.quantity * it.unitPriceUSD, activeRate)
+          })),
+          subtotalUSD: rawSubtotalUSD,
+          discountUSD: discountAmountUSD,
+          taxUSD: taxAmountUSD,
+          igtfUSD: igtfAmountUSD,
+          totalUSD: totalUSD,
+          totalVES: totalVES,
+          status: 'Creada'
+        };
+
+        setLastCreatedQuoteDoc(docData);
+        setIsSuccessModalOpen(true);
+
+        if (autoGenerateFile) {
+          printQuoteDocument(docData);
+        }
+
+        showToast(`Cotización COT-${editingQuote.doc_number} modificada con éxito.`);
+        setIsCreateOpen(false);
+        resetDraft();
+        await loadData();
+        return;
+      }
+
+      // NUEVA COTIZACIÓN
       const result = await createQuoteInSupabase({
-        customerId: draftCustomerId,
+        customerId: effectiveCustomerId,
         validityDays,
         notes,
         items: draftItems.map(it => ({
@@ -356,12 +656,53 @@ export function QuotesPage() {
         return;
       }
 
-      showToast('Cotización creada exitosamente.');
+      const docNumber = result.docNumber || '0001';
+
+      // Construir documento de cotización
+      const docData: QuoteDocumentData = {
+        docNumber,
+        createdAt: new Date().toISOString(),
+        validityDays,
+        customerName: selectedCust?.name || 'Cliente',
+        customerDoc: selectedCust?.docNumber || '',
+        customerPhone: newCustomerPhone,
+        customerEmail: newCustomerEmail,
+        customerAddress: newCustomerAddress,
+        exchangeRate: activeRate,
+        rateSource: currentRateSource,
+        notes,
+        items: draftItems.map(it => ({
+          sku: it.sku,
+          name: it.name,
+          quantity: it.quantity,
+          unitPriceUSD: it.unitPriceUSD,
+          totalUSD: Math.round(it.quantity * it.unitPriceUSD * 100) / 100,
+          totalVES: convertUSDtoVES(it.quantity * it.unitPriceUSD, activeRate)
+        })),
+        subtotalUSD: rawSubtotalUSD,
+        discountUSD: discountAmountUSD,
+        taxUSD: taxAmountUSD,
+        igtfUSD: igtfAmountUSD,
+        totalUSD: totalUSD,
+        totalVES: totalVES,
+        status: 'Creada'
+      };
+
+      setLastCreatedQuoteDoc(docData);
+      // Lleva automáticamente al modal "¿Cotización guardada y generada?"
+      setIsSuccessModalOpen(true);
+
+      // Si está activa la opción de autogenerar archivo, abrir diálogo de impresión/PDF o descargar
+      if (autoGenerateFile) {
+        printQuoteDocument(docData);
+      }
+
+      showToast(`¡Cotización COT-${docNumber} guardada en base de datos!`);
       setIsCreateOpen(false);
       resetDraft();
       await loadData();
     } catch (err: any) {
-      showToast(err?.message || 'Error al crear la cotización.', 'info');
+      showToast(err?.message || 'Error al procesar la cotización.', 'info');
     } finally {
       setIsSubmitting(false);
     }
@@ -414,12 +755,21 @@ export function QuotesPage() {
     switch (status) {
       case 'Facturada': return 'success';
       case 'Expirada': return 'danger';
-      case 'Rechazada': return 'warning';
+      case 'Rechazada': return 'danger';
+      case 'Creada': return 'warning';
       default: return 'brand';
     }
   };
 
-  const uniqueCustomerNames = Array.from(new Set(quotes.map(q => q.customer?.name || ''))).filter(Boolean);
+  const getStatusLabel = (status: string) => {
+    if (status === 'Creada') return 'Pendiente';
+    if (status === 'Facturada') return 'Facturada';
+    if (status === 'Expirada') return 'Vencida';
+    if (status === 'Rechazada') return 'Rechazada';
+    return status;
+  };
+
+  const uniqueCustomerNames = Array.from(new Set(quotes.map(q => q.customer?.name || (q as any).customers?.name || ''))).filter(Boolean);
 
   return (
     <div className="content" style={{ paddingBottom: 40 }}>
@@ -451,8 +801,17 @@ export function QuotesPage() {
       {/* Header */}
       <div className="page-head">
         <div>
-          <h1>Presupuesto</h1>
-          <p>Cotizaciones y presupuestos de venta para tus clientes.</p>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <div style={{ width: 40, height: 40, borderRadius: 12, background: 'var(--brand-50)', color: 'var(--brand-600)', display: 'grid', placeItems: 'center' }}>
+              <FileText size={22} />
+            </div>
+            <div>
+              <h1 style={{ margin: 0, fontSize: 24, fontWeight: 800, color: '#0f172a', letterSpacing: '-0.4px' }}>Cotizaciones</h1>
+              <p style={{ margin: 0, fontSize: 13, color: '#64748b' }}>
+                Histórico general de presupuestos, vigencias comerciales y facturación directa.
+              </p>
+            </div>
+          </div>
         </div>
         <div className="actions">
           <Button
@@ -461,29 +820,174 @@ export function QuotesPage() {
             style={{ display: 'flex', alignItems: 'center', gap: 6 }}
             disabled={isLoading}
           >
-            <RefreshCw size={14} /> Actualizar
+            <RefreshCw size={14} className={isLoading ? 'animate-spin' : ''} /> Actualizar
           </Button>
           <Button
             variant="primary"
             onClick={openCreateModal}
             style={{ display: 'flex', alignItems: 'center', gap: 6 }}
           >
-            <Plus size={14} /> Crear una cotización
+            <Plus size={15} /> Nueva cotización
           </Button>
         </div>
       </div>
 
-      {/* Filters */}
-      <div className="card" style={{ padding: '14px 18px', marginBottom: 18, display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
-        <div style={{ flex: 1, minWidth: 220, display: 'flex', alignItems: 'center', gap: 8, background: '#f8fafc', padding: '6px 14px', borderRadius: 10, border: '1px solid var(--border)' }}>
+      {/* KPI Summary Cards */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(230px, 1fr))', gap: 14, marginBottom: 20 }}>
+        {/* Total Cotizaciones */}
+        <Card style={{ padding: '16px 18px', background: '#fff' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 10 }}>
+            <div>
+              <span style={{ fontSize: 11, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                Total Cotizaciones
+              </span>
+              <div style={{ fontSize: 26, fontWeight: 800, color: '#0f172a', lineHeight: 1.1, marginTop: 4 }}>
+                {metrics.total}
+              </div>
+            </div>
+            <div style={{ width: 36, height: 36, borderRadius: 10, background: '#ede9fe', color: '#6d28d9', display: 'grid', placeItems: 'center' }}>
+              <FileText size={18} />
+            </div>
+          </div>
+          <div style={{ fontSize: 12, color: '#64748b', fontWeight: 600 }}>
+            <span style={{ color: '#0f172a', fontWeight: 700 }}>{formatUSD(metrics.totalUsd, '$ ')}</span>
+            <span style={{ margin: '0 4px' }}>·</span>
+            <span>{formatVES(convertUSDtoVES(metrics.totalUsd, activeRate))}</span>
+          </div>
+        </Card>
+
+        {/* Pendientes / Vigentes */}
+        <Card style={{ padding: '16px 18px', background: '#fff' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 10 }}>
+            <div>
+              <span style={{ fontSize: 11, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                Vigentes / Pendientes
+              </span>
+              <div style={{ fontSize: 26, fontWeight: 800, color: '#b45309', lineHeight: 1.1, marginTop: 4 }}>
+                {metrics.pendientesCount}
+              </div>
+            </div>
+            <div style={{ width: 36, height: 36, borderRadius: 10, background: '#fef3c7', color: '#b45309', display: 'grid', placeItems: 'center' }}>
+              <Clock size={18} />
+            </div>
+          </div>
+          <div style={{ fontSize: 12, color: '#64748b', fontWeight: 600 }}>
+            <span style={{ color: '#b45309', fontWeight: 700 }}>{formatUSD(metrics.pendientesUsd, '$ ')}</span>
+            <span style={{ margin: '0 4px' }}>·</span>
+            <span>Por facturar</span>
+          </div>
+        </Card>
+
+        {/* Facturadas / Aprobadas */}
+        <Card style={{ padding: '16px 18px', background: '#fff' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 10 }}>
+            <div>
+              <span style={{ fontSize: 11, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                Facturadas (Cerradas)
+              </span>
+              <div style={{ fontSize: 26, fontWeight: 800, color: '#047857', lineHeight: 1.1, marginTop: 4 }}>
+                {metrics.facturadasCount}
+              </div>
+            </div>
+            <div style={{ width: 36, height: 36, borderRadius: 10, background: '#d1fae5', color: '#047857', display: 'grid', placeItems: 'center' }}>
+              <Receipt size={18} />
+            </div>
+          </div>
+          <div style={{ fontSize: 12, color: '#64748b', fontWeight: 600 }}>
+            <span style={{ color: '#047857', fontWeight: 700 }}>{formatUSD(metrics.facturadasUsd, '$ ')}</span>
+            <span style={{ margin: '0 4px' }}>·</span>
+            <span>Convertidas a venta</span>
+          </div>
+        </Card>
+
+        {/* Vencidas / Expiradas */}
+        <Card style={{ padding: '16px 18px', background: '#fff' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 10 }}>
+            <div>
+              <span style={{ fontSize: 11, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                Vencidas / Expiradas
+              </span>
+              <div style={{ fontSize: 26, fontWeight: 800, color: '#b91c1c', lineHeight: 1.1, marginTop: 4 }}>
+                {metrics.expiradasCount + metrics.rechazadasCount}
+              </div>
+            </div>
+            <div style={{ width: 36, height: 36, borderRadius: 10, background: '#fee2e2', color: '#b91c1c', display: 'grid', placeItems: 'center' }}>
+              <AlertTriangle size={18} />
+            </div>
+          </div>
+          <div style={{ fontSize: 12, color: '#64748b', fontWeight: 600 }}>
+            <span style={{ color: '#b91c1c', fontWeight: 700 }}>{formatUSD(metrics.expiradasUsd + metrics.rechazadasUsd, '$ ')}</span>
+            <span style={{ margin: '0 4px' }}>·</span>
+            <span>Fuera de vigencia</span>
+          </div>
+        </Card>
+      </div>
+
+      {/* Status Segmented Tabs */}
+      <div style={{ display: 'flex', gap: 8, overflowX: 'auto', paddingBottom: 4, marginBottom: 16 }}>
+        {[
+          { id: 'Todas', label: 'Todas las cotizaciones', count: metrics.total },
+          { id: 'Creada', label: 'Pendientes / Vigentes', count: metrics.pendientesCount },
+          { id: 'Facturada', label: 'Facturadas', count: metrics.facturadasCount },
+          { id: 'Expirada', label: 'Vencidas', count: metrics.expiradasCount },
+          { id: 'Rechazada', label: 'Rechazadas', count: metrics.rechazadasCount },
+        ].map(tab => {
+          const isActive = statusFilter === tab.id;
+          return (
+            <button
+              key={tab.id}
+              type="button"
+              onClick={() => setStatusFilter(tab.id as StatusFilter)}
+              style={{
+                padding: '7px 14px',
+                borderRadius: 10,
+                border: isActive ? '1px solid var(--brand-500)' : '1px solid var(--border)',
+                background: isActive ? 'var(--brand-50)' : '#fff',
+                color: isActive ? 'var(--brand-700)' : '#475569',
+                fontWeight: isActive ? 700 : 500,
+                fontSize: 13,
+                cursor: 'pointer',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 8,
+                whiteSpace: 'nowrap',
+                transition: 'all 0.15s ease'
+              }}
+            >
+              <span>{tab.label}</span>
+              <span
+                style={{
+                  fontSize: 11,
+                  fontWeight: 700,
+                  padding: '2px 7px',
+                  borderRadius: 999,
+                  background: isActive ? 'var(--brand-500)' : '#f1f5f9',
+                  color: isActive ? '#fff' : '#64748b'
+                }}
+              >
+                {tab.count}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Filter Controls Bar */}
+      <div className="card" style={{ padding: '12px 16px', marginBottom: 18, display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+        <div style={{ flex: 1, minWidth: 240, display: 'flex', alignItems: 'center', gap: 8, background: '#f8fafc', padding: '6px 12px', borderRadius: 10, border: '1px solid var(--border)' }}>
           <Search size={16} style={{ color: '#94a3b8' }} />
           <input
             className="input"
-            style={{ border: 'none', boxShadow: 'none', padding: 0, height: 'auto', fontSize: 13, background: 'transparent' }}
-            placeholder="Buscar por folio o cliente..."
+            style={{ border: 'none', boxShadow: 'none', padding: 0, height: 'auto', fontSize: 13, background: 'transparent', width: '100%' }}
+            placeholder="Buscar por folio, cliente, teléfono, notas..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
           />
+          {searchTerm && (
+            <button onClick={() => setSearchTerm('')} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#94a3b8', padding: 0 }}>
+              <X size={14} />
+            </button>
+          )}
         </div>
 
         <select
@@ -496,106 +1000,308 @@ export function QuotesPage() {
           {uniqueCustomerNames.map(name => <option key={name} value={name}>{name}</option>)}
         </select>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: '#f8fafc', padding: '0 14px', borderRadius: 10, border: '1px solid var(--border)', minWidth: 200 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: '#f8fafc', padding: '0 12px', borderRadius: 10, border: '1px solid var(--border)', minWidth: 200 }}>
           <ShoppingCart size={15} style={{ color: '#94a3b8' }} />
           <input
             className="input"
-            style={{ border: 'none', boxShadow: 'none', padding: 0, height: 38, fontSize: 13, background: 'transparent' }}
-            placeholder="Buscar por producto (nombre o SKU)..."
+            style={{ border: 'none', boxShadow: 'none', padding: 0, height: 38, fontSize: 13, background: 'transparent', width: '100%' }}
+            placeholder="Filtrar por producto o SKU..."
             value={productFilter}
             onChange={(e) => setProductFilter(e.target.value)}
           />
+          {productFilter && (
+            <button onClick={() => setProductFilter('')} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#94a3b8', padding: 0 }}>
+              <X size={14} />
+            </button>
+          )}
         </div>
 
-        <select
-          value={statusFilter}
-          onChange={(e) => setStatusFilter(e.target.value as StatusFilter)}
-          className="input"
-          style={{ height: 38, fontSize: 13, fontWeight: 600, cursor: 'pointer', minWidth: 160 }}
-        >
-          <option value="Todas">Todos los estados</option>
-          <option value="Creada">Creada (Pendiente/Activa)</option>
-          <option value="Facturada">Facturada (Aprobada y procesada)</option>
-          <option value="Expirada">Expirada / Vencida</option>
-          <option value="Rechazada">Rechazada (Cancelada)</option>
-        </select>
+        {(searchTerm || customerFilter !== 'Todos' || productFilter || statusFilter !== 'Todas') && (
+          <Button
+            variant="secondary"
+            onClick={() => {
+              setSearchTerm('');
+              setCustomerFilter('Todos');
+              setProductFilter('');
+              setStatusFilter('Todas');
+            }}
+            style={{ height: 38, fontSize: 12, padding: '0 12px', display: 'flex', alignItems: 'center', gap: 4 }}
+          >
+            <X size={13} /> Limpiar
+          </Button>
+        )}
       </div>
 
       {/* Table */}
       <Card className="table-wrap" style={{ padding: 0, overflow: 'hidden' }}>
         {isLoading ? (
-          <div style={{ padding: 48, textAlign: 'center', color: '#94a3b8', fontSize: 13 }}>
-            Cargando cotizaciones...
+          <div style={{ padding: 48, textAlign: 'center', color: '#64748b', fontSize: 13 }}>
+            <RefreshCw size={24} className="animate-spin" style={{ margin: '0 auto 10px', color: 'var(--brand-500)' }} />
+            <div>Cargando cotizaciones...</div>
           </div>
         ) : filteredQuotes.length === 0 ? (
-          <div style={{ padding: 48, textAlign: 'center', color: '#94a3b8', fontSize: 13 }}>
-            No hay cotizaciones para este filtro.
+          <div style={{ padding: 36 }}>
+            <EmptyState
+              title="No se encontraron cotizaciones"
+              description="No hay cotizaciones que coincidan con los filtros aplicados o aún no has creado ninguna cotización."
+            />
+            <div style={{ textAlign: 'center', marginTop: 14 }}>
+              <Button variant="primary" onClick={openCreateModal} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                <Plus size={14} /> Crear nueva cotización
+              </Button>
+            </div>
           </div>
         ) : (
-          <table className="table" style={{ fontSize: 13 }}>
-            <thead>
-              <tr>
-                <th>Folio</th>
-                <th>Fecha</th>
-                <th>Cliente</th>
-                <th style={{ textAlign: 'right' }}>Total ($)</th>
-                <th style={{ textAlign: 'center' }}>Estado</th>
-                <th style={{ textAlign: 'right' }}>Acciones</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filteredQuotes.map(q => {
-                const status = getQuoteStatus(q);
-                return (
-                  <tr key={q.id}>
-                    <td style={{ fontWeight: 700, color: '#0f172a' }}>{q.doc_number}</td>
-                    <td style={{ color: '#64748b' }}>
-                      {q.created_at ? new Date(q.created_at).toLocaleDateString('es-VE') : '—'}
-                    </td>
-                    <td style={{ color: '#1e293b' }}>{q.customer?.name || '—'}</td>
-                    <td style={{ textAlign: 'right', fontWeight: 700 }}>
-                      {formatUSD(Number(q.total_usd) || 0, '$ ')}
-                      <div style={{ fontSize: 10, fontWeight: 500, color: '#64748b' }}>
-                        {formatVES(convertUSDtoVES(Number(q.total_usd) || 0, activeRate))}
-                      </div>
-                    </td>
-                    <td style={{ textAlign: 'center' }}>
-                      <Badge tone={statusTone(status)}>{status}</Badge>
-                    </td>
-                    <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
-                      <div style={{ display: 'inline-flex', gap: 6 }}>
-                        <button
-                          onClick={() => setViewQuote(q)}
-                          title="Ver"
-                          style={{ width: 30, height: 30, borderRadius: 7, border: '1px solid var(--border)', background: '#fff', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', color: '#64748b' }}
-                        >
-                          <Eye size={14} />
-                        </button>
-                        {status === 'Creada' && (
+          <div style={{ overflowX: 'auto' }}>
+            <table className="table" style={{ fontSize: 13, minWidth: 980 }}>
+              <thead>
+                <tr>
+                  <th style={{ width: 150 }}>Folio</th>
+                  <th style={{ width: 145 }}>Fechas</th>
+                  <th>Cliente</th>
+                  <th>Concepto / Detalle</th>
+                  <th style={{ textAlign: 'right', width: 160 }}>Monto Total</th>
+                  <th style={{ textAlign: 'center', width: 120 }}>Estado</th>
+                  <th style={{ textAlign: 'right', width: 230 }}>Acciones</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredQuotes.map(q => {
+                  const status = getQuoteStatus(q);
+                  const isExpired = status === 'Expirada';
+                  const rawItems = q.sale_items || q.items || [];
+                  const phone = getCustomerPhone(q);
+
+                  return (
+                    <tr key={q.id}>
+                      {/* 1. FOLIO */}
+                      <td>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <div style={{ width: 32, height: 32, borderRadius: 8, background: '#f1f5f9', display: 'grid', placeItems: 'center', color: '#475569', flexShrink: 0 }}>
+                            <FileText size={15} />
+                          </div>
+                          <div>
+                            <div style={{ fontWeight: 800, color: '#0f172a', letterSpacing: '-0.2px' }}>
+                              {q.doc_number}
+                            </div>
+                            <span style={{
+                              fontSize: 10,
+                              fontWeight: 700,
+                              padding: '1px 6px',
+                              borderRadius: 4,
+                              background: q.payment_type === 'CREDITO' ? '#fef3c7' : '#f1f5f9',
+                              color: q.payment_type === 'CREDITO' ? '#92400e' : '#64748b',
+                              textTransform: 'uppercase'
+                            }}>
+                              {q.payment_type || 'CONTADO'}
+                            </span>
+                          </div>
+                        </div>
+                      </td>
+
+                      {/* 2. FECHAS */}
+                      <td>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 5, color: '#334155', fontWeight: 600, fontSize: 12 }}>
+                            <Calendar size={13} style={{ color: '#94a3b8' }} />
+                            {q.created_at ? new Date(q.created_at).toLocaleDateString('es-VE') : '—'}
+                          </div>
+                          {q.expires_at && (
+                            <div style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: 5,
+                              fontSize: 11,
+                              fontWeight: 600,
+                              color: isExpired ? '#dc2626' : '#64748b'
+                            }}>
+                              <Clock size={12} style={{ color: isExpired ? '#ef4444' : '#94a3b8' }} />
+                              <span>Vence: {new Date(q.expires_at).toLocaleDateString('es-VE')}</span>
+                            </div>
+                          )}
+                        </div>
+                      </td>
+
+                      {/* 3. CLIENTE */}
+                      <td>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                          <div style={{ fontWeight: 700, color: '#0f172a', fontSize: 13 }}>
+                            {q.customer?.name || (q as any).customers?.name || 'Cliente general'}
+                          </div>
+                          <div style={{ fontSize: 11, color: '#64748b' }}>
+                            {getCustomerDoc(q)}
+                          </div>
+                          {phone && (
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: '#475569', marginTop: 1 }}>
+                              <Phone size={11} style={{ color: 'var(--brand-500)' }} />
+                              <span>{phone}</span>
+                            </div>
+                          )}
+                        </div>
+                      </td>
+
+                      {/* 4. CONCEPTO / DETALLE */}
+                      <td>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 2, maxWidth: 260 }}>
+                          <div style={{ fontWeight: 600, color: '#1e293b', fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={getConceptPreview(q)}>
+                            {getConceptPreview(q)}
+                          </div>
+                          <div style={{ fontSize: 11, color: '#94a3b8' }}>
+                            {rawItems.length} {rawItems.length === 1 ? 'ítem presupuestado' : 'ítems presupuestados'}
+                          </div>
+                        </div>
+                      </td>
+
+                      {/* 5. MONTO TOTAL */}
+                      <td style={{ textAlign: 'right' }}>
+                        <div style={{ fontWeight: 800, fontSize: 14, color: '#0f172a' }}>
+                          {formatUSD(Number(q.total_usd) || 0, '$ ')}
+                        </div>
+                        <div style={{ fontSize: 11, fontWeight: 600, color: '#64748b', marginTop: 1 }}>
+                          {formatVES(convertUSDtoVES(Number(q.total_usd) || 0, Number(q.exchange_rate) || activeRate))}
+                        </div>
+                        <div style={{ fontSize: 10, color: '#94a3b8' }}>
+                          Tasa: Bs. {Number(q.exchange_rate || activeRate).toFixed(2)}
+                        </div>
+                      </td>
+
+                      {/* 6. ESTADO */}
+                      <td style={{ textAlign: 'center' }}>
+                        <Badge tone={statusTone(status)}>{getStatusLabel(status)}</Badge>
+                      </td>
+
+                      {/* 7. ACCIONES */}
+                      <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+                        <div style={{ display: 'inline-flex', gap: 5, alignItems: 'center' }}>
+                          {/* 1. VER DETALLE */}
+                          <button
+                            onClick={() => setViewQuote(q)}
+                            title="Ver detalle completo"
+                            style={{
+                              width: 32,
+                              height: 32,
+                              borderRadius: 8,
+                              border: '1px solid #e2e8f0',
+                              background: '#fff',
+                              cursor: 'pointer',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              color: '#475569'
+                            }}
+                          >
+                            <Eye size={14} />
+                          </button>
+
+                          {/* 2. FACTURAR */}
                           <button
                             onClick={() => openConvertModal(q)}
-                            title="Convertir a Factura"
-                            style={{ width: 30, height: 30, borderRadius: 7, border: '1px solid var(--border)', background: '#fff', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', color: '#059669' }}
+                            title={status === 'Facturada' ? 'Ya convertida a factura' : 'Facturar cotización'}
+                            disabled={status === 'Facturada'}
+                            style={{
+                              width: 32,
+                              height: 32,
+                              borderRadius: 8,
+                              border: '1px solid #d1fae5',
+                              background: status === 'Facturada' ? '#f8fafc' : '#ecfdf5',
+                              cursor: status === 'Facturada' ? 'not-allowed' : 'pointer',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              color: status === 'Facturada' ? '#94a3b8' : '#059669',
+                              opacity: status === 'Facturada' ? 0.6 : 1
+                            }}
                           >
                             <Receipt size={14} />
                           </button>
-                        )}
-                        {status === 'Creada' && (
+
+                          {/* 3. IMPRIMIR */}
                           <button
-                            onClick={() => handleReject(q)}
-                            title="Cancelar"
-                            style={{ width: 30, height: 30, borderRadius: 7, border: '1px solid var(--border)', background: '#fff', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', color: '#dc2626' }}
+                            onClick={() => handlePrintQuote(q)}
+                            title="Imprimir / PDF"
+                            style={{
+                              width: 32,
+                              height: 32,
+                              borderRadius: 8,
+                              border: '1px solid #ede9fe',
+                              background: '#fff',
+                              cursor: 'pointer',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              color: '#7c3aed'
+                            }}
                           >
-                            <Ban size={14} />
+                            <Printer size={14} />
                           </button>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+
+                          {/* 4. COMPARTIR */}
+                          <button
+                            onClick={() => setShareQuote(q)}
+                            title="Compartir cotización"
+                            style={{
+                              width: 32,
+                              height: 32,
+                              borderRadius: 8,
+                              border: '1px solid #e0f2fe',
+                              background: '#fff',
+                              cursor: 'pointer',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              color: '#0284c7'
+                            }}
+                          >
+                            <Share2 size={14} />
+                          </button>
+
+                          {/* 5. MODIFICAR */}
+                          <button
+                            onClick={() => handleOpenEditModal(q)}
+                            title="Modificar cotización"
+                            style={{
+                              width: 32,
+                              height: 32,
+                              borderRadius: 8,
+                              border: '1px solid #e0e7ff',
+                              background: '#fff',
+                              cursor: 'pointer',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              color: '#4f46e5'
+                            }}
+                          >
+                            <Edit size={14} />
+                          </button>
+
+                          {/* 6. ELIMINAR */}
+                          <button
+                            onClick={() => setDeleteConfirmQuote(q)}
+                            title="Eliminar cotización"
+                            style={{
+                              width: 32,
+                              height: 32,
+                              borderRadius: 8,
+                              border: '1px solid #fee2e2',
+                              background: '#fff',
+                              cursor: 'pointer',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              color: '#dc2626'
+                            }}
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         )}
       </Card>
 
@@ -610,7 +1316,9 @@ export function QuotesPage() {
                   <FileText size={18} />
                 </div>
                 <div>
-                  <h2 style={{ margin: 0, fontSize: 18, fontWeight: 800, color: '#0f172a' }}>Nueva cotización</h2>
+                  <h2 style={{ margin: 0, fontSize: 18, fontWeight: 800, color: '#0f172a' }}>
+                    {editingQuote ? `Modificar cotización COT-${editingQuote.doc_number}` : 'Nueva cotización'}
+                  </h2>
                   <span style={{ fontSize: 12, color: '#64748b' }}>Documento expresado en USD ($)</span>
                 </div>
               </div>
@@ -886,13 +1594,21 @@ export function QuotesPage() {
                           <span style={{ fontSize: 11, color: '#64748b', fontWeight: 600 }}>{formatVES(totalVES)}</span>
                         </div>
                       </div>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: '#475569', cursor: 'pointer', margin: '8px 0 2px' }}>
+                        <input
+                          type="checkbox"
+                          checked={autoGenerateFile}
+                          onChange={(e) => setAutoGenerateFile(e.target.checked)}
+                        />
+                        <span>Generar e imprimir/descargar documento de cotización al guardar</span>
+                      </label>
                       <Button
                         variant="primary"
                         onClick={handleCotizar}
                         disabled={isSubmitting}
-                        style={{ width: '100%', height: 42, fontSize: 14, fontWeight: 700, display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 8, marginTop: 6 }}
+                        style={{ width: '100%', height: 44, fontSize: 14, fontWeight: 700, display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 8, marginTop: 6 }}
                       >
-                        <FileText size={16} /> {isSubmitting ? 'Guardando...' : 'Cotizar'}
+                        <FileText size={16} /> {isSubmitting ? 'Guardando en Supabase...' : 'Cotizar'}
                       </Button>
                     </div>
                   )}
@@ -1032,6 +1748,359 @@ export function QuotesPage() {
                 <b>Notas:</b> {viewQuote.notes}
               </div>
             )}
+
+            <div style={{ display: 'flex', gap: 10, marginTop: 16, justifyContent: 'flex-end', borderTop: '1px solid var(--border)', paddingTop: 14 }}>
+              <Button
+                variant="secondary"
+                onClick={() => handleDownloadQuote(viewQuote)}
+                style={{ display: 'flex', alignItems: 'center', gap: 6 }}
+              >
+                <Download size={14} /> Descargar archivo
+              </Button>
+              <Button
+                variant="primary"
+                onClick={() => handlePrintQuote(viewQuote)}
+                style={{ display: 'flex', alignItems: 'center', gap: 6 }}
+              >
+                <Printer size={14} /> Imprimir / PDF
+              </Button>
+            </div>
+          </Card>
+        </div>
+      )}
+
+      {/* ================= SUCCESS & FILE GENERATION MODAL ================= */}
+      {isSuccessModalOpen && lastCreatedQuoteDoc && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.6)', backdropFilter: 'blur(3px)', display: 'grid', placeItems: 'center', zIndex: 1500, padding: 16 }}>
+          <Card style={{ width: '100%', maxWidth: 500, padding: 24, position: 'relative', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.25)' }}>
+            <button
+              onClick={() => setIsSuccessModalOpen(false)}
+              style={{ position: 'absolute', top: 16, right: 16, background: 'transparent', border: 'none', color: '#64748b', cursor: 'pointer' }}
+            >
+              <X size={20} />
+            </button>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
+              <div style={{ width: 44, height: 44, borderRadius: 12, background: '#ecfdf5', color: '#059669', display: 'grid', placeItems: 'center', border: '1px solid #a7f3d0' }}>
+                <CheckCircle size={24} />
+              </div>
+              <div>
+                <h3 style={{ margin: 0, fontSize: 17, fontWeight: 800, color: '#0f172a' }}>
+                  ¿Cotización guardada y generada?
+                </h3>
+                <span style={{ fontSize: 12, color: '#64748b' }}>
+                  Folio COT-{lastCreatedQuoteDoc.docNumber} · Guardada con éxito en la base de datos
+                </span>
+              </div>
+            </div>
+
+            <div style={{ background: '#f8fafc', border: '1px solid var(--border)', borderRadius: 10, padding: 14, marginBottom: 18, fontSize: 13 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+                <span style={{ color: '#64748b' }}>Cliente:</span>
+                <span style={{ fontWeight: 700, color: '#0f172a' }}>{lastCreatedQuoteDoc.customerName}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+                <span style={{ color: '#64748b' }}>Total a Pagar:</span>
+                <span style={{ fontWeight: 800, color: 'var(--brand-700)' }}>{formatUSD(lastCreatedQuoteDoc.totalUSD, '$ ')}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span style={{ color: '#64748b' }}>Equivalente (BCV):</span>
+                <span style={{ fontWeight: 600, color: '#475569' }}>{formatVES(lastCreatedQuoteDoc.totalVES)}</span>
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <Button
+                variant="primary"
+                onClick={() => printQuoteDocument(lastCreatedQuoteDoc)}
+                style={{ width: '100%', height: 40, fontSize: 13, fontWeight: 700, display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 8 }}
+              >
+                <Printer size={15} /> Imprimir / Guardar como PDF
+              </Button>
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  downloadQuoteFile(lastCreatedQuoteDoc);
+                  showToast('Archivo descargado con éxito.');
+                }}
+                style={{ width: '100%', height: 40, fontSize: 13, fontWeight: 600, display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 8 }}
+              >
+                <Download size={15} /> Descargar archivo (.html)
+              </Button>
+              <Button
+                variant="ghost"
+                onClick={() => setIsSuccessModalOpen(false)}
+                style={{ width: '100%', height: 36, fontSize: 13, color: '#475569', fontWeight: 600 }}
+              >
+                Ver cotización en el histórico
+              </Button>
+            </div>
+          </Card>
+        </div>
+      )}
+
+      {/* ================= MODAL COMPARTIR COTIZACIÓN ================= */}
+      {shareQuote && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.55)', backdropFilter: 'blur(3px)', display: 'grid', placeItems: 'center', zIndex: 1550, padding: 16 }}>
+          <Card style={{ width: '100%', maxWidth: 480, padding: 24, position: 'relative' }}>
+            <button
+              onClick={() => setShareQuote(null)}
+              style={{ position: 'absolute', top: 18, right: 18, background: 'transparent', border: 'none', color: '#64748b', cursor: 'pointer' }}
+            >
+              <X size={20} />
+            </button>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
+              <div style={{ width: 38, height: 38, borderRadius: 10, background: '#e0f2fe', color: '#0284c7', display: 'grid', placeItems: 'center' }}>
+                <Share2 size={19} />
+              </div>
+              <div>
+                <h3 style={{ margin: 0, fontSize: 16, fontWeight: 800, color: '#0f172a' }}>Compartir Cotización</h3>
+                <span style={{ fontSize: 12, color: '#64748b' }}>COT-{shareQuote.doc_number} · {shareQuote.customer?.name}</span>
+              </div>
+            </div>
+
+            <div style={{ background: '#f8fafc', border: '1px solid var(--border)', borderRadius: 10, padding: 12, marginBottom: 16, fontSize: 11, maxHeight: 180, overflowY: 'auto' }}>
+              <pre style={{ margin: 0, whiteSpace: 'pre-wrap', fontFamily: 'inherit', color: '#334155', lineHeight: 1.5 }}>
+                {getShareText(shareQuote)}
+              </pre>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <Button
+                variant="primary"
+                onClick={() => handleShareWhatsApp(shareQuote)}
+                style={{ width: '100%', height: 40, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, background: '#16a34a', borderColor: '#16a34a' }}
+              >
+                Compartir por WhatsApp
+              </Button>
+              <Button
+                variant="secondary"
+                onClick={() => handleCopyShareText(shareQuote)}
+                style={{ width: '100%', height: 40, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}
+              >
+                {isCopiedShare ? <Check size={14} /> : <Copy size={14} />}
+                {isCopiedShare ? '¡Copiado al portapapeles!' : 'Copiar resumen para enviar'}
+              </Button>
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  handleDownloadQuote(shareQuote);
+                  setShareQuote(null);
+                }}
+                style={{ width: '100%', height: 40, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}
+              >
+                <Download size={14} /> Descargar archivo de cotización
+              </Button>
+            </div>
+          </Card>
+        </div>
+      )}
+
+      {/* ================= MODAL ELIMINAR COTIZACIÓN ================= */}
+      {deleteConfirmQuote && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.55)', backdropFilter: 'blur(3px)', display: 'grid', placeItems: 'center', zIndex: 1550, padding: 16 }}>
+          <Card style={{ width: '100%', maxWidth: 440, padding: 24, position: 'relative' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14 }}>
+              <div style={{ width: 40, height: 40, borderRadius: 10, background: '#fee2e2', color: '#dc2626', display: 'grid', placeItems: 'center' }}>
+                <Trash2 size={20} />
+              </div>
+              <div>
+                <h3 style={{ margin: 0, fontSize: 16, fontWeight: 800, color: '#0f172a' }}>Eliminar Cotización</h3>
+                <span style={{ fontSize: 12, color: '#64748b' }}>Acción de eliminación permanente</span>
+              </div>
+            </div>
+
+            <p style={{ fontSize: 13, color: '#475569', margin: '0 0 16px', lineHeight: 1.5 }}>
+              ¿Estás seguro de que deseas eliminar la cotización <b>COT-{deleteConfirmQuote.doc_number}</b> del cliente <b>{deleteConfirmQuote.customer?.name || 'Cliente'}</b> por un monto de <b>${Number(deleteConfirmQuote.total_usd || 0).toFixed(2)}</b>? Se removerá del histórico de cotizaciones.
+            </p>
+
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+              <Button variant="secondary" onClick={() => setDeleteConfirmQuote(null)} disabled={isDeleting}>
+                Cancelar
+              </Button>
+              <Button
+                variant="primary"
+                onClick={handleDeleteQuote}
+                disabled={isDeleting}
+                style={{ background: '#dc2626', borderColor: '#dc2626', color: '#fff', display: 'flex', alignItems: 'center', gap: 6 }}
+              >
+                <Trash2 size={14} /> {isDeleting ? 'Eliminando...' : 'Sí, eliminar cotización'}
+              </Button>
+            </div>
+          </Card>
+        </div>
+      )}
+
+      {/* ================= SUPABASE SQL SCRIPT MODAL ================= */}
+      {isSqlModalOpen && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.6)', backdropFilter: 'blur(3px)', display: 'grid', placeItems: 'center', zIndex: 1600, padding: 16 }}>
+          <Card style={{ width: '100%', maxWidth: 680, maxHeight: '90vh', display: 'flex', flexDirection: 'column', padding: 0, overflow: 'hidden', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.25)' }}>
+            <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#fafbfc' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <div style={{ width: 36, height: 36, borderRadius: 9, background: '#f5f3ff', color: '#7c3aed', display: 'grid', placeItems: 'center', border: '1px solid #ddd6fe' }}>
+                  <Code size={18} />
+                </div>
+                <div>
+                  <h3 style={{ margin: 0, fontSize: 15, fontWeight: 800, color: '#0f172a' }}>
+                    Código SQL para Supabase (Cotizaciones)
+                  </h3>
+                  <span style={{ fontSize: 11, color: '#64748b' }}>
+                    Tablas, columnas y permisos para la base de datos de Frenyer
+                  </span>
+                </div>
+              </div>
+              <button onClick={() => setIsSqlModalOpen(false)} style={{ background: 'transparent', border: 'none', color: '#94a3b8', cursor: 'pointer', padding: 4 }}>
+                <X size={20} />
+              </button>
+            </div>
+
+            <div style={{ padding: 18, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 14 }}>
+              <div style={{ background: '#f8fafc', padding: 12, borderRadius: 8, border: '1px solid var(--border)', fontSize: 12, color: '#475569', lineHeight: 1.5 }}>
+                <b>Instrucciones:</b> Copia el siguiente código y ejecútalo en el <b>SQL Editor</b> de tu consola de Supabase. Este script asegura las tablas <code>sales</code>, <code>sale_items</code>, agrega las columnas de ciclo de vida de cotizaciones y habilita los permisos correspondientes.
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                <Button
+                  variant="primary"
+                  onClick={() => {
+                    const sqlScript = `-- ==============================================================================
+-- FRENYER ERP — MÓDULO DE COTIZACIONES Y VENTAS FLASH PARA SUPABASE
+-- ==============================================================================
+-- Ejecuta este script en el SQL Editor de tu consola de Supabase
+-- ==============================================================================
+
+-- 1. Tabla principal de ventas / cotizaciones (sales)
+CREATE TABLE IF NOT EXISTS public.sales (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    organization_id UUID DEFAULT '00000000-0000-0000-0000-000000000001',
+    branch_id UUID,
+    customer_id UUID REFERENCES public.customers(id) ON DELETE SET NULL,
+    user_id UUID,
+    doc_type TEXT NOT NULL DEFAULT 'COTIZACION',
+    doc_number TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'COMPLETADA',
+    payment_type TEXT DEFAULT 'CONTADO',
+    exchange_rate NUMERIC(18, 4) NOT NULL DEFAULT 1,
+    rate_source TEXT DEFAULT 'BCV',
+    is_future_rate BOOLEAN DEFAULT FALSE,
+    rate_value_date TIMESTAMPTZ DEFAULT now(),
+    subtotal_usd NUMERIC(18, 2) NOT NULL DEFAULT 0,
+    discount_usd NUMERIC(18, 2) NOT NULL DEFAULT 0,
+    tax_usd NUMERIC(18, 2) NOT NULL DEFAULT 0,
+    igtf_usd NUMERIC(18, 2) NOT NULL DEFAULT 0,
+    total_usd NUMERIC(18, 2) NOT NULL DEFAULT 0,
+    total_ves NUMERIC(18, 2) NOT NULL DEFAULT 0,
+    notes TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- 2. Columnas del ciclo de vida de cotizaciones
+ALTER TABLE public.sales
+    ADD COLUMN IF NOT EXISTS quote_status TEXT DEFAULT 'Creada',
+    ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS converted_to_sale_id UUID REFERENCES public.sales(id) ON DELETE SET NULL;
+
+-- 3. Tabla de ítems de cotización / venta (sale_items)
+CREATE TABLE IF NOT EXISTS public.sale_items (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    sale_id UUID NOT NULL REFERENCES public.sales(id) ON DELETE CASCADE,
+    product_id UUID,
+    sku TEXT,
+    name TEXT NOT NULL,
+    quantity NUMERIC(18, 4) NOT NULL DEFAULT 1,
+    unit_price_usd NUMERIC(18, 4) NOT NULL DEFAULT 0,
+    total_usd NUMERIC(18, 2) NOT NULL DEFAULT 0,
+    total_ves NUMERIC(18, 2) NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- 4. Índices para acelerar consultas
+CREATE INDEX IF NOT EXISTS idx_sales_doc_type ON public.sales(doc_type);
+CREATE INDEX IF NOT EXISTS idx_sales_quote_status ON public.sales(quote_status);
+CREATE INDEX IF NOT EXISTS idx_sales_expires_at ON public.sales(expires_at);
+CREATE INDEX IF NOT EXISTS idx_sale_items_sale_id ON public.sale_items(sale_id);
+
+-- 5. Habilitar seguridad RLS y permisos
+ALTER TABLE public.sales ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.sale_items ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "allow_all_sales" ON public.sales;
+CREATE POLICY "allow_all_sales" ON public.sales FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "allow_all_sale_items" ON public.sale_items;
+CREATE POLICY "allow_all_sale_items" ON public.sale_items FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
+
+GRANT ALL ON TABLE public.sales TO anon, authenticated;
+GRANT ALL ON TABLE public.sale_items TO anon, authenticated;`;
+
+                    navigator.clipboard.writeText(sqlScript);
+                    setIsCopiedSql(true);
+                    showToast('Código SQL copiado al portapapeles');
+                    setTimeout(() => setIsCopiedSql(false), 2500);
+                  }}
+                  style={{ display: 'flex', alignItems: 'center', gap: 6, height: 34, fontSize: 12 }}
+                >
+                  {isCopiedSql ? <Check size={14} /> : <Copy size={14} />}
+                  {isCopiedSql ? '¡Copiado!' : 'Copiar código SQL'}
+                </Button>
+              </div>
+
+              <pre
+                style={{
+                  background: '#0f172a',
+                  color: '#e2e8f0',
+                  padding: 14,
+                  borderRadius: 8,
+                  fontSize: 11,
+                  fontFamily: 'monospace',
+                  overflowX: 'auto',
+                  maxHeight: 280,
+                  lineHeight: 1.5,
+                  margin: 0
+                }}
+              >
+{`-- 1. Tabla de ventas / cotizaciones
+CREATE TABLE IF NOT EXISTS public.sales (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    organization_id UUID DEFAULT '00000000-0000-0000-0000-000000000001',
+    branch_id UUID,
+    customer_id UUID REFERENCES public.customers(id) ON DELETE SET NULL,
+    doc_type TEXT NOT NULL DEFAULT 'COTIZACION',
+    doc_number TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'COMPLETADA',
+    payment_type TEXT DEFAULT 'CONTADO',
+    exchange_rate NUMERIC(18, 4) NOT NULL DEFAULT 1,
+    subtotal_usd NUMERIC(18, 2) NOT NULL DEFAULT 0,
+    total_usd NUMERIC(18, 2) NOT NULL DEFAULT 0,
+    total_ves NUMERIC(18, 2) NOT NULL DEFAULT 0,
+    notes TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- 2. Columnas de cotizaciones
+ALTER TABLE public.sales
+    ADD COLUMN IF NOT EXISTS quote_status TEXT DEFAULT 'Creada',
+    ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS converted_to_sale_id UUID;
+
+-- 3. Tabla de ítems
+CREATE TABLE IF NOT EXISTS public.sale_items (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    sale_id UUID NOT NULL REFERENCES public.sales(id) ON DELETE CASCADE,
+    sku TEXT,
+    name TEXT NOT NULL,
+    quantity NUMERIC(18, 4) NOT NULL DEFAULT 1,
+    unit_price_usd NUMERIC(18, 4) NOT NULL DEFAULT 0,
+    total_usd NUMERIC(18, 2) NOT NULL DEFAULT 0,
+    total_ves NUMERIC(18, 2) NOT NULL DEFAULT 0
+);
+
+-- 4. Permisos
+GRANT ALL ON TABLE public.sales TO anon, authenticated;
+GRANT ALL ON TABLE public.sale_items TO anon, authenticated;`}
+              </pre>
+            </div>
           </Card>
         </div>
       )}

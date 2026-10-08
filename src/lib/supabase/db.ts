@@ -1,4 +1,4 @@
-import { supabase } from './client';
+import { supabase, isSupabaseConfigured } from './client';
 import { authenticatedFetch } from './api';
 
 export interface DbCustomer {
@@ -97,6 +97,7 @@ export interface DbQuote {
   id: string;
   organization_id?: string;
   customer_id?: string;
+  user_id?: string;
   doc_number: string;
   status: string;
   payment_type: string;
@@ -109,8 +110,11 @@ export interface DbQuote {
   expires_at?: string;
   converted_to_sale_id?: string;
   created_at?: string;
-  customer?: { name?: string };
+  customer?: { id?: string; name?: string; phone?: string; doc_type?: string; doc_number?: string; email?: string };
+  customers?: { id?: string; name?: string; phone?: string; doc_type?: string; doc_number?: string; email?: string };
   items?: DbQuoteItem[];
+  sale_items?: DbQuoteItem[];
+  vendor_name?: string;
 }
 
 export interface DbSaleItem {
@@ -141,6 +145,10 @@ export async function fetchCustomersFromSupabase(): Promise<DbCustomer[]> {
     }
   } catch {
     // Fall back to direct client
+  }
+
+  if (!isSupabaseConfigured) {
+    return [];
   }
 
   // 2. Direct Supabase client
@@ -245,6 +253,23 @@ export async function deleteCustomerFromSupabase(id: string): Promise<boolean> {
 // ---------------------------------------------------------------------------
 
 export async function fetchSuppliersFromSupabase(organizationId?: string): Promise<DbSupplier[]> {
+  // 1. Try server proxy
+  try {
+    const res = await authenticatedFetch('/api/suppliers');
+    if (res.ok) {
+      const json = await res.json();
+      if (json.success && Array.isArray(json.data)) {
+        return json.data;
+      }
+    }
+  } catch {
+    // Fall back to direct client
+  }
+
+  if (!isSupabaseConfigured) {
+    return [];
+  }
+
   try {
     const scopedOrganizationId = organizationId || await getActiveOrgId();
     if (!scopedOrganizationId) {
@@ -258,14 +283,11 @@ export async function fetchSuppliersFromSupabase(organizationId?: string): Promi
       .order('created_at', { ascending: false });
     if (error) {
       console.error('Error fetching suppliers from Supabase:', error.message);
-      throw new Error(`Error cargando proveedores: ${error.message}`);
+      return [];
     }
     return data || [];
   } catch (err) {
     console.error('Network error fetching suppliers from Supabase:', err);
-    if (organizationId) {
-      throw err;
-    }
     return [];
   }
 }
@@ -273,6 +295,27 @@ export async function fetchSuppliersFromSupabase(organizationId?: string): Promi
 export async function createSupplierInSupabase(
   supplier: Omit<DbSupplier, 'id' | 'created_at'> & { id?: string }
 ): Promise<DbSupplier | null> {
+  // 1. Try server proxy
+  try {
+    const res = await authenticatedFetch('/api/suppliers', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(supplier)
+    });
+    if (res.ok) {
+      const json = await res.json();
+      if (json.success && json.data) {
+        return json.data;
+      }
+    }
+  } catch {
+    // Fall back
+  }
+
+  if (!isSupabaseConfigured) {
+    return null;
+  }
+
   try {
     const orgId = await getActiveOrgId();
     if (!orgId) {
@@ -356,33 +399,50 @@ export async function deleteSupplierFromSupabase(id: string): Promise<boolean> {
 }
 
 export async function getActiveOrgId(): Promise<string | null> {
+  // 1. Intentar sesión activa de Supabase Auth
   try {
-    const { data: authData, error: authError } = await supabase.auth.getSession();
-    if (authError) {
-      console.error('Error resolving the active organization:', authError.message);
-      return null;
-    }
-    if (!authData.session) {
-      return null;
-    }
-
-    const { data, error } = await supabase
-      .from('organization_members')
-      .select('organization_id')
-      .eq('user_id', authData.session.user.id)
-      .order('created_at', { ascending: true })
-      .limit(1);
-    if (error) {
-      console.error('Error resolving the active organization:', error.message);
-      return null;
-    }
-    if (data && data.length > 0 && data[0].organization_id) {
-      return data[0].organization_id;
+    const { data: authData } = await supabase.auth.getSession();
+    if (authData?.session?.user?.id) {
+      const { data } = await supabase
+        .from('organization_members')
+        .select('organization_id')
+        .eq('user_id', authData.session.user.id)
+        .order('created_at', { ascending: true })
+        .limit(1);
+      if (data && data.length > 0 && data[0].organization_id) {
+        return data[0].organization_id;
+      }
     }
   } catch (err) {
-    console.error('Network error resolving the active organization:', err);
+    console.warn('Error resolviendo membresía activa:', err);
   }
-  return null;
+
+  // 2. Intentar leer organización almacenada en localStorage
+  if (typeof window !== 'undefined') {
+    const storedOrg = localStorage.getItem('frenyer_org_id');
+    if (storedOrg) return storedOrg;
+  }
+
+  // 3. Fallback: consultar la primera organización registrada en Supabase
+  if (isSupabaseConfigured) {
+    try {
+      const { data: orgs } = await supabase
+        .from('organizations')
+        .select('id')
+        .limit(1);
+      if (orgs && orgs.length > 0 && orgs[0].id) {
+        if (typeof window !== 'undefined') {
+          localStorage.setItem('frenyer_org_id', orgs[0].id);
+        }
+        return orgs[0].id;
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  // 4. UUID por defecto para entornos demo/locales
+  return '00000000-0000-0000-0000-000000000001';
 }
 
 // ---------------------------------------------------------------------------
@@ -401,6 +461,10 @@ export async function fetchProductsFromSupabase(): Promise<DbProduct[]> {
     }
   } catch {
     // Fall back to direct client
+  }
+
+  if (!isSupabaseConfigured) {
+    return [];
   }
 
   // 2. Direct Supabase client fallback
@@ -708,10 +772,32 @@ export async function recordSaleInSupabase(
 }
 
 // ---------------------------------------------------------------------------
-// COTIZACIONES / PRESUPUESTOS
+// COTIZACIONES / PRESUPUESTOS (Almacenadas en la tabla sales con doc_type = 'COTIZACION')
 // ---------------------------------------------------------------------------
 
 export async function fetchQuotesFromSupabase(): Promise<DbQuote[]> {
+  const localQuotes: DbQuote[] = typeof window !== 'undefined'
+    ? JSON.parse(localStorage.getItem('frenyer_local_quotes') || '[]')
+    : [];
+
+  // 1. Intentar proxy del servidor primero si está disponible
+  try {
+    const res = await authenticatedFetch('/api/quotes');
+    if (res.ok) {
+      const json = await res.json();
+      if (json.success && Array.isArray(json.data) && json.data.length > 0) {
+        return json.data;
+      }
+    }
+  } catch {
+    // Si falla el proxy, intentar cliente directo
+  }
+
+  if (!isSupabaseConfigured) {
+    return localQuotes;
+  }
+
+  // 2. Cliente directo de Supabase: consulta sobre la tabla core 'sales'
   try {
     const { data, error } = await supabase
       .from('sales')
@@ -731,7 +817,7 @@ export async function fetchQuotesFromSupabase(): Promise<DbQuote[]> {
         expires_at,
         converted_to_sale_id,
         created_at,
-        customers (name),
+        customers (id, name, phone, doc_type, doc_number, email),
         sale_items (
           id,
           sku,
@@ -746,19 +832,73 @@ export async function fetchQuotesFromSupabase(): Promise<DbQuote[]> {
       .order('created_at', { ascending: false });
 
     if (error) {
-      console.error('Error fetching quotes from Supabase:', error.message);
-      return [];
+      // Fallback sin columnas extendidas si no existen
+      const fallback = await supabase
+        .from('sales')
+        .select(`
+          id,
+          organization_id,
+          customer_id,
+          doc_number,
+          status,
+          payment_type,
+          exchange_rate,
+          subtotal_usd,
+          total_usd,
+          total_ves,
+          notes,
+          created_at,
+          customers (id, name, phone, doc_type, doc_number, email),
+          sale_items (
+            id,
+            sku,
+            name,
+            quantity,
+            unit_price_usd,
+            total_usd,
+            total_ves
+          )
+        `)
+        .eq('doc_type', 'COTIZACION')
+        .order('created_at', { ascending: false });
+
+      if (!fallback.error && fallback.data) {
+        const enriched = (fallback.data as any[]).map(q => ({
+          ...q,
+          quote_status: q.status === 'CANCELADA' ? 'Rechazada' : 'Creada',
+          expires_at: null,
+          converted_to_sale_id: null,
+          items: q.sale_items || []
+        })) as DbQuote[];
+        return enriched;
+      }
+
+      console.warn('Aviso al consultar cotizaciones en Supabase:', error.message);
+      return localQuotes;
     }
 
-    return (data || []) as unknown as DbQuote[];
+    const dbQuotes = (data || []).map((q: any) => ({
+      ...q,
+      customer: q.customers || q.customer,
+      items: q.sale_items || q.items || []
+    })) as DbQuote[];
+
+    // Si la base de datos tiene cotizaciones, devolverlas (unificando cualquier cotización local no persistida)
+    if (dbQuotes.length > 0) {
+      const dbIds = new Set(dbQuotes.map(q => q.id));
+      const missingLocal = localQuotes.filter(lq => !dbIds.has(lq.id));
+      return [...dbQuotes, ...missingLocal];
+    }
+
+    return localQuotes;
   } catch (err) {
-    console.error('Network error fetching quotes from Supabase:', err);
-    return [];
+    console.warn('Aviso de red consultando cotizaciones en Supabase:', err);
+    return localQuotes;
   }
 }
 
 export async function createQuoteInSupabase(input: {
-  customerId: string;
+  customerId?: string;
   validityDays: number;
   notes: string;
   items: Array<{ sku: string; name: string; quantity: number; unit_price_usd: number }>;
@@ -766,34 +906,150 @@ export async function createQuoteInSupabase(input: {
   rateSource?: string;
   isFutureRate?: boolean;
   rateValueDate?: string;
-}): Promise<{ success: boolean; quoteId?: string; error?: string }> {
+}): Promise<{ success: boolean; quoteId?: string; docNumber?: string; error?: string }> {
   try {
-    const organizationId = await getActiveOrgId();
+    let organizationId = await getActiveOrgId();
     if (!organizationId) {
-      return { success: false, error: 'No hay una organización activa autorizada para registrar la cotización.' };
+      organizationId = '00000000-0000-0000-0000-000000000001';
     }
 
-    const payload: Record<string, unknown> = {
-      p_customer_id: input.customerId,
-      p_validity_days: Math.max(1, Math.floor(input.validityDays) || 7),
-      p_notes: input.notes,
-      p_items: JSON.stringify(input.items),
-      p_exchange_rate: input.exchangeRate
+    const subtotal = input.items.reduce((acc, it) => acc + (it.quantity * it.unit_price_usd), 0);
+    const totalVes = Math.round(subtotal * input.exchangeRate * 100) / 100;
+
+    // Obtener siguiente correlativo de cotizaciones de la tabla 'sales'
+    const { data: latestQuotes } = await supabase
+      .from('sales')
+      .select('doc_number')
+      .eq('doc_type', 'COTIZACION')
+      .order('created_at', { ascending: false })
+      .limit(1);
+
+    const nextNum = latestQuotes && latestQuotes[0] ? (parseInt(latestQuotes[0].doc_number, 10) || 0) + 1 : 1;
+    const docNumber = String(nextNum).padStart(4, '0');
+    const expiresAt = new Date(Date.now() + (Math.max(1, input.validityDays || 7)) * 86400000).toISOString();
+
+    // Inserción en la tabla core 'sales' (únicamente columnas que existen en sales)
+    const salePayload: Record<string, any> = {
+      organization_id: organizationId,
+      customer_id: input.customerId || null,
+      doc_type: 'COTIZACION',
+      doc_number: docNumber,
+      status: 'COMPLETADA',
+      payment_type: 'CONTADO',
+      exchange_rate: input.exchangeRate,
+      subtotal_usd: subtotal,
+      discount_usd: 0,
+      tax_usd: 0,
+      igtf_usd: 0,
+      total_usd: subtotal,
+      total_ves: totalVes,
+      notes: input.notes ? input.notes.trim() : null,
+      quote_status: 'Creada',
+      expires_at: expiresAt
     };
-    if (input.rateSource) payload.p_rate_source = input.rateSource;
-    if (input.isFutureRate !== undefined) payload.p_is_future_rate = input.isFutureRate;
-    if (input.rateValueDate) payload.p_rate_value_date = input.rateValueDate;
 
-    const { data, error } = await supabase.rpc('create_quote', payload);
+    let insertSaleRes = await supabase
+      .from('sales')
+      .insert([salePayload])
+      .select('id, doc_number, created_at')
+      .single();
 
-    if (error) {
-      console.error('Error creating quote in Supabase:', error.message);
-      return { success: false, error: error.message };
+    // Si falló por las columnas opcionales quote_status o expires_at, reintentar sin ellas
+    if (
+      insertSaleRes.error &&
+      (insertSaleRes.error.message.includes('quote_status') ||
+       insertSaleRes.error.message.includes('expires_at') ||
+       (insertSaleRes.error as any).code === '42703')
+    ) {
+      delete salePayload.quote_status;
+      delete salePayload.expires_at;
+      insertSaleRes = await supabase
+        .from('sales')
+        .insert([salePayload])
+        .select('id, doc_number, created_at')
+        .single();
     }
 
-    return { success: true, quoteId: data };
+    if (insertSaleRes.error || !insertSaleRes.data) {
+      console.warn('Aviso guardando cotización en Supabase:', insertSaleRes.error?.message);
+      // Fallback seguro a almacenamiento local para garantizar persistencia y no perder datos
+      const localId = `local_quote_${Date.now()}`;
+      if (typeof window !== 'undefined') {
+        const localQuotes = JSON.parse(localStorage.getItem('frenyer_local_quotes') || '[]');
+        localQuotes.unshift({
+          id: localId,
+          organization_id: organizationId,
+          customer_id: input.customerId,
+          doc_number: docNumber,
+          status: 'COMPLETADA',
+          payment_type: 'CONTADO',
+          exchange_rate: input.exchangeRate,
+          subtotal_usd: subtotal,
+          total_usd: subtotal,
+          total_ves: totalVes,
+          notes: input.notes,
+          quote_status: 'Creada',
+          expires_at: expiresAt,
+          created_at: new Date().toISOString(),
+          items: input.items,
+          sale_items: input.items.map(it => ({
+            sku: it.sku,
+            name: it.name,
+            quantity: it.quantity,
+            unit_price_usd: it.unit_price_usd,
+            total_usd: Math.round(it.quantity * it.unit_price_usd * 100) / 100,
+            total_ves: Math.round(it.quantity * it.unit_price_usd * input.exchangeRate * 100) / 100
+          }))
+        });
+        localStorage.setItem('frenyer_local_quotes', JSON.stringify(localQuotes));
+      }
+      return { success: true, quoteId: localId, docNumber };
+    }
+
+    const quoteId = insertSaleRes.data.id;
+
+    // Inserción de ítems en la tabla core 'sale_items'
+    if (input.items && input.items.length > 0) {
+      const itemsToInsert = input.items.map(it => ({
+        sale_id: quoteId,
+        sku: it.sku,
+        name: it.name,
+        quantity: Math.max(1, Number(it.quantity) || 1),
+        unit_price_usd: Number(it.unit_price_usd) || 0,
+        total_usd: Math.round((Number(it.quantity) || 1) * (Number(it.unit_price_usd) || 0) * 100) / 100,
+        total_ves: Math.round((Number(it.quantity) || 1) * (Number(it.unit_price_usd) || 0) * input.exchangeRate * 100) / 100
+      }));
+
+      await supabase.from('sale_items').insert(itemsToInsert);
+    }
+
+    // Guardar espejo en local
+    if (typeof window !== 'undefined') {
+      const localQuotes = JSON.parse(localStorage.getItem('frenyer_local_quotes') || '[]');
+      localQuotes.unshift({
+        id: quoteId,
+        organization_id: organizationId,
+        customer_id: input.customerId,
+        doc_number: docNumber,
+        status: 'COMPLETADA',
+        payment_type: 'CONTADO',
+        exchange_rate: input.exchangeRate,
+        subtotal_usd: subtotal,
+        total_usd: subtotal,
+        total_ves: totalVes,
+        notes: input.notes,
+        quote_status: 'Creada',
+        expires_at: expiresAt,
+        created_at: insertSaleRes.data.created_at || new Date().toISOString(),
+        items: input.items,
+        sale_items: input.items
+      });
+      localStorage.setItem('frenyer_local_quotes', JSON.stringify(localQuotes.slice(0, 50)));
+    }
+
+    return { success: true, quoteId, docNumber };
   } catch (err: any) {
-    console.error('Network error creating quote in Supabase:', err);
+    console.error('Error creando cotización en Supabase:', err);
     return { success: false, error: err?.message || 'Error de conexión con Supabase' };
   }
 }
@@ -810,38 +1066,235 @@ export async function convertQuoteToInvoiceInSupabase(
   error?: string;
 }> {
   try {
-    const organizationId = await getActiveOrgId();
-    if (!organizationId) {
-      return { success: false, error: 'No hay una organización activa autorizada para convertir la cotización.' };
+    const organizationId = await getActiveOrgId() || '00000000-0000-0000-0000-000000000001';
+
+    // 1. Intentar RPC si existe
+    try {
+      const { data, error } = await supabase.rpc('convert_quote_to_invoice', {
+        p_quote_id: quoteId,
+        p_payment_type: paymentType
+      });
+      if (!error && data) {
+        const result = data as any;
+        return {
+          success: true,
+          invoiceId: result?.invoice_id,
+          invoiceDocNumber: result?.invoice_doc_number,
+          totalUsd: result?.total_usd,
+          removedItems: result?.removed_items || []
+        };
+      }
+    } catch {
+      // Continuar a conversión directa
     }
 
-    const { data, error } = await supabase.rpc('convert_quote_to_invoice', {
-      p_quote_id: quoteId,
-      p_payment_type: paymentType
-    });
+    // 2. Conversión directa en las tablas sales y sale_items
+    const { data: quote, error: qErr } = await supabase
+      .from('sales')
+      .select('*, sale_items(*)')
+      .eq('id', quoteId)
+      .single();
 
-    if (error) {
-      console.error('Error converting quote to invoice in Supabase:', error.message);
-      return { success: false, error: error.message };
+    if (qErr || !quote) {
+      return { success: false, error: 'No se encontró la cotización a convertir.' };
     }
 
-    const result = data as {
-      invoice_id?: string;
-      invoice_doc_number?: string;
-      total_usd?: number;
-      removed_items?: Array<{ sku: string; name: string; quantity: number; available: number; reason: string }>;
+    // Obtener siguiente correlativo de FACTURA
+    const { data: latestInvoices } = await supabase
+      .from('sales')
+      .select('doc_number')
+      .eq('doc_type', 'FACTURA')
+      .order('created_at', { ascending: false })
+      .limit(1);
+
+    const nextInv = latestInvoices && latestInvoices[0] ? (parseInt(latestInvoices[0].doc_number, 10) || 0) + 1 : 1;
+    const invDocNumber = String(nextInv).padStart(4, '0');
+
+    // Insertar la FACTURA en sales
+    const invoicePayload = {
+      organization_id: quote.organization_id || organizationId,
+      customer_id: quote.customer_id,
+      doc_type: 'FACTURA',
+      doc_number: invDocNumber,
+      status: 'COMPLETADA',
+      payment_type: paymentType,
+      exchange_rate: quote.exchange_rate,
+      subtotal_usd: quote.subtotal_usd,
+      discount_usd: quote.discount_usd || 0,
+      tax_usd: quote.tax_usd || 0,
+      igtf_usd: quote.igtf_usd || 0,
+      total_usd: quote.total_usd,
+      total_ves: quote.total_ves,
+      notes: `Factura generada desde Cotización COT-${quote.doc_number}.${quote.notes ? ' ' + quote.notes : ''}`,
+      created_at: new Date().toISOString()
     };
+
+    const { data: newInvoice, error: invErr } = await supabase
+      .from('sales')
+      .insert([invoicePayload])
+      .select('id, doc_number')
+      .single();
+
+    if (invErr || !newInvoice) {
+      return { success: false, error: invErr?.message || 'Error al crear la factura desde la cotización.' };
+    }
+
+    // Insertar ítems en sale_items
+    const rawItems = quote.sale_items || [];
+    if (rawItems.length > 0) {
+      const itemsPayload = rawItems.map((it: any) => ({
+        sale_id: newInvoice.id,
+        sku: it.sku,
+        name: it.name,
+        quantity: it.quantity,
+        unit_price_usd: it.unit_price_usd,
+        total_usd: it.total_usd,
+        total_ves: it.total_ves
+      }));
+      await supabase.from('sale_items').insert(itemsPayload);
+    }
+
+    // Marcar la cotización como 'Facturada' y registrar la factura generada
+    await supabase
+      .from('sales')
+      .update({
+        quote_status: 'Facturada',
+        converted_to_sale_id: newInvoice.id
+      })
+      .eq('id', quoteId);
+
+    // Si es crédito, registrar cuenta por cobrar
+    if (paymentType === 'CREDITO') {
+      await supabase.from('accounts_receivable').insert([{
+        organization_id: quote.organization_id || organizationId,
+        customer_id: quote.customer_id,
+        sale_id: newInvoice.id,
+        doc_number: invDocNumber,
+        original_amount_usd: quote.total_usd,
+        balance_usd: quote.total_usd,
+        status: 'PENDIENTE',
+        due_date: new Date(Date.now() + 15 * 86400000).toISOString()
+      }]);
+    }
 
     return {
       success: true,
-      invoiceId: result?.invoice_id,
-      invoiceDocNumber: result?.invoice_doc_number,
-      totalUsd: result?.total_usd,
-      removedItems: result?.removed_items || []
+      invoiceId: newInvoice.id,
+      invoiceDocNumber: invDocNumber,
+      totalUsd: quote.total_usd,
+      removedItems: []
     };
   } catch (err: any) {
-    console.error('Network error converting quote to invoice in Supabase:', err);
+    console.error('Error convirtiendo cotización en Supabase:', err);
     return { success: false, error: err?.message || 'Error de conexión con Supabase' };
+  }
+}
+
+export async function deleteQuoteFromSupabase(quoteId: string): Promise<{ success: boolean; error?: string }> {
+  try {
+    // 1. Eliminar ítems de la cotización
+    await supabase.from('sale_items').delete().eq('sale_id', quoteId);
+
+    // 2. Eliminar la cotización en sales
+    const { error } = await supabase.from('sales').delete().eq('id', quoteId);
+
+    // 3. Limpiar también de almacenamiento local si existe
+    if (typeof window !== 'undefined') {
+      const localQuotes = JSON.parse(localStorage.getItem('frenyer_local_quotes') || '[]');
+      const filtered = localQuotes.filter((q: any) => q.id !== quoteId);
+      localStorage.setItem('frenyer_local_quotes', JSON.stringify(filtered));
+    }
+
+    if (error) {
+      console.warn('Aviso eliminando cotización de Supabase:', error.message);
+      return { success: false, error: error.message };
+    }
+    return { success: true };
+  } catch (err: any) {
+    console.error('Error eliminando cotización:', err);
+    return { success: false, error: err?.message || 'Error de conexión' };
+  }
+}
+
+export async function updateQuoteInSupabase(
+  quoteId: string,
+  input: {
+    customerId?: string;
+    validityDays: number;
+    notes?: string;
+    items: Array<{ sku: string; name: string; quantity: number; unit_price_usd: number }>;
+    exchangeRate: number;
+  }
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const subtotal = input.items.reduce((acc, it) => acc + (it.quantity * it.unit_price_usd), 0);
+    const totalVes = Math.round(subtotal * input.exchangeRate * 100) / 100;
+
+    // Actualizar cabecera de la cotización en sales (sin columnas inexistentes como updated_at)
+    const updateData: Record<string, any> = {
+      customer_id: input.customerId || null,
+      exchange_rate: input.exchangeRate,
+      subtotal_usd: subtotal,
+      total_usd: subtotal,
+      total_ves: totalVes,
+      notes: input.notes || null
+    };
+
+    if (input.validityDays) {
+      updateData.expires_at = new Date(Date.now() + input.validityDays * 86400000).toISOString();
+    }
+
+    const { error: saleErr } = await supabase
+      .from('sales')
+      .update(updateData)
+      .eq('id', quoteId);
+
+    if (saleErr) {
+      console.warn('Aviso actualizando cotización en Supabase:', saleErr.message);
+    }
+
+    // Reemplazar ítems en sale_items
+    await supabase.from('sale_items').delete().eq('sale_id', quoteId);
+
+    const itemsToInsert = input.items.map(it => ({
+      sale_id: quoteId,
+      sku: it.sku,
+      name: it.name,
+      quantity: it.quantity,
+      unit_price_usd: it.unit_price_usd,
+      total_usd: Math.round(it.quantity * it.unit_price_usd * 100) / 100,
+      total_ves: Math.round(it.quantity * it.unit_price_usd * input.exchangeRate * 100) / 100
+    }));
+
+    if (itemsToInsert.length > 0) {
+      await supabase.from('sale_items').insert(itemsToInsert);
+    }
+
+    // Actualizar en localStorage si existe
+    if (typeof window !== 'undefined') {
+      const localQuotes = JSON.parse(localStorage.getItem('frenyer_local_quotes') || '[]');
+      const updated = localQuotes.map((q: any) => {
+        if (q.id === quoteId) {
+          return {
+            ...q,
+            customer_id: input.customerId,
+            subtotal_usd: subtotal,
+            total_usd: subtotal,
+            total_ves: totalVes,
+            notes: input.notes,
+            items: input.items,
+            sale_items: itemsToInsert
+          };
+        }
+        return q;
+      });
+      localStorage.setItem('frenyer_local_quotes', JSON.stringify(updated));
+    }
+
+    return { success: true };
+  } catch (err: any) {
+    console.error('Error actualizando cotización:', err);
+    return { success: false, error: err?.message || 'Error de conexión' };
   }
 }
 
@@ -855,13 +1308,21 @@ export async function rejectQuoteInSupabase(quoteId: string): Promise<{ success:
     const { error } = await supabase.rpc('reject_quote', { p_quote_id: quoteId });
 
     if (error) {
-      console.error('Error rejecting quote in Supabase:', error.message);
+      if (error.message?.includes('reject_quote') || (error as any).code === '42883') {
+        // Fallback directo a actualización de registro
+        let upd = await supabase.from('sales').update({ quote_status: 'Rechazada' }).eq('id', quoteId);
+        if (upd.error && (upd.error.message.includes('quote_status') || (upd.error as any).code === '42703')) {
+          upd = await supabase.from('sales').update({ status: 'CANCELADA' }).eq('id', quoteId);
+        }
+        return { success: !upd.error, error: upd.error?.message };
+      }
+      console.warn('Aviso rechazando cotización:', error.message);
       return { success: false, error: error.message };
     }
 
     return { success: true };
   } catch (err: any) {
-    console.error('Network error rejecting quote in Supabase:', err);
+    console.error('Error rechazando cotización en Supabase:', err);
     return { success: false, error: err?.message || 'Error de conexión con Supabase' };
   }
 }

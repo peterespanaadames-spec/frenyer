@@ -19,13 +19,16 @@ import {
   Check,
   AlertTriangle,
   X,
-  CreditCard
+  CreditCard,
+  Database
 } from 'lucide-react';
 import { Card } from '../../../components/ui/Card';
 import { Button } from '../../../components/ui/Button';
 import { Badge } from '../../../components/ui/Badge';
 import { getActiveExchangeRate, setActiveExchangeRate, formatUSD, formatVES } from '../../../lib/currency';
 import { authenticatedFetch } from '../../../lib/supabase/api';
+import { isSupabaseConfigured, SUPABASE_URL } from '../../../lib/supabase/client';
+import { SupabaseConnectionModal } from '../../../components/modals/SupabaseConnectionModal';
 
 interface AssociatedUser {
   id: number;
@@ -57,6 +60,7 @@ interface BankAccountRecord {
 
 export function ConfigPage() {
   const [activeTab, setActiveTab] = useState<'negocio' | 'usuarios' | 'auditoria'>('negocio');
+  const [isDbModalOpen, setIsDbModalOpen] = useState(false);
 
   // --- BANK ACCOUNTS AUDIT STATE ---
   const [auditFolder, setAuditFolder] = useState<'activas' | 'inactivas'>('activas');
@@ -413,6 +417,49 @@ export function ConfigPage() {
       {activeTab === 'negocio' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
           
+          {/* Section 0: Base de datos Supabase */}
+          <Card>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                <div
+                  style={{
+                    width: 38,
+                    height: 38,
+                    borderRadius: 10,
+                    background: isSupabaseConfigured ? '#ecfdf5' : '#fffbeb',
+                    color: isSupabaseConfigured ? '#059669' : '#d97706',
+                    display: 'grid',
+                    placeItems: 'center',
+                    border: `1px solid ${isSupabaseConfigured ? '#a7f3d0' : '#fde68a'}`
+                  }}
+                >
+                  <Database size={18} />
+                </div>
+                <div>
+                  <h3 style={{ margin: 0, fontSize: 15, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 8 }}>
+                    Base de Datos Supabase (PostgreSQL + RLS)
+                    <Badge tone={isSupabaseConfigured ? 'success' : 'warning'}>
+                      {isSupabaseConfigured ? 'Conectado' : 'Pendiente de conexión'}
+                    </Badge>
+                  </h3>
+                  <span className="muted small" style={{ fontSize: 11 }}>
+                    {isSupabaseConfigured
+                      ? `Conectado a ${SUPABASE_URL}. Todas las operaciones se guardan de forma persistente.`
+                      : 'Configura las credenciales de tu proyecto de Supabase para almacenar y sincronizar tus datos.'}
+                  </span>
+                </div>
+              </div>
+
+              <Button
+                variant={isSupabaseConfigured ? 'secondary' : 'primary'}
+                onClick={() => setIsDbModalOpen(true)}
+                style={{ fontSize: 12, height: 36, display: 'flex', alignItems: 'center', gap: 6 }}
+              >
+                <Database size={14} /> {isSupabaseConfigured ? 'Gestionar Conexión / SQL' : 'Conectar Supabase'}
+              </Button>
+            </div>
+          </Card>
+
           {/* Section 1: Identidad y datos fiscales (Image 1) */}
           <Card>
             <div style={{ marginBottom: 16 }}>
@@ -1339,6 +1386,12 @@ export function ConfigPage() {
           </div>
         );
       })()}
+
+      <SupabaseConnectionModal
+        isOpen={isDbModalOpen}
+        onClose={() => setIsDbModalOpen(false)}
+        onConnected={() => loadRateHistory()}
+      />
     </div>
   );
 }

@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, Outlet } from 'react-router-dom';
-import { Menu, Sparkles, RefreshCw, Edit3, ShieldAlert, AlertCircle, ArrowUpRight, Check, X, LogOut } from 'lucide-react';
+import { Menu, Sparkles, RefreshCw, Edit3, ShieldAlert, AlertCircle, ArrowUpRight, Check, X, LogOut, Database } from 'lucide-react';
 import { Sidebar } from '../components/ui/Sidebar';
 import { ManualBcvRateModal } from '../components/modals/ManualBcvRateModal';
+import { SupabaseConnectionModal } from '../components/modals/SupabaseConnectionModal';
 import { AuthScreen } from '../components/auth/AuthScreen';
 import { getActiveExchangeRate, setActiveExchangeRate, isFutureExchangeRate } from '../lib/currency';
 import { isSupabaseConfigured, supabase } from '../lib/supabase/client';
@@ -21,7 +22,9 @@ export function DashboardLayout() {
   const [rateSource, setRateSource] = useState(() => localStorage.getItem('frenyer_bcv_rate_source') || 'BCV');
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isManualModalOpen, setIsManualModalOpen] = useState(false);
+  const [isSupabaseModalOpen, setIsSupabaseModalOpen] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [isDbReady, setIsDbReady] = useState(() => isSupabaseConfigured);
 
   // Proposed Rate Notification Banner
   const [proposedRate, setProposedRate] = useState<{
@@ -175,7 +178,15 @@ export function DashboardLayout() {
     };
 
     window.addEventListener('frenyer:rate-changed', handleRateEvent);
-    return () => window.removeEventListener('frenyer:rate-changed', handleRateEvent);
+    const handleDbConfigured = () => {
+      setIsDbReady(true);
+      void checkAuthenticatedMembership();
+    };
+    window.addEventListener('frenyer:supabase-configured', handleDbConfigured);
+    return () => {
+      window.removeEventListener('frenyer:rate-changed', handleRateEvent);
+      window.removeEventListener('frenyer:supabase-configured', handleDbConfigured);
+    };
   }, []);
 
   if (isAuthenticationRequired && authStatus !== 'authenticated') {
@@ -231,6 +242,30 @@ export function DashboardLayout() {
           {/* Right Header Area with BCV Pill & Actions */}
           <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
             
+            {/* Supabase Status Pill */}
+            <button
+              type="button"
+              onClick={() => setIsSupabaseModalOpen(true)}
+              title={isDbReady ? 'Base de datos Supabase conectada. Haga clic para detalles.' : 'Haga clic para conectar la base de datos Supabase.'}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 6,
+                background: isDbReady ? '#ecfdf5' : '#fffbeb',
+                border: isDbReady ? '1px solid #a7f3d0' : '1px solid #fde68a',
+                borderRadius: 8,
+                padding: '6px 10px',
+                fontSize: 12,
+                fontWeight: 700,
+                color: isDbReady ? '#065f46' : '#92400e',
+                cursor: 'pointer',
+                transition: 'all 0.15s ease'
+              }}
+            >
+              <Database size={14} style={{ color: isDbReady ? '#059669' : '#d97706' }} />
+              <span>{isDbReady ? 'Supabase' : 'Conectar BD'}</span>
+            </button>
+
             {/* Live BCV Exchange Rate Pill (Minimalist Amount Only - Click to modify) */}
             <div
               onClick={() => setIsManualModalOpen(true)}
@@ -401,6 +436,16 @@ export function DashboardLayout() {
           setBcvRate(newRate);
           setIsFuture(future);
           setRateSource(src);
+        }}
+      />
+
+      {/* Supabase Connection Modal */}
+      <SupabaseConnectionModal
+        isOpen={isSupabaseModalOpen}
+        onClose={() => setIsSupabaseModalOpen(false)}
+        onConnected={() => {
+          setIsDbReady(true);
+          void checkAuthenticatedMembership();
         }}
       />
     </div>

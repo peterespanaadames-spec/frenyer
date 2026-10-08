@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
-import { ArrowLeft, Building2, Eye, EyeOff, LockKeyhole, LogIn, Mail, UserRound } from 'lucide-react';
+import { ArrowLeft, Building2, Eye, EyeOff, LockKeyhole, LogIn, Mail, UserRound, Database } from 'lucide-react';
 import { supabase } from '../../lib/supabase/client';
+import { SupabaseConnectionModal } from '../modals/SupabaseConnectionModal';
 
 interface TurnstileApi {
   render: (
@@ -53,6 +54,7 @@ export function AuthScreen({
   const [feedback, setFeedback] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
   const [captchaToken, setCaptchaToken] = useState('');
+  const [isDbModalOpen, setIsDbModalOpen] = useState(false);
   const captchaContainerRef = useRef<HTMLDivElement>(null);
   const captchaWidgetId = useRef<string | null>(null);
   const captchaSiteKey = import.meta.env.VITE_TURNSTILE_SITE_KEY || '';
@@ -243,9 +245,42 @@ export function AuthScreen({
         ) : (
           <form className="auth-form" onSubmit={handleSubmit}>
             {!isConfigured && (
-              <p className="auth-message error" role="alert">
-                Configura la URL y la clave publicable de Supabase para habilitar el acceso.
-              </p>
+              <div
+                style={{
+                  padding: '12px 14px',
+                  background: '#fef2f2',
+                  border: '1px solid #fecaca',
+                  borderRadius: 10,
+                  marginBottom: 12,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 10
+                }}
+              >
+                <div style={{ fontSize: 12, color: '#991b1b', lineHeight: 1.4 }}>
+                  Configura la URL y la clave publicable de tu proyecto Supabase para habilitar el acceso y sincronizar los datos.
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsDbModalOpen(true)}
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: 8,
+                    background: 'var(--brand-500)',
+                    color: '#fff',
+                    border: 'none',
+                    borderRadius: 8,
+                    padding: '8px 14px',
+                    fontSize: 12,
+                    fontWeight: 700,
+                    cursor: 'pointer'
+                  }}
+                >
+                  <Database size={14} /> Conectar Base de Datos Supabase
+                </button>
+              </div>
             )}
 
             {mode === 'signUp' && (
@@ -406,6 +441,15 @@ export function AuthScreen({
         )}
         <p className="auth-footer">Acceso protegido para la gestión de tu negocio.</p>
       </section>
+
+      <SupabaseConnectionModal
+        isOpen={isDbModalOpen}
+        onClose={() => setIsDbModalOpen(false)}
+        onConnected={async () => {
+          setIsDbModalOpen(false);
+          await onAuthenticated();
+        }}
+      />
     </main>
   );
 }

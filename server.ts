@@ -7,6 +7,7 @@ import { createServer as createViteServer, loadEnv } from 'vite';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import https from 'node:https';
+import fs from 'node:fs';
 import type { Request, Response, NextFunction } from 'express';
 import { createClient } from '@supabase/supabase-js';
 
@@ -20,19 +21,74 @@ app.use(express.urlencoded({ extended: true, limit: '15mb' }));
 
 const PORT = 3000;
 
-// Supabase Server Client
+// Helper to determine if a value is a valid Supabase URL / Key
+function isRealSupabaseUrl(url?: string): boolean {
+  if (!url) return false;
+  const clean = url.trim().toLowerCase();
+  return (
+    /^https?:\/\//i.test(clean) &&
+    !clean.includes('your-project') &&
+    !clean.includes('example.com')
+  );
+}
+
+function isRealSupabaseKey(key?: string): boolean {
+  if (!key) return false;
+  const clean = key.trim().toLowerCase();
+  return (
+    clean.length > 20 &&
+    !clean.includes('your-supabase') &&
+    !clean.includes('configure_supabase') &&
+    !clean.includes('configure-supabase')
+  );
+}
+
+// Read local .env.local if present
+function readEnvLocalFile(): Record<string, string> {
+  const envPath = path.resolve(process.cwd(), '.env.local');
+  if (!fs.existsSync(envPath)) return {};
+  try {
+    const content = fs.readFileSync(envPath, 'utf-8');
+    const lines = content.split('\n');
+    const result: Record<string, string> = {};
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith('#')) continue;
+      const idx = trimmed.indexOf('=');
+      if (idx > 0) {
+        const k = trimmed.slice(0, idx).trim();
+        const v = trimmed.slice(idx + 1).trim().replace(/^['"]|['"]$/g, '');
+        result[k] = v;
+      }
+    }
+    return result;
+  } catch {
+    return {};
+  }
+}
+
 const loadedEnv = loadEnv(process.env.NODE_ENV || 'development', process.cwd(), '');
-const SUPABASE_URL = process.env.VITE_SUPABASE_URL || loadedEnv.VITE_SUPABASE_URL || 'http://127.0.0.1:54321';
-const SUPABASE_ANON_KEY =
-  process.env.VITE_SUPABASE_ANON_KEY || loadedEnv.VITE_SUPABASE_ANON_KEY || 'sb_publishable_configure_supabase';
-const isLocalSupabaseUrl = /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?(?:\/|$)/i.test(SUPABASE_URL);
-const isSupabaseConfigured =
-  (/^https:\/\//i.test(SUPABASE_URL) || isLocalSupabaseUrl) &&
-  SUPABASE_ANON_KEY.length > 20 &&
-  !SUPABASE_ANON_KEY.toLowerCase().includes('configure_supabase') &&
-  !SUPABASE_ANON_KEY.toLowerCase().includes('your-supabase') &&
-  !SUPABASE_URL.toLowerCase().includes('your-project');
-const supabaseServer = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+const localEnvFile = readEnvLocalFile();
+
+function resolveSupabaseUrl(): string {
+  if (isRealSupabaseUrl(localEnvFile.VITE_SUPABASE_URL)) return localEnvFile.VITE_SUPABASE_URL.trim();
+  if (isRealSupabaseUrl(process.env.VITE_SUPABASE_URL)) return process.env.VITE_SUPABASE_URL!.trim();
+  if (isRealSupabaseUrl(loadedEnv.VITE_SUPABASE_URL)) return loadedEnv.VITE_SUPABASE_URL.trim();
+  return process.env.VITE_SUPABASE_URL || loadedEnv.VITE_SUPABASE_URL || 'https://your-project.supabase.co';
+}
+
+function resolveSupabaseKey(): string {
+  if (isRealSupabaseKey(localEnvFile.VITE_SUPABASE_ANON_KEY)) return localEnvFile.VITE_SUPABASE_ANON_KEY.trim();
+  if (isRealSupabaseKey(process.env.VITE_SUPABASE_ANON_KEY)) return process.env.VITE_SUPABASE_ANON_KEY!.trim();
+  if (isRealSupabaseKey(loadedEnv.VITE_SUPABASE_ANON_KEY)) return loadedEnv.VITE_SUPABASE_ANON_KEY.trim();
+  return process.env.VITE_SUPABASE_ANON_KEY || loadedEnv.VITE_SUPABASE_ANON_KEY || 'configure-supabase-publishable-key';
+}
+
+let SUPABASE_URL = resolveSupabaseUrl();
+let SUPABASE_ANON_KEY = resolveSupabaseKey();
+
+let isSupabaseConfigured = isRealSupabaseUrl(SUPABASE_URL) && isRealSupabaseKey(SUPABASE_ANON_KEY);
+let supabaseServer = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 interface SupabaseRequestContext {
   accessToken: string;
@@ -124,7 +180,11 @@ app.use([
   '/api/payment-methods',
   '/api/bank-movements',
   '/api/bank-transfers',
-  '/api/suppliers'
+  '/api/suppliers',
+  '/api/quotes',
+  '/api/sales',
+  '/api/accounts-receivable',
+  '/api/accounts-payable'
 ], authenticateSupabaseRequest);
 
 // HTTPS Agent for BCV
@@ -721,6 +781,173 @@ app.post('/api/customers', async (req, res) => {
   }
 });
 
+app.get('/api/quotes', async (_req, res: AuthenticatedResponse) => {
+  try {
+    const orgId = res.locals.supabaseContext!.organizationId;
+    // 1. Intentar consulta completa con columnas de ciclo de vida (migración 0011)
+    let result = await authenticatedSupabaseRestRequest(
+      res,
+      `sales?organization_id=eq.${encodeURIComponent(orgId)}&doc_type=eq.COTIZACION&select=id,organization_id,customer_id,doc_number,status,payment_type,exchange_rate,subtotal_usd,total_usd,total_ves,notes,quote_status,expires_at,converted_to_sale_id,created_at,customers(id,name,phone,doc_type,doc_number,email),sale_items(id,sku,name,quantity,unit_price_usd,total_usd,total_ves)&order=created_at.desc`
+    );
+
+    // 2. Si la columna quote_status aún no existe en Supabase, reintentar sin las columnas opcionales
+    if (
+      result.error &&
+      typeof result.error === 'string' &&
+      (result.error.includes('quote_status') || result.error.includes('column') || result.error.includes('42703'))
+    ) {
+      const fallbackResult = await authenticatedSupabaseRestRequest(
+        res,
+        `sales?organization_id=eq.${encodeURIComponent(orgId)}&doc_type=eq.COTIZACION&select=id,organization_id,customer_id,doc_number,status,payment_type,exchange_rate,subtotal_usd,total_usd,total_ves,notes,created_at,customers(id,name,phone,doc_type,doc_number,email),sale_items(id,sku,name,quantity,unit_price_usd,total_usd,total_ves)&order=created_at.desc`
+      );
+
+      if (!fallbackResult.error && Array.isArray(fallbackResult.data)) {
+        const enriched = fallbackResult.data.map((item: any) => ({
+          ...item,
+          quote_status: item.status === 'CANCELADA' ? 'Rechazada' : 'Creada',
+          expires_at: null,
+          converted_to_sale_id: null
+        }));
+        return res.json({ success: true, data: enriched, schemaNotice: 'quote_status_missing' });
+      }
+    }
+
+    if (result.error) {
+      return res.status(200).json({ success: false, error: result.error, data: [] });
+    }
+    return res.json({ success: true, data: result.data || [] });
+  } catch (err: any) {
+    return res.status(200).json({ success: false, error: err?.message, data: [] });
+  }
+});
+
+app.get('/api/quotes/migration-sql', (_req, res) => {
+  try {
+    const migrationPath = path.resolve(process.cwd(), 'supabase', 'migrations', '0011_quotes_module.sql');
+    if (fs.existsSync(migrationPath)) {
+      const sql = fs.readFileSync(migrationPath, 'utf-8');
+      res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+      return res.send(sql);
+    }
+    return res.status(404).json({ success: false, error: 'Migración de cotizaciones no encontrada' });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message });
+  }
+});
+
+app.post('/api/quotes', async (req, res: AuthenticatedResponse) => {
+  try {
+    const orgId = res.locals.supabaseContext?.organizationId || req.body.organizationId || '00000000-0000-0000-0000-000000000001';
+    const { customerId, validityDays, notes, items, exchangeRate, rateSource, isFutureRate, rateValueDate } = req.body;
+
+    if (!customerId || !Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({ success: false, error: 'Datos de cotización incompletos (cliente e ítems requeridos).' });
+    }
+
+    const rate = Number(exchangeRate) || 1;
+    const subtotal = items.reduce((acc: number, it: any) => acc + (Number(it.quantity) || 1) * (Number(it.unit_price_usd) || 0), 0);
+    const totalVes = Math.round(subtotal * rate * 100) / 100;
+
+    // Obtener siguiente correlativo de cotización
+    const latestSales = await authenticatedSupabaseRestRequest(
+      res,
+      `sales?organization_id=eq.${encodeURIComponent(orgId)}&doc_type=eq.COTIZACION&select=doc_number&order=created_at.desc&limit=1`
+    );
+    let nextNum = 1;
+    if (Array.isArray(latestSales.data) && latestSales.data.length > 0 && latestSales.data[0].doc_number) {
+      nextNum = (parseInt(latestSales.data[0].doc_number, 10) || 0) + 1;
+    }
+    const docNumber = String(nextNum).padStart(4, '0');
+    const expiresAt = new Date(Date.now() + (Math.max(1, validityDays || 7)) * 86400000).toISOString();
+
+    // 1. Intentar insertar en sales con quote_status y expires_at
+    const salePayload: any = {
+      organization_id: orgId,
+      customer_id: customerId || null,
+      doc_type: 'COTIZACION',
+      doc_number: docNumber,
+      status: 'COMPLETADA',
+      payment_type: 'CONTADO',
+      exchange_rate: rate,
+      subtotal_usd: subtotal,
+      discount_usd: 0,
+      tax_usd: 0,
+      igtf_usd: 0,
+      total_usd: subtotal,
+      total_ves: totalVes,
+      notes: notes ? String(notes).trim() : null,
+      quote_status: 'Creada',
+      expires_at: expiresAt
+    };
+
+    let insertSale = await authenticatedSupabaseRestRequest(res, 'sales', {
+      method: 'POST',
+      headers: { 'Prefer': 'return=representation' },
+      body: salePayload
+    });
+
+    // Si falló por falta de la columna quote_status o expires_at, reintentar sin ellas
+    if (
+      insertSale.error &&
+      typeof insertSale.error === 'string' &&
+      (insertSale.error.includes('quote_status') || insertSale.error.includes('expires_at') || insertSale.error.includes('column') || insertSale.error.includes('42703'))
+    ) {
+      delete salePayload.quote_status;
+      delete salePayload.expires_at;
+      insertSale = await authenticatedSupabaseRestRequest(res, 'sales', {
+        method: 'POST',
+        headers: { 'Prefer': 'return=representation' },
+        body: salePayload
+      });
+    }
+
+    if (insertSale.error) {
+      return res.status(200).json({ success: false, error: insertSale.error });
+    }
+
+    const createdSale = Array.isArray(insertSale.data) ? insertSale.data[0] : insertSale.data;
+    const saleId = createdSale?.id;
+
+    if (!saleId) {
+      return res.status(200).json({ success: false, error: 'No se obtuvo el identificador de la cotización generada.' });
+    }
+
+    // Insertar ítems en sale_items
+    const itemsPayload = items.map((it: any) => {
+      const q = Math.max(1, Number(it.quantity) || 1);
+      const p = Math.max(0, Number(it.unit_price_usd) || 0);
+      return {
+        sale_id: saleId,
+        sku: it.sku || null,
+        name: it.name || 'Producto',
+        quantity: q,
+        unit_price_usd: p,
+        total_usd: Math.round(p * q * 100) / 100,
+        total_ves: Math.round(p * q * rate * 100) / 100
+      };
+    });
+
+    const insertItems = await authenticatedSupabaseRestRequest(res, 'sale_items', {
+      method: 'POST',
+      headers: { 'Prefer': 'return=representation' },
+      body: itemsPayload
+    });
+
+    return res.json({
+      success: true,
+      quoteId: saleId,
+      docNumber,
+      data: {
+        ...createdSale,
+        doc_number: docNumber,
+        sale_items: insertItems.data || itemsPayload
+      }
+    });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message || 'Error en servidor registrando cotización.' });
+  }
+});
+
 // ---------------------------------------------------------------------------
 // 6. BANK ACCOUNTS, PAYMENT METHODS & MOVEMENTS BACKEND PROXY
 // ---------------------------------------------------------------------------
@@ -990,20 +1217,280 @@ app.post('/api/bank-transfers', async (req, res) => {
   }
 });
 
-// Proveedores se consultan mediante el cliente Supabase autenticado para que RLS
-// valide la membresía de organización. No se devuelven datos de memoria alternos.
-app.all('/api/suppliers', (_req, res) => {
-  return res.status(401).json({
-    success: false,
-    error: 'Acceso de proveedores requiere una sesión autenticada de Supabase.'
-  });
+// ---------------------------------------------------------------------------
+// 7. PROVEEDORES (SUPPLIERS) BACKEND PROXY
+// ---------------------------------------------------------------------------
+app.get('/api/suppliers', async (_req, res: AuthenticatedResponse) => {
+  try {
+    const orgId = res.locals.supabaseContext!.organizationId;
+    const result = await authenticatedSupabaseRestRequest(
+      res,
+      `suppliers?organization_id=eq.${encodeURIComponent(orgId)}&select=*&order=name.asc`
+    );
+    if (result.error) {
+      return res.status(200).json({ success: false, error: result.error, data: [] });
+    }
+    return res.json({ success: true, data: result.data || [] });
+  } catch (err: any) {
+    return res.status(200).json({ success: false, error: err?.message, data: [] });
+  }
 });
 
-app.all('/api/suppliers/:id', (_req, res) => {
-  return res.status(401).json({
-    success: false,
-    error: 'Acceso de proveedores requiere una sesión autenticada de Supabase.'
-  });
+app.post('/api/suppliers', async (req, res: AuthenticatedResponse) => {
+  try {
+    const supplier = req.body;
+    const result = await authenticatedSupabaseRestRequest(res, 'suppliers', {
+      method: 'POST',
+      headers: { Prefer: 'return=representation' },
+      body: supplier
+    });
+    if (result.error) {
+      return res.status(200).json({ success: false, error: result.error });
+    }
+    const created = Array.isArray(result.data) ? result.data[0] : result.data;
+    return res.json({ success: true, data: created });
+  } catch (err: any) {
+    return res.status(200).json({ success: false, error: err?.message || 'Error en servidor' });
+  }
+});
+
+app.patch('/api/suppliers/:id', async (req, res: AuthenticatedResponse) => {
+  try {
+    const { id } = req.params;
+    const updates = req.body;
+    const result = await authenticatedSupabaseRestRequest(
+      res,
+      `suppliers?id=eq.${encodeURIComponent(id)}`,
+      {
+        method: 'PATCH',
+        headers: { Prefer: 'return=representation' },
+        body: updates
+      }
+    );
+    if (result.error) {
+      return res.status(200).json({ success: false, error: result.error });
+    }
+    const updated = Array.isArray(result.data) ? result.data[0] : result.data;
+    return res.json({ success: true, data: updated });
+  } catch (err: any) {
+    return res.status(200).json({ success: false, error: err?.message });
+  }
+});
+
+app.delete('/api/suppliers/:id', async (req, res: AuthenticatedResponse) => {
+  try {
+    const { id } = req.params;
+    const result = await authenticatedSupabaseRestRequest(
+      res,
+      `suppliers?id=eq.${encodeURIComponent(id)}`,
+      {
+        method: 'DELETE'
+      }
+    );
+    if (result.error) {
+      return res.status(200).json({ success: false, error: result.error });
+    }
+    return res.json({ success: true });
+  } catch (err: any) {
+    return res.status(200).json({ success: false, error: err?.message });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// 8. VENTAS, CUENTAS POR COBRAR Y CUENTAS POR PAGAR PROXY
+// ---------------------------------------------------------------------------
+app.get('/api/sales', async (_req, res: AuthenticatedResponse) => {
+  try {
+    const orgId = res.locals.supabaseContext!.organizationId;
+    const result = await authenticatedSupabaseRestRequest(
+      res,
+      `sales?organization_id=eq.${encodeURIComponent(orgId)}&select=id,doc_number,created_at,total_usd,total_ves,status,payment_type,doc_type&order=created_at.desc&limit=100`
+    );
+    if (result.error) {
+      return res.status(200).json({ success: false, error: result.error, data: [] });
+    }
+    return res.json({ success: true, data: result.data || [] });
+  } catch (err: any) {
+    return res.status(200).json({ success: false, error: err?.message, data: [] });
+  }
+});
+
+app.get('/api/accounts-receivable', async (_req, res: AuthenticatedResponse) => {
+  try {
+    const orgId = res.locals.supabaseContext!.organizationId;
+    const result = await authenticatedSupabaseRestRequest(
+      res,
+      `accounts_receivable?organization_id=eq.${encodeURIComponent(orgId)}&select=*&order=created_at.desc`
+    );
+    if (result.error) {
+      return res.status(200).json({ success: false, error: result.error, data: [] });
+    }
+    return res.json({ success: true, data: result.data || [] });
+  } catch (err: any) {
+    return res.status(200).json({ success: false, error: err?.message, data: [] });
+  }
+});
+
+app.get('/api/accounts-payable', async (_req, res: AuthenticatedResponse) => {
+  try {
+    const orgId = res.locals.supabaseContext!.organizationId;
+    const result = await authenticatedSupabaseRestRequest(
+      res,
+      `accounts_payable?organization_id=eq.${encodeURIComponent(orgId)}&select=*&order=created_at.desc`
+    );
+    if (result.error) {
+      return res.status(200).json({ success: false, error: result.error, data: [] });
+    }
+    return res.json({ success: true, data: result.data || [] });
+  } catch (err: any) {
+    return res.status(200).json({ success: false, error: err?.message, data: [] });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// 9. SUPABASE CONNECTION & MANAGEMENT ENDPOINTS
+// ---------------------------------------------------------------------------
+app.get('/api/supabase/status', async (_req, res) => {
+  const configured = isRealSupabaseUrl(SUPABASE_URL) && isRealSupabaseKey(SUPABASE_ANON_KEY);
+  if (!configured) {
+    return res.json({
+      configured: false,
+      connected: false,
+      url: SUPABASE_URL,
+      message: 'Supabase no está configurado con una URL o clave anónima válida.'
+    });
+  }
+
+  try {
+    const testRes = await supabaseRestRequest('organizations?select=id&limit=1');
+    const isConnected = testRes.status < 500;
+    const missingTables: string[] = [];
+
+    if (testRes.status === 404 || (testRes.error && testRes.error.includes('relation "public.organizations" does not exist'))) {
+      missingTables.push('organizations');
+    }
+
+    return res.json({
+      configured: true,
+      connected: isConnected,
+      url: SUPABASE_URL,
+      status: testRes.status,
+      missingTables,
+      error: testRes.status >= 400 ? testRes.error : null
+    });
+  } catch (err: any) {
+    return res.json({
+      configured: true,
+      connected: false,
+      url: SUPABASE_URL,
+      error: err?.message || 'Error conectando a Supabase'
+    });
+  }
+});
+
+app.post('/api/supabase/config', async (req, res) => {
+  const { url, anonKey } = req.body || {};
+  const cleanUrl = typeof url === 'string' ? url.trim() : '';
+  const cleanKey = typeof anonKey === 'string' ? anonKey.trim() : '';
+
+  if (!isRealSupabaseUrl(cleanUrl)) {
+    return res.status(400).json({
+      success: false,
+      error: 'La URL proporcionada no es válida. Debe iniciar con https:// y pertenecer a un proyecto de Supabase.'
+    });
+  }
+
+  if (!isRealSupabaseKey(cleanKey)) {
+    return res.status(400).json({
+      success: false,
+      error: 'La clave anónima (anon key) proporcionada no es válida o está incompleta.'
+    });
+  }
+
+  // Probe live connection
+  try {
+    const probeRes = await new Promise<{ status: number; error?: string }>((resolve) => {
+      const parsedUrl = new URL(`${cleanUrl}/rest/v1/organizations?select=id&limit=1`);
+      const probeReq = https.request(
+        parsedUrl,
+        {
+          method: 'GET',
+          headers: {
+            apikey: cleanKey,
+            Authorization: `Bearer ${cleanKey}`,
+            Accept: 'application/json'
+          },
+          timeout: 6000
+        },
+        (pRes) => {
+          resolve({ status: pRes.statusCode || 200 });
+        }
+      );
+      probeReq.on('timeout', () => {
+        probeReq.destroy();
+        resolve({ status: 504, error: 'Tiempo de espera agotado al conectar con Supabase.' });
+      });
+      probeReq.on('error', (err) => {
+        resolve({ status: 500, error: err.message });
+      });
+      probeReq.end();
+    });
+
+    if (probeRes.status >= 500) {
+      return res.status(502).json({
+        success: false,
+        error: `No se pudo establecer conexión con Supabase en ${cleanUrl} (${probeRes.error || `HTTP ${probeRes.status}`}).`
+      });
+    }
+
+    // Update server instance
+    SUPABASE_URL = cleanUrl;
+    SUPABASE_ANON_KEY = cleanKey;
+    isSupabaseConfigured = true;
+    supabaseServer = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+    // Persist to .env.local
+    try {
+      const envLocalContent = `VITE_SUPABASE_URL=${cleanUrl}\nVITE_SUPABASE_ANON_KEY=${cleanKey}\n`;
+      fs.writeFileSync(path.resolve(process.cwd(), '.env.local'), envLocalContent, 'utf-8');
+    } catch (saveErr) {
+      console.warn('Could not persist .env.local file:', saveErr);
+    }
+
+    return res.json({
+      success: true,
+      message: 'Conexión con Supabase verificada y establecida con éxito.',
+      url: cleanUrl
+    });
+  } catch (err: any) {
+    return res.status(500).json({
+      success: false,
+      error: err?.message || 'Error validando credenciales de Supabase.'
+    });
+  }
+});
+
+app.get('/api/supabase/migrations-bundle', (_req, res) => {
+  try {
+    const migrationsDir = path.resolve(process.cwd(), 'supabase', 'migrations');
+    if (!fs.existsSync(migrationsDir)) {
+      return res.status(404).json({ success: false, error: 'Directorio de migraciones no encontrado.' });
+    }
+    const files = fs.readdirSync(migrationsDir).filter(f => f.endsWith('.sql')).sort();
+    let bundledSql = `-- ==============================================================================\n-- FRENYER ERP — PAQUETE COMPLETO DE MIGRACIONES UNIFICADAS (0001 - 0012)\n-- ==============================================================================\n-- Ejecuta este script en el SQL Editor de tu consola de Supabase para inicializar\n-- todas las tablas, índices, triggers y políticas RLS necesarias para Frenyer.\n-- ==============================================================================\n\n`;
+
+    for (const file of files) {
+      bundledSql += `-- ------------------------------------------------------------------------------\n`;
+      bundledSql += `-- ARCHIVO: ${file}\n`;
+      bundledSql += `-- ------------------------------------------------------------------------------\n`;
+      bundledSql += fs.readFileSync(path.join(migrationsDir, file), 'utf-8') + '\n\n';
+    }
+
+    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    return res.send(bundledSql);
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message || 'Error generando el bundle de migraciones.' });
+  }
 });
 
 // ---------------------------------------------------------------------------
