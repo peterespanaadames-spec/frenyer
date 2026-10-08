@@ -8,6 +8,9 @@ node_modules/
 dist/
 build/
 coverage/
+*.tsbuildinfo
+vite.config.js
+vite.config.d.ts
 
 # Tool and operating-system files
 .DS_Store
