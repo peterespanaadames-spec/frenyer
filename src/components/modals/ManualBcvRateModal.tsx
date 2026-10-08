@@ -120,7 +120,7 @@ export function ManualBcvRateModal({
       localStorage.setItem('frenyer_bcv_rate_source', 'MANUAL');
       localStorage.setItem('frenyer_bcv_is_future', certified.isFutureRate ? 'true' : 'false');
 
-      // Notify UI components after the server has persisted the audit record.
+      // Notifica a la interfaz después de guardar el registro de auditoría.
       window.dispatchEvent(new CustomEvent('frenyer:rate-changed', {
         detail: {
           rate: effectiveSavedRate,

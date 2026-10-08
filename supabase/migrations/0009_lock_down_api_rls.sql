@@ -1,4 +1,4 @@
--- Restrict tenant data to authenticated users who belong to its organization.
+-- Restringe los datos de cada inquilino a usuarios autenticados de su organización.
 alter table public.organizations enable row level security;
 alter table public.branches enable row level security;
 alter table public.organization_members enable row level security;
@@ -18,7 +18,7 @@ alter table public.suppliers enable row level security;
 alter table public.accounts_payable enable row level security;
 alter table public.payable_payments enable row level security;
 
--- Remove legacy policies, which are permissive when combined with restrictive policies.
+-- Elimina políticas heredadas, pues se combinan de forma permisiva con las nuevas.
 drop policy if exists "allow_all_organizations" on public.organizations;
 drop policy if exists "org_member_organizations" on public.organizations;
 drop policy if exists "members can read organizations" on public.organizations;
