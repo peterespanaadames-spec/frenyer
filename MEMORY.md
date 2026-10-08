@@ -19,7 +19,12 @@ Memoria breve de estado y decisiones. No guardar secretos ni datos personales.
   - Tarjetas KPI métricas superiores: Total Cotizaciones, Vigentes/Pendientes, Facturadas (Cerradas) y Vencidas/Expiradas con desglose bimonetario (USD / VES con tasa BCV activa).
   - Pestañas segmentadas de estado rápido con contadores en tiempo real (Todas, Pendientes, Facturadas, Vencidas, Rechazadas).
   - Conversión a factura con deducción transaccional de stock tanto vía RPC como vía directa en `sales` y `sale_items`.
-- Conversión a factura: la RPC valida stock real, remueve ítems sin existencia (se reportan al operador), descuenta inventario, crea la FACTURA con correlativo propio y, en crédito, genera la CxC.
+- Conversión de cotización a factura (`/ventas-flash/cotizaciones`):
+  - Detección y chequeo automático del siguiente correlativo de factura del sistema (`getNextInvoiceCorrelative`) consultando la secuencia en Supabase.
+  - Modal integral de facturación con vinculación financiera bimonetaria (USD/VES) y selección de método de pago:
+    - **Contado**: Vinculación directa con cuentas bancarias/cajas (`bank_accounts`), registro en tabla `payments`, generación de movimiento bancario (`/api/bank-movements`) y acreditación inmediata del saldo en Tesorería/Finanzas.
+    - **Crédito**: Creación automática de la obligación en Cuentas por Cobrar (`accounts_receivable`) con plazo configurable (7, 15, 30, 45 días o fecha personalizada), estado PENDIENTE y saldo vinculado.
+  - Validación de stock en inventario y actualización de la cotización a estado `Facturada` con su ID de factura asociado.
 - CxP asocia proveedores mediante `supplier_id`; pagos, saldo e impacto bancario se registran con la RPC transaccional de la migración 0008.
 - La tasa BCV consulta fuente oficial y servicio alternativo; sin datos válidos responde error y no inventa una tasa. La conversión puede conservar la última tasa del navegador.
 - `npm run dev` sirve el preview en `http://localhost:3000`; el modo local se verificó respondiendo HTTP 200.

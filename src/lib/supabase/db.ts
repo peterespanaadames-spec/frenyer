@@ -1054,63 +1054,189 @@ export async function createQuoteInSupabase(input: {
   }
 }
 
+export async function getNextInvoiceCorrelative(): Promise<string> {
+  try {
+    const { data, error } = await supabase
+      .from('sales')
+      .select('doc_number')
+      .eq('doc_type', 'FACTURA')
+      .order('created_at', { ascending: false });
+
+    const numbers: number[] = [];
+    if (!error && Array.isArray(data)) {
+      for (const row of data) {
+        if (row.doc_number) {
+          const match = String(row.doc_number).match(/\d+/);
+          if (match) {
+            const num = parseInt(match[0], 10);
+            if (!isNaN(num)) numbers.push(num);
+          }
+        }
+      }
+    }
+
+    if (typeof window !== 'undefined') {
+      const localSales = JSON.parse(localStorage.getItem('frenyer_local_sales') || '[]');
+      for (const s of localSales) {
+        if (s.doc_type === 'FACTURA' && s.doc_number) {
+          const match = String(s.doc_number).match(/\d+/);
+          if (match) {
+            const num = parseInt(match[0], 10);
+            if (!isNaN(num)) numbers.push(num);
+          }
+        }
+      }
+    }
+
+    const maxNum = numbers.length > 0 ? Math.max(...numbers) : 0;
+    return String(maxNum + 1).padStart(4, '0');
+  } catch (err) {
+    console.warn('Error calculando correlativo de factura:', err);
+    return '0001';
+  }
+}
+
+export interface ConvertQuoteOptions {
+  quoteId: string;
+  paymentType: 'CONTADO' | 'CREDITO';
+  customDocNumber?: string;
+  // Opciones de Contado (Tesorería / Cuentas Bancarias):
+  bankAccountId?: string;
+  paymentMethod?: string;
+  paymentReference?: string;
+  // Opciones de Crédito (Cuentas por Cobrar):
+  dueDate?: string;
+  creditNotes?: string;
+}
+
 export async function convertQuoteToInvoiceInSupabase(
-  quoteId: string,
-  paymentType: 'CONTADO' | 'CREDITO' = 'CONTADO'
+  quoteIdOrOptions: string | ConvertQuoteOptions,
+  legacyPaymentType?: 'CONTADO' | 'CREDITO'
 ): Promise<{
   success: boolean;
   invoiceId?: string;
   invoiceDocNumber?: string;
   totalUsd?: number;
+  totalVes?: number;
+  paymentType?: 'CONTADO' | 'CREDITO';
+  bankAccountName?: string;
+  paymentMethod?: string;
+  dueDate?: string;
   removedItems?: Array<{ sku: string; name: string; quantity: number; available: number; reason: string }>;
   error?: string;
 }> {
   try {
+    const options: ConvertQuoteOptions = typeof quoteIdOrOptions === 'string'
+      ? { quoteId: quoteIdOrOptions, paymentType: legacyPaymentType || 'CONTADO' }
+      : quoteIdOrOptions;
+
+    const { quoteId, paymentType = 'CONTADO' } = options;
     const organizationId = await getActiveOrgId() || '00000000-0000-0000-0000-000000000001';
 
-    // 1. Intentar RPC si existe
-    try {
-      const { data, error } = await supabase.rpc('convert_quote_to_invoice', {
-        p_quote_id: quoteId,
-        p_payment_type: paymentType
-      });
-      if (!error && data) {
-        const result = data as any;
-        return {
-          success: true,
-          invoiceId: result?.invoice_id,
-          invoiceDocNumber: result?.invoice_doc_number,
-          totalUsd: result?.total_usd,
-          removedItems: result?.removed_items || []
-        };
+    // 1. Obtener la cotización con sus ítems y datos de cliente
+    let quote: any = null;
+    let rawItems: any[] = [];
+
+    const { data: dbQuote, error: qErr } = await supabase
+      .from('sales')
+      .select('*, sale_items(*), customers(name, doc_number)')
+      .eq('id', quoteId)
+      .maybeSingle();
+
+    if (!qErr && dbQuote) {
+      quote = dbQuote;
+      rawItems = dbQuote.sale_items || [];
+    } else if (typeof window !== 'undefined') {
+      const localQuotes = JSON.parse(localStorage.getItem('frenyer_local_quotes') || '[]');
+      const foundLocal = localQuotes.find((q: any) => q.id === quoteId);
+      if (foundLocal) {
+        quote = foundLocal;
+        rawItems = (foundLocal.sale_items || foundLocal.items || []).map((it: any) => ({
+          sku: it.sku,
+          name: it.name,
+          quantity: it.quantity,
+          unit_price_usd: it.unitPriceUSD || it.unit_price_usd,
+          total_usd: it.totalUSD || it.total_usd,
+          total_ves: it.totalVES || it.total_ves
+        }));
       }
-    } catch {
-      // Continuar a conversión directa
     }
 
-    // 2. Conversión directa en las tablas sales y sale_items
-    const { data: quote, error: qErr } = await supabase
-      .from('sales')
-      .select('*, sale_items(*)')
-      .eq('id', quoteId)
-      .single();
-
-    if (qErr || !quote) {
+    if (!quote) {
       return { success: false, error: 'No se encontró la cotización a convertir.' };
     }
 
-    // Obtener siguiente correlativo de FACTURA
-    const { data: latestInvoices } = await supabase
-      .from('sales')
-      .select('doc_number')
-      .eq('doc_type', 'FACTURA')
-      .order('created_at', { ascending: false })
-      .limit(1);
+    // 2. Determinar correlativo de la factura (verificando secuencia del sistema)
+    let invDocNumber = '';
+    if (options.customDocNumber && options.customDocNumber.trim()) {
+      const trimmed = options.customDocNumber.trim();
+      invDocNumber = /^\d+$/.test(trimmed) ? trimmed.padStart(4, '0') : trimmed;
+    } else {
+      invDocNumber = await getNextInvoiceCorrelative();
+    }
 
-    const nextInv = latestInvoices && latestInvoices[0] ? (parseInt(latestInvoices[0].doc_number, 10) || 0) + 1 : 1;
-    const invDocNumber = String(nextInv).padStart(4, '0');
+    // 3. Verificación de inventario y descuento de stock
+    const removedItems: Array<{ sku: string; name: string; quantity: number; available: number; reason: string }> = [];
+    const keptItems: any[] = [];
+    let runningTotalUsd = 0;
 
-    // Insertar la FACTURA en sales
+    for (const it of rawItems) {
+      const qty = Number(it.quantity) || 1;
+      const unitPrice = Number(it.unit_price_usd) || 0;
+      const itemSku = it.sku;
+
+      if (!itemSku) {
+        keptItems.push(it);
+        runningTotalUsd += Number(it.total_usd) || (qty * unitPrice);
+        continue;
+      }
+
+      const { data: prod } = await supabase
+        .from('products')
+        .select('id, stock, name')
+        .eq('sku', itemSku)
+        .maybeSingle();
+
+      const currentStock = prod ? Number(prod.stock) || 0 : null;
+      if (currentStock !== null && currentStock <= 0) {
+        removedItems.push({
+          sku: itemSku,
+          name: it.name || prod?.name || itemSku,
+          quantity: qty,
+          available: 0,
+          reason: 'Sin existencia disponible en inventario'
+        });
+        continue;
+      }
+
+      // Si hay producto y existencia, rebajar stock
+      if (prod && currentStock !== null && currentStock > 0) {
+        const nextStock = Math.max(0, currentStock - qty);
+        await supabase
+          .from('products')
+          .update({ stock: nextStock })
+          .eq('sku', itemSku);
+      }
+
+      keptItems.push(it);
+      runningTotalUsd += Number(it.total_usd) || (qty * unitPrice);
+    }
+
+    if (keptItems.length === 0 && rawItems.length > 0) {
+      return {
+        success: false,
+        removedItems,
+        error: 'Ningún ítem de la cotización cuenta con stock disponible para facturar.'
+      };
+    }
+
+    const exchangeRate = Number(quote.exchange_rate) || 1;
+    const finalTotalUsd = keptItems.length === rawItems.length
+      ? (Number(quote.total_usd) || runningTotalUsd)
+      : Math.round(runningTotalUsd * 100) / 100;
+    const finalTotalVes = Math.round(finalTotalUsd * exchangeRate * 100) / 100;
+
+    // 4. Crear registro de FACTURA en la tabla sales
     const invoicePayload = {
       organization_id: quote.organization_id || organizationId,
       customer_id: quote.customer_id,
@@ -1118,17 +1244,18 @@ export async function convertQuoteToInvoiceInSupabase(
       doc_number: invDocNumber,
       status: 'COMPLETADA',
       payment_type: paymentType,
-      exchange_rate: quote.exchange_rate,
-      subtotal_usd: quote.subtotal_usd,
+      exchange_rate: exchangeRate,
+      subtotal_usd: finalTotalUsd,
       discount_usd: quote.discount_usd || 0,
       tax_usd: quote.tax_usd || 0,
       igtf_usd: quote.igtf_usd || 0,
-      total_usd: quote.total_usd,
-      total_ves: quote.total_ves,
-      notes: `Factura generada desde Cotización COT-${quote.doc_number}.${quote.notes ? ' ' + quote.notes : ''}`,
+      total_usd: finalTotalUsd,
+      total_ves: finalTotalVes,
+      notes: `Factura generada desde Cotización COT-${quote.doc_number}.${options.creditNotes ? ' ' + options.creditNotes : (quote.notes ? ' ' + quote.notes : '')}`,
       created_at: new Date().toISOString()
     };
 
+    let newInvoiceId = '';
     const { data: newInvoice, error: invErr } = await supabase
       .from('sales')
       .insert([invoicePayload])
@@ -1136,53 +1263,171 @@ export async function convertQuoteToInvoiceInSupabase(
       .single();
 
     if (invErr || !newInvoice) {
-      return { success: false, error: invErr?.message || 'Error al crear la factura desde la cotización.' };
+      console.warn('Aviso insertando factura en Supabase:', invErr?.message);
+      newInvoiceId = `local_inv_${Date.now()}`;
+      if (typeof window !== 'undefined') {
+        const localSales = JSON.parse(localStorage.getItem('frenyer_local_sales') || '[]');
+        localSales.unshift({
+          id: newInvoiceId,
+          ...invoicePayload,
+          sale_items: keptItems
+        });
+        localStorage.setItem('frenyer_local_sales', JSON.stringify(localSales));
+      }
+    } else {
+      newInvoiceId = newInvoice.id;
     }
 
-    // Insertar ítems en sale_items
-    const rawItems = quote.sale_items || [];
-    if (rawItems.length > 0) {
-      const itemsPayload = rawItems.map((it: any) => ({
-        sale_id: newInvoice.id,
-        sku: it.sku,
-        name: it.name,
-        quantity: it.quantity,
-        unit_price_usd: it.unit_price_usd,
-        total_usd: it.total_usd,
-        total_ves: it.total_ves
+    // 5. Insertar ítems en sale_items
+    if (keptItems.length > 0 && newInvoiceId) {
+      const itemsPayload = keptItems.map((it: any) => ({
+        sale_id: newInvoiceId,
+        sku: it.sku || null,
+        name: it.name || 'Producto',
+        quantity: it.quantity || 1,
+        unit_price_usd: it.unit_price_usd || it.unitPriceUSD || 0,
+        total_usd: it.total_usd || it.totalUSD || 0,
+        total_ves: it.total_ves || it.totalVES || 0
       }));
       await supabase.from('sale_items').insert(itemsPayload);
     }
 
-    // Marcar la cotización como 'Facturada' y registrar la factura generada
+    // 6. Marcar la cotización como 'Facturada' y enlazar la factura
     await supabase
       .from('sales')
       .update({
         quote_status: 'Facturada',
-        converted_to_sale_id: newInvoice.id
+        converted_to_sale_id: newInvoiceId
       })
       .eq('id', quoteId);
 
-    // Si es crédito, registrar cuenta por cobrar
-    if (paymentType === 'CREDITO') {
-      await supabase.from('accounts_receivable').insert([{
+    // Actualizar también en almacenamiento local si existe
+    if (typeof window !== 'undefined') {
+      const localQuotes = JSON.parse(localStorage.getItem('frenyer_local_quotes') || '[]');
+      const updated = localQuotes.map((q: any) => {
+        if (q.id === quoteId) {
+          return {
+            ...q,
+            quote_status: 'Facturada',
+            status: 'Facturada',
+            converted_to_sale_id: newInvoiceId
+          };
+        }
+        return q;
+      });
+      localStorage.setItem('frenyer_local_quotes', JSON.stringify(updated));
+    }
+
+    // 7. REGISTROS FINANCIEROS (CUENTAS BANCARIAS O CUENTAS POR COBRAR)
+    let selectedBankName = '';
+    const customerDisplayName = quote.customers?.name || quote.customer?.name || 'Cliente';
+
+    if (paymentType === 'CONTADO') {
+      // 7.A CONTADO: Registrar en tabla payments y abonar a la cuenta bancaria / caja
+      let bankAcc: any = null;
+      if (options.bankAccountId) {
+        const { data: bData } = await supabase
+          .from('bank_accounts')
+          .select('*')
+          .eq('id', options.bankAccountId)
+          .maybeSingle();
+        if (bData) {
+          bankAcc = bData;
+          selectedBankName = bData.bank_name;
+        }
+      }
+
+      const methodLabel = `${options.paymentMethod || 'Contado'}${selectedBankName ? ` (${selectedBankName})` : ''}`;
+
+      // Insertar pago en tabla payments
+      await supabase.from('payments').insert([{
+        sale_id: newInvoiceId,
+        bank_account_id: options.bankAccountId || null,
+        method: methodLabel,
+        amount_usd: finalTotalUsd,
+        amount_ves: finalTotalVes,
+        exchange_rate: exchangeRate,
+        reference_number: options.paymentReference?.trim() || invDocNumber
+      }]);
+
+      // Si se vinculó una cuenta bancaria, registrar movimiento y actualizar su saldo
+      if (options.bankAccountId && bankAcc) {
+        const isVes = bankAcc.currency === 'VES';
+        const depositAmount = isVes ? finalTotalVes : finalTotalUsd;
+
+        // Intentar registrar movimiento formal a través de la API
+        try {
+          await authenticatedFetch('/api/bank-movements', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              bank_account_id: options.bankAccountId,
+              type: 'ENTRADA',
+              concept: `Cobro Factura ${invDocNumber} (Cotización COT-${quote.doc_number}) - ${customerDisplayName}`,
+              reference: options.paymentReference?.trim() || invDocNumber,
+              user_name: 'Facturación / Caja',
+              rate: exchangeRate,
+              commission: 0,
+              amount: depositAmount
+            })
+          });
+        } catch (movErr) {
+          console.warn('Aviso registrando /api/bank-movements:', movErr);
+        }
+
+        // Actualizar directamente el saldo de la cuenta bancaria para garantizar inmediatez
+        const currentBalance = Number(bankAcc.balance) || 0;
+        const updatedBalance = Math.round((currentBalance + depositAmount) * 100) / 100;
+        await supabase
+          .from('bank_accounts')
+          .update({ balance: updatedBalance })
+          .eq('id', options.bankAccountId);
+      }
+    } else {
+      // 7.B CRÉDITO: Registrar en tabla accounts_receivable (Cuentas por Cobrar)
+      const dueDate = options.dueDate || new Date(Date.now() + 15 * 86400000).toISOString().slice(0, 10);
+      const cxcPayload = {
         organization_id: quote.organization_id || organizationId,
         customer_id: quote.customer_id,
-        sale_id: newInvoice.id,
+        sale_id: newInvoiceId,
         doc_number: invDocNumber,
-        original_amount_usd: quote.total_usd,
-        balance_usd: quote.total_usd,
+        total_usd: finalTotalUsd,
+        balance_usd: finalTotalUsd,
         status: 'PENDIENTE',
-        due_date: new Date(Date.now() + 15 * 86400000).toISOString()
-      }]);
+        due_date: dueDate
+      };
+
+      const { error: cxcErr } = await supabase
+        .from('accounts_receivable')
+        .insert([cxcPayload]);
+
+      if (cxcErr) {
+        console.warn('Aviso insertando en accounts_receivable:', cxcErr.message);
+      }
+
+      // Si existe cache local de cuentas por cobrar, sincronizar
+      if (typeof window !== 'undefined') {
+        const localCxc = JSON.parse(localStorage.getItem('frenyer_local_cxc') || '[]');
+        localCxc.unshift({
+          id: `local_cxc_${Date.now()}`,
+          ...cxcPayload,
+          customer_name: customerDisplayName
+        });
+        localStorage.setItem('frenyer_local_cxc', JSON.stringify(localCxc));
+      }
     }
 
     return {
       success: true,
-      invoiceId: newInvoice.id,
+      invoiceId: newInvoiceId,
       invoiceDocNumber: invDocNumber,
-      totalUsd: quote.total_usd,
-      removedItems: []
+      totalUsd: finalTotalUsd,
+      totalVes: finalTotalVes,
+      paymentType,
+      bankAccountName: selectedBankName || (options.paymentMethod || 'Contado'),
+      paymentMethod: options.paymentMethod || 'Contado',
+      dueDate: options.dueDate,
+      removedItems
     };
   } catch (err: any) {
     console.error('Error convirtiendo cotización en Supabase:', err);

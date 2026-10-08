@@ -25,7 +25,13 @@ import {
   Check,
   Edit,
   Share2,
-  Phone
+  Phone,
+  Hash,
+  Wallet,
+  CreditCard,
+  Building2,
+  DollarSign,
+  CheckCircle2
 } from 'lucide-react';
 import { Card } from '../../../components/ui/Card';
 import { Button } from '../../../components/ui/Button';
@@ -47,6 +53,9 @@ import {
   deleteQuoteFromSupabase,
   convertQuoteToInvoiceInSupabase,
   rejectQuoteInSupabase,
+  fetchBankAccountsFromSupabase,
+  getNextInvoiceCorrelative,
+  type ConvertQuoteOptions,
   type DbQuote
 } from '../../../lib/supabase/db';
 
@@ -117,11 +126,25 @@ export function QuotesPage() {
 
   // Convert confirm modal
   const [convertQuote, setConvertQuote] = useState<DbQuote | null>(null);
+  const [convertNextCorrelative, setConvertNextCorrelative] = useState('');
+  const [isCheckingCorrelative, setIsCheckingCorrelative] = useState(false);
   const [convertPaymentType, setConvertPaymentType] = useState<'CONTADO' | 'CREDITO'>('CONTADO');
+  const [convertBankAccounts, setConvertBankAccounts] = useState<any[]>([]);
+  const [convertSelectedBankId, setConvertSelectedBankId] = useState('');
+  const [convertPaymentMethod, setConvertPaymentMethod] = useState('Transferencia bancaria');
+  const [convertReference, setConvertReference] = useState('');
+  const [convertDueDateDays, setConvertDueDateDays] = useState(15);
+  const [convertCustomDueDate, setConvertCustomDueDate] = useState('');
+  const [convertCreditNotes, setConvertCreditNotes] = useState('');
   const [isConverting, setIsConverting] = useState(false);
   const [convertResult, setConvertResult] = useState<{
     invoiceDocNumber?: string;
     totalUsd?: number;
+    totalVes?: number;
+    paymentType?: string;
+    bankAccountName?: string;
+    paymentMethod?: string;
+    dueDate?: string;
     removedItems?: Array<{ sku: string; name: string; quantity: number; available: number; reason: string }>;
   } | null>(null);
 
@@ -708,30 +731,76 @@ _Válida por ${docData.validityDays || 7} días. Cotizado con Frenyer ERP._`;
     }
   };
 
-  const openConvertModal = (quote: DbQuote) => {
+  const openConvertModal = async (quote: DbQuote) => {
     setConvertQuote(quote);
     setConvertPaymentType(quote.payment_type === 'CREDITO' ? 'CREDITO' : 'CONTADO');
     setConvertResult(null);
+    setConvertReference('');
+    setConvertCreditNotes('');
+    setConvertDueDateDays(15);
+    const defaultDue = new Date(Date.now() + 15 * 86400000).toISOString().slice(0, 10);
+    setConvertCustomDueDate(defaultDue);
+    setIsCheckingCorrelative(true);
+
+    try {
+      // 1. Obtener cuentas bancarias de Supabase para vincular el pago de contado
+      const bankRes = await fetchBankAccountsFromSupabase();
+      if (bankRes.success && Array.isArray(bankRes.data) && bankRes.data.length > 0) {
+        setConvertBankAccounts(bankRes.data);
+        const firstActive = bankRes.data.find((b: any) => b.status !== 'Inactivo') || bankRes.data[0];
+        setConvertSelectedBankId(firstActive.id);
+        if (firstActive.currency === 'USD') {
+          setConvertPaymentMethod('Efectivo USD');
+        } else {
+          setConvertPaymentMethod('Transferencia bancaria');
+        }
+      }
+
+      // 2. Chequear el número o correlativo consecutivo que lleva el sistema
+      const nextNum = await getNextInvoiceCorrelative();
+      setConvertNextCorrelative(nextNum);
+    } catch (e) {
+      console.warn('Aviso cargando datos para facturación:', e);
+    } finally {
+      setIsCheckingCorrelative(false);
+    }
   };
 
   const handleConvertToInvoice = async () => {
     if (!convertQuote) return;
     setIsConverting(true);
     try {
-      const result = await convertQuoteToInvoiceInSupabase(convertQuote.id, convertPaymentType);
+      const result = await convertQuoteToInvoiceInSupabase({
+        quoteId: convertQuote.id,
+        paymentType: convertPaymentType,
+        customDocNumber: convertNextCorrelative.trim(),
+        bankAccountId: convertPaymentType === 'CONTADO' ? convertSelectedBankId : undefined,
+        paymentMethod: convertPaymentType === 'CONTADO' ? convertPaymentMethod : undefined,
+        paymentReference: convertPaymentType === 'CONTADO' ? convertReference.trim() : undefined,
+        dueDate: convertPaymentType === 'CREDITO' ? convertCustomDueDate : undefined,
+        creditNotes: convertPaymentType === 'CREDITO' ? convertCreditNotes.trim() : undefined
+      });
+
       if (!result.success) {
-        showToast(result.error || 'No se pudo convertir la cotización.', 'info');
+        showToast(result.error || 'No se pudo convertir la cotización a factura.', 'info');
         return;
       }
+
       setConvertResult({
         invoiceDocNumber: result.invoiceDocNumber,
         totalUsd: result.totalUsd,
+        totalVes: result.totalVes,
+        paymentType: result.paymentType,
+        bankAccountName: result.bankAccountName,
+        paymentMethod: result.paymentMethod,
+        dueDate: result.dueDate,
         removedItems: result.removedItems || []
       });
-      showToast(`Factura ${result.invoiceDocNumber} generada desde la cotización.`);
+
+      showToast(`Factura ${result.invoiceDocNumber} generada y registrada en el sistema.`);
       await loadData();
     } catch (err: any) {
-      showToast(err?.message || 'Error al convertir la cotización.', 'info');
+      showToast(err?.message || 'Error al convertir la cotización a factura.', 'info');
     } finally {
       setIsConverting(false);
     }
@@ -1758,12 +1827,25 @@ _Válida por ${docData.validityDays || 7} días. Cotizado con Frenyer ERP._`;
                 <Download size={14} /> Descargar archivo
               </Button>
               <Button
-                variant="primary"
+                variant="secondary"
                 onClick={() => handlePrintQuote(viewQuote)}
                 style={{ display: 'flex', alignItems: 'center', gap: 6 }}
               >
                 <Printer size={14} /> Imprimir / PDF
               </Button>
+              {viewQuote.quote_status !== 'Facturada' && (
+                <Button
+                  variant="primary"
+                  onClick={() => {
+                    const q = viewQuote;
+                    setViewQuote(null);
+                    openConvertModal(q);
+                  }}
+                  style={{ display: 'flex', alignItems: 'center', gap: 6, background: '#059669', borderColor: '#059669' }}
+                >
+                  <Receipt size={14} /> Facturar cotización
+                </Button>
+              )}
             </div>
           </Card>
         </div>
@@ -2107,46 +2189,317 @@ GRANT ALL ON TABLE public.sale_items TO anon, authenticated;`}
 
       {/* ================= CONVERT MODAL ================= */}
       {convertQuote && !convertResult && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.5)', display: 'grid', placeItems: 'center', zIndex: 1400, padding: 16 }}>
-          <Card style={{ width: '100%', maxWidth: 480, padding: 24, position: 'relative' }}>
-            <button onClick={() => setConvertQuote(null)} style={{ position: 'absolute', top: 18, right: 18, background: 'transparent', border: 'none', color: '#64748b', cursor: 'pointer' }}>
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.5)', backdropFilter: 'blur(3px)', display: 'grid', placeItems: 'center', zIndex: 1400, padding: 16 }}>
+          <Card style={{ width: '100%', maxWidth: 580, padding: 24, position: 'relative', maxHeight: '92vh', overflowY: 'auto' }}>
+            <button
+              onClick={() => setConvertQuote(null)}
+              style={{ position: 'absolute', top: 18, right: 18, background: 'transparent', border: 'none', color: '#64748b', cursor: 'pointer' }}
+              title="Cerrar"
+            >
               <X size={20} />
             </button>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
-              <div style={{ width: 38, height: 38, borderRadius: 10, background: '#ecfdf5', color: '#059669', display: 'grid', placeItems: 'center' }}>
-                <Receipt size={19} />
+
+            {/* Cabecera */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
+              <div style={{ width: 42, height: 42, borderRadius: 12, background: '#ecfdf5', color: '#059669', display: 'grid', placeItems: 'center', border: '1px solid #a7f3d0' }}>
+                <Receipt size={22} />
               </div>
               <div>
-                <h3 style={{ margin: 0, fontSize: 16, fontWeight: 800, color: '#0f172a' }}>Convertir a Factura</h3>
-                <span style={{ fontSize: 12, color: '#64748b' }}>Cotización {convertQuote.doc_number} · {convertQuote.customer?.name}</span>
+                <h3 style={{ margin: 0, fontSize: 17, fontWeight: 800, color: '#0f172a' }}>
+                  Convertir Cotización a Factura
+                </h3>
+                <span style={{ fontSize: 13, color: '#64748b' }}>
+                  Cotización <b>COT-{convertQuote.doc_number}</b> · {convertQuote.customer?.name || 'Cliente general'}
+                </span>
               </div>
             </div>
 
-            <div style={{ background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 9, padding: 10, fontSize: 12, color: '#92400e', margin: '12px 0', display: 'flex', gap: 8 }}>
-              <AlertTriangle size={15} style={{ flexShrink: 0, marginTop: 1 }} />
-              <span>Se verificará el stock real de cada producto. Los ítems sin existencia serán removidos de la factura y se te informará.</span>
+            {/* Resumen comercial de la cotización */}
+            <div style={{ background: '#f8fafc', border: '1px solid var(--border)', borderRadius: 12, padding: 12, marginBottom: 16, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: 10 }}>
+              <div>
+                <span style={{ fontSize: 11, fontWeight: 700, color: '#64748b', textTransform: 'uppercase' }}>Total a Facturar</span>
+                <div style={{ fontSize: 16, fontWeight: 800, color: 'var(--brand-700)' }}>
+                  {formatUSD(Number(convertQuote.total_usd) || 0, '$ ')}
+                </div>
+              </div>
+              <div>
+                <span style={{ fontSize: 11, fontWeight: 700, color: '#64748b', textTransform: 'uppercase' }}>Equivalente VES</span>
+                <div style={{ fontSize: 13, fontWeight: 700, color: '#334155' }}>
+                  {formatVES(convertUSDtoVES(Number(convertQuote.total_usd) || 0, Number(convertQuote.exchange_rate) || activeRate))}
+                </div>
+              </div>
+              <div>
+                <span style={{ fontSize: 11, fontWeight: 700, color: '#64748b', textTransform: 'uppercase' }}>Tasa Cambio</span>
+                <div style={{ fontSize: 13, fontWeight: 600, color: '#64748b' }}>
+                  Bs. {Number(convertQuote.exchange_rate || activeRate).toLocaleString('es-VE')} / $
+                </div>
+              </div>
             </div>
 
-            <label style={{ fontSize: 12, fontWeight: 700, color: '#334155', display: 'block', marginBottom: 5 }}>Tipo de pago de la factura</label>
-            <select
-              className="input"
-              value={convertPaymentType}
-              onChange={(e) => setConvertPaymentType(e.target.value as 'CONTADO' | 'CREDITO')}
-              style={{ height: 40, marginBottom: 14 }}
-            >
-              <option value="CONTADO">Contado</option>
-              <option value="CREDITO">Crédito (genera cuenta por cobrar)</option>
-            </select>
+            {/* 1. Chequeo y definición del Correlativo de Factura del Sistema */}
+            <div style={{ background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: 12, padding: 14, marginBottom: 16 }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                <label style={{ fontSize: 12, fontWeight: 700, color: '#0f172a', display: 'flex', alignItems: 'center', gap: 6, margin: 0 }}>
+                  <Hash size={14} color="#6366f1" /> Número / Correlativo de Factura en el Sistema
+                </label>
+                {isCheckingCorrelative ? (
+                  <Badge tone="warning">
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                      <RefreshCw size={11} className="animate-spin" /> Verificando...
+                    </span>
+                  </Badge>
+                ) : (
+                  <Badge tone="success">
+                    ✓ Secuencia verificada
+                  </Badge>
+                )}
+              </div>
+              <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+                <input
+                  type="text"
+                  className="input"
+                  value={convertNextCorrelative}
+                  onChange={(e) => setConvertNextCorrelative(e.target.value)}
+                  placeholder="Ej: 0012"
+                  style={{ height: 40, fontWeight: 700, fontSize: 15, letterSpacing: '0.05em', color: '#0f172a' }}
+                />
+              </div>
+              <span style={{ fontSize: 11, color: '#64748b', display: 'block', marginTop: 4 }}>
+                Correlativo consecutivo de ventas asignado a la nueva factura oficial en base de datos.
+              </span>
+            </div>
 
-            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
-              <Button variant="secondary" onClick={() => setConvertQuote(null)}>Volver</Button>
+            {/* 2. Método de Pago y Destino Financiero */}
+            <div style={{ background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: 12, padding: 14, marginBottom: 16 }}>
+              <label style={{ fontSize: 12, fontWeight: 700, color: '#0f172a', display: 'flex', alignItems: 'center', gap: 6, marginBottom: 10 }}>
+                <Wallet size={14} color="#6366f1" /> Destino Financiero y Método de Pago
+              </label>
+
+              {/* Selector de Contado / Crédito */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 14 }}>
+                <button
+                  type="button"
+                  onClick={() => setConvertPaymentType('CONTADO')}
+                  style={{
+                    padding: '10px 12px',
+                    borderRadius: 10,
+                    border: convertPaymentType === 'CONTADO' ? '2px solid #6366f1' : '1px solid #e2e8f0',
+                    background: convertPaymentType === 'CONTADO' ? '#eef2ff' : '#f8fafc',
+                    color: convertPaymentType === 'CONTADO' ? '#4338ca' : '#475569',
+                    fontWeight: 700,
+                    fontSize: 13,
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: 8,
+                    transition: 'all 0.15s ease'
+                  }}
+                >
+                  <DollarSign size={16} /> Contado (Inmediato)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setConvertPaymentType('CREDITO')}
+                  style={{
+                    padding: '10px 12px',
+                    borderRadius: 10,
+                    border: convertPaymentType === 'CREDITO' ? '2px solid #6366f1' : '1px solid #e2e8f0',
+                    background: convertPaymentType === 'CREDITO' ? '#eef2ff' : '#f8fafc',
+                    color: convertPaymentType === 'CREDITO' ? '#4338ca' : '#475569',
+                    fontWeight: 700,
+                    fontSize: 13,
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: 8,
+                    transition: 'all 0.15s ease'
+                  }}
+                >
+                  <Calendar size={16} /> Crédito (CxC)
+                </button>
+              </div>
+
+              {/* Si es CONTADO: Cuenta bancaria y forma de pago */}
+              {convertPaymentType === 'CONTADO' && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                  <div>
+                    <label style={{ fontSize: 11, fontWeight: 700, color: '#334155', display: 'flex', alignItems: 'center', gap: 4, marginBottom: 4 }}>
+                      <Building2 size={13} color="#6366f1" /> Cuenta Bancaria / Caja Receptora (Tesorería)
+                    </label>
+                    <select
+                      className="input"
+                      value={convertSelectedBankId}
+                      onChange={(e) => {
+                        const newId = e.target.value;
+                        setConvertSelectedBankId(newId);
+                        const acc = convertBankAccounts.find(a => a.id === newId);
+                        if (acc) {
+                          if (acc.currency === 'USD') setConvertPaymentMethod('Efectivo USD');
+                          else setConvertPaymentMethod('Transferencia bancaria');
+                        }
+                      }}
+                      style={{ height: 40 }}
+                    >
+                      {convertBankAccounts.length === 0 ? (
+                        <option value="">Caja Principal (Efectivo)</option>
+                      ) : (
+                        convertBankAccounts.map((b) => (
+                          <option key={b.id} value={b.id}>
+                            {b.bank_name} ({b.currency}) · Saldo: {b.currency === 'USD' ? '$ ' : 'Bs. '}{Number(b.balance || 0).toLocaleString('es-VE', { minimumFractionDigits: 2 })} {b.account_number ? `· Cta: ${b.account_number}` : ''}
+                          </option>
+                        ))
+                      )}
+                    </select>
+                  </div>
+
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                    <div>
+                      <label style={{ fontSize: 11, fontWeight: 700, color: '#334155', display: 'block', marginBottom: 4 }}>
+                        Método de Cobro
+                      </label>
+                      <select
+                        className="input"
+                        value={convertPaymentMethod}
+                        onChange={(e) => setConvertPaymentMethod(e.target.value)}
+                        style={{ height: 40 }}
+                      >
+                        <option value="Transferencia bancaria">Transferencia bancaria</option>
+                        <option value="Pago Móvil">Pago Móvil</option>
+                        <option value="Punto de Venta / Débito">Punto de Venta / Débito</option>
+                        <option value="Efectivo USD">Efectivo USD</option>
+                        <option value="Efectivo Bolívares">Efectivo Bolívares</option>
+                        <option value="Zelle">Zelle</option>
+                        <option value="Depósito en taquilla">Depósito en taquilla</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label style={{ fontSize: 11, fontWeight: 700, color: '#334155', display: 'block', marginBottom: 4 }}>
+                        Nº Comprobante / Ref. (Opcional)
+                      </label>
+                      <input
+                        type="text"
+                        className="input"
+                        value={convertReference}
+                        onChange={(e) => setConvertReference(e.target.value)}
+                        placeholder="Ej: Ref. 048291"
+                        style={{ height: 40 }}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Detalle del abono a registrar */}
+                  {(() => {
+                    const acc = convertBankAccounts.find(a => a.id === convertSelectedBankId);
+                    const isVes = acc?.currency === 'VES';
+                    const depositAmountStr = isVes
+                      ? formatVES(convertUSDtoVES(Number(convertQuote.total_usd) || 0, Number(convertQuote.exchange_rate) || activeRate))
+                      : formatUSD(Number(convertQuote.total_usd) || 0, '$ ');
+
+                    return (
+                      <div style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 9, padding: 10, fontSize: 12, color: '#166534', display: 'flex', gap: 8, alignItems: 'center' }}>
+                        <CheckCircle2 size={16} color="#16a34a" style={{ flexShrink: 0 }} />
+                        <span>
+                          Se registrará el pago y se abonarán <b>{depositAmountStr}</b> en la cuenta <b>{acc?.bank_name || 'Finanzas'}</b>, actualizando su saldo en Tesorería.
+                        </span>
+                      </div>
+                    );
+                  })()}
+                </div>
+              )}
+
+              {/* Si es CRÉDITO: Cuentas por cobrar */}
+              {convertPaymentType === 'CREDITO' && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                  <div style={{ background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 9, padding: 10, fontSize: 12, color: '#92400e', display: 'flex', gap: 8, alignItems: 'center' }}>
+                    <Calendar size={16} color="#d97706" style={{ flexShrink: 0 }} />
+                    <span>
+                      Se generará automáticamente una <b>Cuenta por Cobrar (CxC)</b> por <b>{formatUSD(Number(convertQuote.total_usd) || 0, '$ ')}</b> en el módulo de Cuentas por Cobrar.
+                    </span>
+                  </div>
+
+                  <div>
+                    <label style={{ fontSize: 11, fontWeight: 700, color: '#334155', display: 'block', marginBottom: 6 }}>
+                      Plazo de Vencimiento de la Cuenta por Cobrar
+                    </label>
+                    <div style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
+                      {[7, 15, 30, 45].map((days) => (
+                        <button
+                          key={days}
+                          type="button"
+                          onClick={() => {
+                            setConvertDueDateDays(days);
+                            const nextDate = new Date(Date.now() + days * 86400000).toISOString().slice(0, 10);
+                            setConvertCustomDueDate(nextDate);
+                          }}
+                          style={{
+                            flex: 1,
+                            padding: '6px 8px',
+                            borderRadius: 8,
+                            fontSize: 12,
+                            fontWeight: 700,
+                            border: convertDueDateDays === days ? '1px solid #6366f1' : '1px solid #cbd5e1',
+                            background: convertDueDateDays === days ? '#eef2ff' : '#f8fafc',
+                            color: convertDueDateDays === days ? '#4338ca' : '#475569',
+                            cursor: 'pointer'
+                          }}
+                        >
+                          {days} días
+                        </button>
+                      ))}
+                    </div>
+
+                    <input
+                      type="date"
+                      className="input"
+                      value={convertCustomDueDate}
+                      onChange={(e) => {
+                        setConvertCustomDueDate(e.target.value);
+                        setConvertDueDateDays(0);
+                      }}
+                      style={{ height: 40 }}
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{ fontSize: 11, fontWeight: 700, color: '#334155', display: 'block', marginBottom: 4 }}>
+                      Notas o Términos de Crédito (Opcional)
+                    </label>
+                    <input
+                      type="text"
+                      className="input"
+                      value={convertCreditNotes}
+                      onChange={(e) => setConvertCreditNotes(e.target.value)}
+                      placeholder="Ej: Pago acordado en 2 cuotas quincenales."
+                      style={{ height: 40 }}
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Aviso de verificación de inventario */}
+            <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 9, padding: 10, fontSize: 12, color: '#64748b', marginBottom: 16, display: 'flex', gap: 8, alignItems: 'center' }}>
+              <AlertTriangle size={15} color="#eab308" style={{ flexShrink: 0 }} />
+              <span>
+                El sistema verificará el stock real de los productos y descontará automáticamente las cantidades del catálogo.
+              </span>
+            </div>
+
+            {/* Botones de acción */}
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', borderTop: '1px solid #e2e8f0', paddingTop: 14 }}>
+              <Button variant="secondary" onClick={() => setConvertQuote(null)} disabled={isConverting}>
+                Cancelar
+              </Button>
               <Button
                 variant="primary"
                 onClick={handleConvertToInvoice}
-                disabled={isConverting}
-                style={{ display: 'flex', alignItems: 'center', gap: 6 }}
+                disabled={isConverting || isCheckingCorrelative || !convertNextCorrelative.trim()}
+                style={{ display: 'flex', alignItems: 'center', gap: 6, background: '#059669', borderColor: '#059669' }}
               >
-                <Receipt size={14} /> {isConverting ? 'Convirtiendo...' : 'Convertir y facturar'}
+                <Receipt size={15} />
+                {isConverting ? 'Facturando y registrando...' : 'Convertir y Facturar'}
               </Button>
             </div>
           </Card>
@@ -2155,37 +2508,88 @@ GRANT ALL ON TABLE public.sale_items TO anon, authenticated;`}
 
       {/* ================= CONVERT RESULT MODAL ================= */}
       {convertQuote && convertResult && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.5)', display: 'grid', placeItems: 'center', zIndex: 1400, padding: 16 }}>
-          <Card style={{ width: '100%', maxWidth: 560, padding: 24, position: 'relative' }}>
-            <button onClick={() => { setConvertQuote(null); setConvertResult(null); }} style={{ position: 'absolute', top: 18, right: 18, background: 'transparent', border: 'none', color: '#64748b', cursor: 'pointer' }}>
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.6)', backdropFilter: 'blur(3px)', display: 'grid', placeItems: 'center', zIndex: 1400, padding: 16 }}>
+          <Card style={{ width: '100%', maxWidth: 540, padding: 24, position: 'relative', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.25)' }}>
+            <button
+              onClick={() => { setConvertQuote(null); setConvertResult(null); }}
+              style={{ position: 'absolute', top: 18, right: 18, background: 'transparent', border: 'none', color: '#64748b', cursor: 'pointer' }}
+              title="Cerrar"
+            >
               <X size={20} />
             </button>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
-              <div style={{ width: 38, height: 38, borderRadius: 10, background: '#ecfdf5', color: '#059669', display: 'grid', placeItems: 'center' }}>
-                <CheckCircle size={19} />
+
+            {/* Cabecera éxito */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
+              <div style={{ width: 44, height: 44, borderRadius: 12, background: '#ecfdf5', color: '#059669', display: 'grid', placeItems: 'center', border: '1px solid #a7f3d0' }}>
+                <CheckCircle size={24} />
               </div>
               <div>
-                <h3 style={{ margin: 0, fontSize: 16, fontWeight: 800, color: '#0f172a' }}>Factura {convertResult.invoiceDocNumber} generada</h3>
-                <span style={{ fontSize: 12, color: '#64748b' }}>Total facturado: {formatUSD(convertResult.totalUsd || 0, '$ ')}</span>
+                <h3 style={{ margin: 0, fontSize: 17, fontWeight: 800, color: '#0f172a' }}>
+                  Factura {convertResult.invoiceDocNumber} Generada con Éxito
+                </h3>
+                <span style={{ fontSize: 13, color: '#64748b' }}>
+                  Cotización COT-{convertQuote.doc_number} actualizada a estado <b>FACTURADA</b>
+                </span>
               </div>
             </div>
 
+            {/* Desglose de registros efectuados */}
+            <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 12, padding: 14, marginBottom: 16, display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
+                <span style={{ color: '#64748b' }}>Número de Factura:</span>
+                <span style={{ fontWeight: 800, color: '#0f172a' }}>FACT-{convertResult.invoiceDocNumber}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
+                <span style={{ color: '#64748b' }}>Total Facturado (USD):</span>
+                <span style={{ fontWeight: 800, color: 'var(--brand-700)' }}>{formatUSD(convertResult.totalUsd || 0, '$ ')}</span>
+              </div>
+              {convertResult.totalVes != null && (
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
+                  <span style={{ color: '#64748b' }}>Equivalente (VES):</span>
+                  <span style={{ fontWeight: 700, color: '#334155' }}>{formatVES(convertResult.totalVes)}</span>
+                </div>
+              )}
+              <div style={{ borderTop: '1px solid #e2e8f0', paddingTop: 8, marginTop: 4, fontSize: 12 }}>
+                {convertResult.paymentType === 'CONTADO' ? (
+                  <div style={{ color: '#166534', background: '#f0fdf4', padding: '8px 10px', borderRadius: 8, border: '1px solid #bbf7d0', display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <CheckCircle2 size={15} color="#16a34a" />
+                    <span>
+                      <b>Pago de Contado:</b> Registrado en <b>{convertResult.bankAccountName || 'Cuenta Bancaria'}</b> ({convertResult.paymentMethod || 'Contado'}). Saldo de tesorería actualizado.
+                    </span>
+                  </div>
+                ) : (
+                  <div style={{ color: '#92400e', background: '#fffbeb', padding: '8px 10px', borderRadius: 8, border: '1px solid #fde68a', display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <Calendar size={15} color="#d97706" />
+                    <span>
+                      <b>Cuenta por Cobrar (CxC):</b> Registrada a crédito con vencimiento el <b>{convertResult.dueDate || '15 días'}</b> en estado PENDIENTE.
+                    </span>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Aviso si hubo ítems removidos por falta de stock */}
             {convertResult.removedItems && convertResult.removedItems.length > 0 && (
-              <div style={{ background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 9, padding: 12, marginBottom: 14 }}>
+              <div style={{ background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 10, padding: 12, marginBottom: 16 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, fontWeight: 700, color: '#b91c1c', marginBottom: 8 }}>
-                  <AlertTriangle size={15} /> Ítems removidos por falta de stock
+                  <AlertTriangle size={15} /> Ítems removidos por falta de inventario
                 </div>
                 {convertResult.removedItems.map((it, idx) => (
                   <div key={idx} style={{ fontSize: 12, color: '#7f1d1d', padding: '6px 0', borderTop: idx > 0 ? '1px solid #fecaca' : 'none' }}>
-                    <b>{it.name}</b> ({it.sku}) — solicitados {Number(it.quantity)}, disponibles {Number(it.available)}.{' '}
-                    <i>{it.reason}.</i> El producto ya no cuenta con stock disponible y fue removido de la carga.
+                    <b>{it.name}</b> ({it.sku}) — requeridos: {Number(it.quantity)}, disponibles: {Number(it.available)}. ({it.reason})
                   </div>
                 ))}
               </div>
             )}
 
             <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
-              <Button variant="primary" onClick={() => { setConvertQuote(null); setConvertResult(null); }}>Aceptar</Button>
+              <Button
+                variant="primary"
+                onClick={() => { setConvertQuote(null); setConvertResult(null); }}
+                style={{ minWidth: 120 }}
+              >
+                Aceptar
+              </Button>
             </div>
           </Card>
         </div>
