@@ -214,12 +214,16 @@ export function QuotesPage() {
   }, []);
 
   // Derived status: Creada, Facturada, Rechazada, Expirada (creada + vencida)
-  const getQuoteStatus = (q: DbQuote): 'Creada' | 'Facturada' | 'Expirada' | 'Rechazada' => {
+  const getQuoteStatus = (q: DbQuote): 'Creada' | 'Facturada' | 'Expirada' | 'Rechazada' | 'Pagada' => {
     if (q.quote_status === 'Facturada') return 'Facturada';
+    if (q.quote_status === 'Pagada') return 'Pagada';
     if (q.quote_status === 'Rechazada') return 'Rechazada';
     if (q.expires_at && new Date(q.expires_at) < new Date()) return 'Expirada';
     return 'Creada';
   };
+
+  const isRestricted = (status: string) => status === 'Facturada' || status === 'Pagada';
+
 
   const getCustomerPhone = (q: DbQuote): string | null => {
     const phone = q.customer?.phone || (q as any).customers?.phone;
@@ -1326,42 +1330,28 @@ _Válida por ${docData.validityDays || 7} días. Cotizado con Frenyer ERP._`;
 
                           {/* 5. MODIFICAR */}
                           <button
-                            onClick={() => handleOpenEditModal(q)}
-                            title="Modificar cotización"
+                            onClick={() => {
+                              if (!isRestricted(getQuoteStatus(q))) {
+                                handleOpenEditModal(q);
+                              }
+                            }}
+                            title={isRestricted(getQuoteStatus(q)) ? 'No se puede modificar una cotización facturada o pagada' : 'Modificar cotización'}
+                            disabled={isRestricted(getQuoteStatus(q))}
                             style={{
                               width: 32,
                               height: 32,
                               borderRadius: 8,
                               border: '1px solid #e0e7ff',
                               background: '#fff',
-                              cursor: 'pointer',
+                              cursor: isRestricted(getQuoteStatus(q)) ? 'not-allowed' : 'pointer',
                               display: 'inline-flex',
                               alignItems: 'center',
                               justifyContent: 'center',
-                              color: '#4f46e5'
+                              color: isRestricted(getQuoteStatus(q)) ? '#94a3b8' : '#4f46e5',
+                              opacity: isRestricted(getQuoteStatus(q)) ? 0.6 : 1
                             }}
                           >
                             <Edit size={14} />
-                          </button>
-
-                          {/* 6. ELIMINAR */}
-                          <button
-                            onClick={() => setDeleteConfirmQuote(q)}
-                            title="Eliminar cotización"
-                            style={{
-                              width: 32,
-                              height: 32,
-                              borderRadius: 8,
-                              border: '1px solid #fee2e2',
-                              background: '#fff',
-                              cursor: 'pointer',
-                              display: 'inline-flex',
-                              alignItems: 'center',
-                              justifyContent: 'center',
-                              color: '#dc2626'
-                            }}
-                          >
-                            <Trash2 size={14} />
                           </button>
                         </div>
                       </td>

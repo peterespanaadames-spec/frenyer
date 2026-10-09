@@ -19,6 +19,16 @@ create table if not exists public.suppliers (
     created_at timestamptz not null default now()
 );
 
+-- Asegurar columnas si la tabla ya existía previamente
+alter table public.suppliers add column if not exists code text;
+alter table public.suppliers add column if not exists contact_person text;
+alter table public.suppliers add column if not exists phone text;
+alter table public.suppliers add column if not exists email text;
+alter table public.suppliers add column if not exists address text;
+alter table public.suppliers add column if not exists category text default 'General';
+alter table public.suppliers add column if not exists balance_usd numeric(18, 4) not null default 0;
+alter table public.suppliers add column if not exists status text not null default 'Activo';
+
 create index if not exists idx_suppliers_org on public.suppliers(organization_id);
 create index if not exists idx_suppliers_doc on public.suppliers(doc_number);
 create index if not exists idx_suppliers_name on public.suppliers(name);

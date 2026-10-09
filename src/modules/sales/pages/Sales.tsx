@@ -509,15 +509,8 @@ export function Sales() {
     const calcTotalUSD = Math.round((taxableBaseUSD + calcTaxUSD + calcIgtfUSD) * 100) / 100;
     const calcTotalVES = convertUSDtoVES(calcTotalUSD, activeRate);
 
-    const initialPayment: PaymentEntry = {
-      id: `PAY-${Date.now().toString().slice(-4)}`,
-      method: `${defaultAccount.bank_name} (${defaultAccount.currency})`,
-      amountUSD: calcTotalUSD,
-      amountVES: calcTotalVES,
-      bank_account_id: defaultAccount.id
-    };
-
-    setPayments([initialPayment]);
+    // Multi-abonos system: initialize payments as empty list of confirmed abonos
+    setPayments([]);
 
     if (defaultAccount.currency === 'VES') {
       setCurrentPaymentAmountVES(calcTotalVES.toFixed(2));
@@ -535,7 +528,6 @@ export function Sales() {
     const newTaxAmountUSD = newTaxSubject ? taxableBaseUSD * 0.16 : 0;
     const newIgtfAmountUSD = newIgtfApplied ? taxableBaseUSD * 0.03 : 0;
     const newGrandTotalUSD = Math.round((taxableBaseUSD + newTaxAmountUSD + newIgtfAmountUSD) * 100) / 100;
-    const newGrandTotalVES = convertUSDtoVES(newGrandTotalUSD, activeRate);
 
     const acc = accOverride || dbAccounts.find(a => a.id === currentPaymentMethod) || dbAccounts[0] || {
       id: 'ACC-CASH-DEFAULT',
@@ -544,27 +536,21 @@ export function Sales() {
     };
     const isVES = acc.currency === 'VES';
 
-    if (isVES) {
-      setCurrentPaymentAmountVES(newGrandTotalVES.toFixed(2));
-      setCurrentPaymentAmountUSD(newGrandTotalUSD.toFixed(2));
-    } else {
-      setCurrentPaymentAmountUSD(newGrandTotalUSD.toFixed(2));
-      setCurrentPaymentAmountVES(newGrandTotalVES.toFixed(2));
-    }
+    // Calculate remaining difference after previously confirmed abonos
+    const currentPaid = Math.round(payments.reduce((sum, p) => sum + p.amountUSD, 0) * 100) / 100;
+    const newRemainingUSD = Math.max(0, Math.round((newGrandTotalUSD - currentPaid) * 100) / 100);
+    const newRemainingVES = convertUSDtoVES(newRemainingUSD, activeRate);
 
-    if (payments.length <= 1) {
-      const updatedPayment: PaymentEntry = {
-        id: payments[0]?.id || `PAY-${Date.now().toString().slice(-4)}`,
-        method: `${acc.bank_name} (${acc.currency})`,
-        amountUSD: newGrandTotalUSD,
-        amountVES: newGrandTotalVES,
-        bank_account_id: acc.id
-      };
-      setPayments([updatedPayment]);
+    if (isVES) {
+      setCurrentPaymentAmountVES(newRemainingVES.toFixed(2));
+      setCurrentPaymentAmountUSD(newRemainingUSD.toFixed(2));
+    } else {
+      setCurrentPaymentAmountUSD(newRemainingUSD.toFixed(2));
+      setCurrentPaymentAmountVES(newRemainingVES.toFixed(2));
     }
   };
 
-  // Add multiple payment entry
+  // Add multiple payment entry (Abonar a cuenta)
   const handleAddPayment = () => {
     const acc = dbAccounts.find(a => a.id === currentPaymentMethod) || {
       id: 'ACC-CASH-DEFAULT',
@@ -577,52 +563,98 @@ export function Sales() {
     let amountVES = 0;
 
     if (isVES) {
-      amountVES = parseFloat(currentPaymentAmountVES) || (parseFloat(currentPaymentAmountUSD) ? convertUSDtoVES(parseFloat(currentPaymentAmountUSD), activeRate) : 0);
+      amountVES = parseFloat(currentPaymentAmountVES) || 0;
+      if (amountVES <= 0 && parseFloat(currentPaymentAmountUSD) > 0) {
+        amountVES = convertUSDtoVES(parseFloat(currentPaymentAmountUSD), activeRate);
+      }
       if (isNaN(amountVES) || amountVES <= 0) {
-        showToast('Ingrese un monto válido en Bolívares.', 'info');
+        showToast('Ingrese un monto válido en Bolívares a abonar.', 'info');
         return;
       }
       amountUSD = Math.round((amountVES / activeRate) * 100) / 100;
+      amountVES = Math.round(amountVES * 100) / 100;
     } else {
-      amountUSD = parseFloat(currentPaymentAmountUSD) || (parseFloat(currentPaymentAmountVES) ? parseFloat(currentPaymentAmountVES) / activeRate : 0);
+      amountUSD = parseFloat(currentPaymentAmountUSD) || 0;
+      if (amountUSD <= 0 && parseFloat(currentPaymentAmountVES) > 0) {
+        amountUSD = Math.round((parseFloat(currentPaymentAmountVES) / activeRate) * 100) / 100;
+      }
       if (isNaN(amountUSD) || amountUSD <= 0) {
-        showToast('Ingrese un monto válido en Dólares.', 'info');
+        showToast('Ingrese un monto válido en Dólares a abonar.', 'info');
         return;
       }
+      amountUSD = Math.round(amountUSD * 100) / 100;
       amountVES = convertUSDtoVES(amountUSD, activeRate);
     }
 
-    const existingIdx = payments.findIndex(p => p.bank_account_id === acc.id);
-    if (existingIdx >= 0 && payments.length > 1) {
-      const updated = [...payments];
-      updated[existingIdx] = {
-        ...updated[existingIdx],
-        amountUSD: Math.round((updated[existingIdx].amountUSD + amountUSD) * 100) / 100,
-        amountVES: Math.round((updated[existingIdx].amountVES + amountVES) * 100) / 100
-      };
-      setPayments(updated);
-    } else if (payments.length === 1 && payments[0].bank_account_id === acc.id) {
-      showToast(`Pago asignado a ${acc.bank_name}`);
-    } else {
-      const newPayment: PaymentEntry = {
-        id: crypto.randomUUID(),
-        method: `${acc.bank_name} (${acc.currency})`,
-        amountUSD,
-        amountVES,
-        bank_account_id: acc.id
-      };
-      setPayments([...payments, newPayment]);
+    const currentTotalPaid = Math.round(payments.reduce((sum, p) => sum + p.amountUSD, 0) * 100) / 100;
+    const currRemaining = Math.max(0, Math.round((grandTotalUSD - currentTotalPaid) * 100) / 100);
+
+    if (currRemaining <= 0.001) {
+      showToast('El monto total de la venta ya ha sido completado.', 'info');
+      return;
     }
 
-    setCurrentPaymentAmountUSD('');
-    setCurrentPaymentAmountVES('');
+    // Limit to remaining difference if it exceeds it
+    if (amountUSD > currRemaining + 0.05) {
+      amountUSD = currRemaining;
+      amountVES = isVES ? convertUSDtoVES(amountUSD, activeRate) : convertUSDtoVES(amountUSD, activeRate);
+    }
+
+    const newPayment: PaymentEntry = {
+      id: `ABONO-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+      method: `${acc.bank_name} (${acc.currency})`,
+      amountUSD,
+      amountVES,
+      bank_account_id: acc.id
+    };
+
+    const nextPayments = [...payments, newPayment];
+    setPayments(nextPayments);
+
+    const newTotalPaid = Math.round((currentTotalPaid + amountUSD) * 100) / 100;
+    const newRemainingUSD = Math.max(0, Math.round((grandTotalUSD - newTotalPaid) * 100) / 100);
+
+    if (newRemainingUSD <= 0.01) {
+      setCurrentPaymentAmountUSD('0.00');
+      setCurrentPaymentAmountVES('0.00');
+      showToast(`¡Abono de ${formatUSD(amountUSD)} registrado! Total cubierto al 100%.`);
+    } else {
+      // Calculate and prefill difference for the current/selected account
+      const currentAcc = dbAccounts.find(a => a.id === currentPaymentMethod) || acc;
+      if (currentAcc.currency === 'VES') {
+        const nextVES = convertUSDtoVES(newRemainingUSD, activeRate);
+        setCurrentPaymentAmountVES(nextVES.toFixed(2));
+        setCurrentPaymentAmountUSD(newRemainingUSD.toFixed(2));
+      } else {
+        setCurrentPaymentAmountUSD(newRemainingUSD.toFixed(2));
+        const nextVES = convertUSDtoVES(newRemainingUSD, activeRate);
+        setCurrentPaymentAmountVES(nextVES.toFixed(2));
+      }
+      showToast(`Abono registrado (${formatUSD(amountUSD)}). Restante por distribuir: ${formatUSD(newRemainingUSD)}.`);
+    }
   };
 
   const removePayment = (id: string) => {
-    setPayments(payments.filter(p => p.id !== id));
+    const nextPayments = payments.filter(p => p.id !== id);
+    setPayments(nextPayments);
+
+    const newTotalPaid = Math.round(nextPayments.reduce((sum, p) => sum + p.amountUSD, 0) * 100) / 100;
+    const newRemainingUSD = Math.max(0, Math.round((grandTotalUSD - newTotalPaid) * 100) / 100);
+
+    const acc = dbAccounts.find(a => a.id === currentPaymentMethod);
+    if (acc?.currency === 'VES') {
+      const nextVES = convertUSDtoVES(newRemainingUSD, activeRate);
+      setCurrentPaymentAmountVES(nextVES.toFixed(2));
+      setCurrentPaymentAmountUSD(newRemainingUSD.toFixed(2));
+    } else {
+      setCurrentPaymentAmountUSD(newRemainingUSD.toFixed(2));
+      const nextVES = convertUSDtoVES(newRemainingUSD, activeRate);
+      setCurrentPaymentAmountVES(nextVES.toFixed(2));
+    }
+    showToast('Abono eliminado. Saldo restante recalculado.');
   };
 
-  const totalPaidUSD = payments.reduce((sum, p) => sum + p.amountUSD, 0);
+  const totalPaidUSD = Math.round(payments.reduce((sum, p) => sum + p.amountUSD, 0) * 100) / 100;
   const remainingUSD = Math.max(0, Math.round((grandTotalUSD - totalPaidUSD) * 100) / 100);
 
   // Park the invoice (Factura en espera)
@@ -1650,7 +1682,22 @@ export function Sales() {
                                 if (acc) {
                                   const isUSDAccount = acc.currency === 'USD';
                                   setIsIgtfApplied(isUSDAccount);
-                                  updatePaymentAmountsForTaxes(isTaxSubject, isUSDAccount, acc);
+                                  // CRITICAL: Preserve all existing abonos in payments!
+                                  // Calculate remaining difference for the selected account
+                                  const currentPaid = Math.round(payments.reduce((sum, p) => sum + p.amountUSD, 0) * 100) / 100;
+                                  const calcTax = isTaxSubject ? taxableBaseUSD * 0.16 : 0;
+                                  const calcIgtf = isUSDAccount ? taxableBaseUSD * 0.03 : 0;
+                                  const updatedGrandTotal = Math.round((taxableBaseUSD + calcTax + calcIgtf) * 100) / 100;
+                                  const diffUSD = Math.max(0, Math.round((updatedGrandTotal - currentPaid) * 100) / 100);
+                                  const diffVES = convertUSDtoVES(diffUSD, activeRate);
+
+                                  if (acc.currency === 'VES') {
+                                    setCurrentPaymentAmountVES(diffVES.toFixed(2));
+                                    setCurrentPaymentAmountUSD(diffUSD.toFixed(2));
+                                  } else {
+                                    setCurrentPaymentAmountUSD(diffUSD.toFixed(2));
+                                    setCurrentPaymentAmountVES(diffVES.toFixed(2));
+                                  }
                                 }
                               }}
                             >
@@ -1669,7 +1716,22 @@ export function Sales() {
                           const isVES = currentAcc?.currency === 'VES';
                           return isVES ? (
                             <div className="field">
-                              <label>Monto a transferir en Bolívares (Bs. VES) *</label>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                <label>Monto a transferir en Bolívares (Bs. VES) *</label>
+                                {remainingUSD > 0.01 && (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      const remVES = convertUSDtoVES(remainingUSD, activeRate);
+                                      setCurrentPaymentAmountVES(remVES.toFixed(2));
+                                      setCurrentPaymentAmountUSD(remainingUSD.toFixed(2));
+                                    }}
+                                    style={{ background: 'none', border: 'none', color: 'var(--brand-700)', fontSize: 11, fontWeight: 700, cursor: 'pointer', textDecoration: 'underline' }}
+                                  >
+                                    Llenar restante (Bs. {convertUSDtoVES(remainingUSD, activeRate).toFixed(2)})
+                                  </button>
+                                )}
+                              </div>
                               <input
                                 className="input"
                                 type="number"
@@ -1681,24 +1743,27 @@ export function Sales() {
                                   const num = parseFloat(val) || 0;
                                   const calculatedUSD = Math.round((num / activeRate) * 100) / 100;
                                   setCurrentPaymentAmountUSD(calculatedUSD.toFixed(2));
-
-                                  if (payments.length === 1 && currentPaymentMethod) {
-                                    const acc = dbAccounts.find(a => a.id === currentPaymentMethod);
-                                    setPayments([{
-                                      ...payments[0],
-                                      method: acc ? `${acc.bank_name} (${acc.currency})` : payments[0].method,
-                                      amountUSD: calculatedUSD,
-                                      amountVES: num,
-                                      bank_account_id: acc?.id || payments[0].bank_account_id
-                                    }]);
-                                  }
                                 }}
                                 placeholder={convertUSDtoVES(remainingUSD, activeRate).toFixed(2)}
                               />
                             </div>
                           ) : (
                             <div className="field">
-                              <label>Monto a pagar en Dólares ($ USD) *</label>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                <label>Monto a pagar en Dólares ($ USD) *</label>
+                                {remainingUSD > 0.01 && (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setCurrentPaymentAmountUSD(remainingUSD.toFixed(2));
+                                      setCurrentPaymentAmountVES(convertUSDtoVES(remainingUSD, activeRate).toFixed(2));
+                                    }}
+                                    style={{ background: 'none', border: 'none', color: 'var(--brand-700)', fontSize: 11, fontWeight: 700, cursor: 'pointer', textDecoration: 'underline' }}
+                                  >
+                                    Llenar restante ($ {remainingUSD.toFixed(2)})
+                                  </button>
+                                )}
+                              </div>
                               <input
                                 className="input"
                                 type="number"
@@ -1710,17 +1775,6 @@ export function Sales() {
                                   const num = parseFloat(val) || 0;
                                   const calculatedVES = convertUSDtoVES(num, activeRate);
                                   setCurrentPaymentAmountVES(calculatedVES.toFixed(2));
-
-                                  if (payments.length === 1 && currentPaymentMethod) {
-                                    const acc = dbAccounts.find(a => a.id === currentPaymentMethod);
-                                    setPayments([{
-                                      ...payments[0],
-                                      method: acc ? `${acc.bank_name} (${acc.currency})` : payments[0].method,
-                                      amountUSD: num,
-                                      amountVES: calculatedVES,
-                                      bank_account_id: acc?.id || payments[0].bank_account_id
-                                    }]);
-                                  }
                                 }}
                                 placeholder={remainingUSD.toString()}
                               />
@@ -1752,44 +1806,62 @@ export function Sales() {
                       </div>
                     </div>
 
-                    {/* Recorded Payments List */}
+                    {/* Recorded Payments List (Multi-abonos) */}
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                      {payments.map(p => (
-                        <div
-                          key={p.id}
-                          style={{
-                            border: '1px solid #e2e8f0',
-                            borderRadius: 6,
-                            padding: '8px 12px',
-                            background: '#fff',
-                            display: 'flex',
-                            justifyContent: 'space-between',
-                            alignItems: 'center',
-                            fontSize: 12
-                          }}
-                        >
-                          <div>
-                            <b>{p.method}</b>
-                            <span className="muted small" style={{ display: 'block' }}>
-                              Abono: {p.method.includes('VES') ? formatVES(p.amountVES) : formatUSD(p.amountUSD, '$')}
-                            </span>
-                          </div>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                            <div style={{ textAlign: 'right' }}>
-                              <b>{formatUSD(p.amountUSD)}</b>
-                              <span className="muted small" style={{ display: 'block', fontSize: 10 }}>
-                                {formatVES(p.amountVES)}
-                              </span>
-                            </div>
-                            <button
-                              onClick={() => removePayment(p.id)}
-                              style={{ background: 'transparent', border: 'none', color: '#ef4444', cursor: 'pointer' }}
-                            >
-                              <X size={14} />
-                            </button>
-                          </div>
+                      {payments.length === 0 ? (
+                        <div style={{ background: '#f8fafc', border: '1px dashed #cbd5e1', borderRadius: 8, padding: '12px 14px', fontSize: 11, color: '#64748b', textAlign: 'center' }}>
+                          💡 <b>Sistema Multi-Abonos:</b> Ingrese el monto y presione <b>+ Abonar a cuenta</b> para registrar un pago. Puede dividir el total en diferentes cuentas bancarias (USD / VES) hasta completarlo.
                         </div>
-                      ))}
+                      ) : (
+                        <>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 11, fontWeight: 700, color: '#475569', textTransform: 'uppercase' }}>
+                            <span>Abonos Registrados ({payments.length})</span>
+                            <span style={{ color: '#059669' }}>Total Abonado: {formatUSD(totalPaidUSD)}</span>
+                          </div>
+                          {payments.map((p, idx) => (
+                            <div
+                              key={p.id}
+                              style={{
+                                border: '1px solid #e2e8f0',
+                                borderRadius: 6,
+                                padding: '8px 12px',
+                                background: '#fff',
+                                display: 'flex',
+                                justifyContent: 'space-between',
+                                alignItems: 'center',
+                                fontSize: 12
+                              }}
+                            >
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                <span style={{ background: '#f1f5f9', color: '#475569', fontSize: 10, fontWeight: 800, padding: '2px 6px', borderRadius: 4 }}>
+                                  #{idx + 1}
+                                </span>
+                                <div>
+                                  <b>{p.method}</b>
+                                  <span className="muted small" style={{ display: 'block' }}>
+                                    Abono: {p.method.includes('VES') ? formatVES(p.amountVES) : formatUSD(p.amountUSD, '$')}
+                                  </span>
+                                </div>
+                              </div>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                <div style={{ textAlign: 'right' }}>
+                                  <b>{formatUSD(p.amountUSD)}</b>
+                                  <span className="muted small" style={{ display: 'block', fontSize: 10 }}>
+                                    {formatVES(p.amountVES)}
+                                  </span>
+                                </div>
+                                <button
+                                  onClick={() => removePayment(p.id)}
+                                  style={{ background: 'transparent', border: 'none', color: '#ef4444', cursor: 'pointer', padding: 4 }}
+                                  title="Eliminar este abono"
+                                >
+                                  <X size={15} />
+                                </button>
+                              </div>
+                            </div>
+                          ))}
+                        </>
+                      )}
                     </div>
 
                     {/* Distribution Badge */}
@@ -1804,17 +1876,25 @@ export function Sales() {
                         fontWeight: 600,
                         display: 'flex',
                         alignItems: 'center',
+                        justifyContent: 'space-between',
                         gap: 6
                       }}
                     >
-                      {remainingUSD <= 0.01 ? (
-                        <>
-                          <CheckCircle size={16} /> ¡Monto total distribuido perfectamente!
-                        </>
-                      ) : (
-                        <>
-                          <AlertCircle size={16} /> Restante por distribuir: {formatUSD(remainingUSD)} ({formatVES(convertUSDtoVES(remainingUSD, activeRate))})
-                        </>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        {remainingUSD <= 0.01 ? (
+                          <>
+                            <CheckCircle size={16} /> ¡Monto total distribuido perfectamente! ({formatUSD(totalPaidUSD)} de {formatUSD(grandTotalUSD)})
+                          </>
+                        ) : (
+                          <>
+                            <AlertCircle size={16} /> Restante por distribuir: {formatUSD(remainingUSD)} ({formatVES(convertUSDtoVES(remainingUSD, activeRate))})
+                          </>
+                        )}
+                      </div>
+                      {remainingUSD > 0.01 && (
+                        <span style={{ fontSize: 11, fontWeight: 700, color: '#b45309' }}>
+                          Abonado: {formatUSD(totalPaidUSD)} / {formatUSD(grandTotalUSD)}
+                        </span>
                       )}
                     </div>
 
@@ -1892,14 +1972,57 @@ export function Sales() {
                     variant="primary"
                     onClick={() => {
                       if (paymentType === 'CONTADO') {
-                        if (payments.length === 0 && currentPaymentMethod) {
-                          handleAddPayment();
+                        let finalPayments = [...payments];
+
+                        // Si no hay ningún abono guardado previamente, usar la cuenta seleccionada para registrar el pago completo
+                        if (finalPayments.length === 0 && currentPaymentMethod) {
+                          const acc = dbAccounts.find(a => a.id === currentPaymentMethod);
+                          const isVES = acc?.currency === 'VES';
+                          const numVES = parseFloat(currentPaymentAmountVES) || 0;
+                          const numUSD = parseFloat(currentPaymentAmountUSD) || 0;
+
+                          const pUSD = isVES
+                            ? (numVES > 0 ? Math.round((numVES / activeRate) * 100) / 100 : grandTotalUSD)
+                            : (numUSD > 0 ? numUSD : grandTotalUSD);
+                          const pVES = isVES ? (numVES > 0 ? numVES : convertUSDtoVES(pUSD, activeRate)) : convertUSDtoVES(pUSD, activeRate);
+
+                          const singlePayment: PaymentEntry = {
+                            id: `ABONO-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+                            method: acc ? `${acc.bank_name} (${acc.currency})` : 'Efectivo / Caja Mostrador (USD)',
+                            amountUSD: pUSD,
+                            amountVES: pVES,
+                            bank_account_id: acc?.id || 'ACC-CASH-DEFAULT'
+                          };
+                          finalPayments = [singlePayment];
+                          setPayments(finalPayments);
                         }
-                        const currentTotalPaid = payments.reduce((sum, p) => sum + p.amountUSD, 0);
+
+                        const currentTotalPaid = Math.round(finalPayments.reduce((sum, p) => sum + p.amountUSD, 0) * 100) / 100;
                         const currRemaining = Math.max(0, Math.round((grandTotalUSD - currentTotalPaid) * 100) / 100);
-                        if (currRemaining > 0.05 && payments.length > 0) {
-                          showToast(`Falta cubrir ${formatUSD(currRemaining)} del total. Añada el pago restante o seleccione Crédito.`, 'info');
-                          return;
+
+                        // Si aún queda una diferencia por cubrir
+                        if (currRemaining > 0.05) {
+                          const acc = dbAccounts.find(a => a.id === currentPaymentMethod);
+                          const isVES = acc?.currency === 'VES';
+                          const enteredUSD = isVES
+                            ? (parseFloat(currentPaymentAmountVES) ? Math.round((parseFloat(currentPaymentAmountVES) / activeRate) * 100) / 100 : 0)
+                            : (parseFloat(currentPaymentAmountUSD) || 0);
+
+                          // Si el monto en pantalla corresponde a la diferencia restante, abonarlo automáticamente y continuar
+                          if (Math.abs(enteredUSD - currRemaining) <= 0.05 && enteredUSD > 0) {
+                            const autoPayment: PaymentEntry = {
+                              id: `ABONO-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+                              method: acc ? `${acc.bank_name} (${acc.currency})` : 'Cuenta Bancaria',
+                              amountUSD: currRemaining,
+                              amountVES: isVES ? convertUSDtoVES(currRemaining, activeRate) : convertUSDtoVES(currRemaining, activeRate),
+                              bank_account_id: acc?.id || 'ACC-CASH-DEFAULT'
+                            };
+                            finalPayments = [...finalPayments, autoPayment];
+                            setPayments(finalPayments);
+                          } else {
+                            showToast(`Falta cubrir ${formatUSD(currRemaining)} del total. Añada el abono restante con "+ Abonar a cuenta" o seleccione Crédito.`, 'info');
+                            return;
+                          }
                         }
                       }
                       setCheckoutStep(3);
@@ -2111,8 +2234,23 @@ export function Sales() {
 
                   <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                     <span className="muted">Total pagado:</span>
-                    <b>{formatUSD(paymentType === 'CONTADO' ? grandTotalUSD : 0)}</b>
+                    <b>{formatUSD(paymentType === 'CONTADO' ? totalPaidUSD : 0)}</b>
                   </div>
+
+                  {paymentType === 'CONTADO' && payments.length > 0 && (
+                    <div style={{ background: '#f8fafc', padding: '8px 12px', borderRadius: 6, border: '1px solid #e2e8f0', display: 'flex', flexDirection: 'column', gap: 4, marginTop: 4 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, fontWeight: 700, color: '#475569' }}>
+                        <span>Abonos asignados:</span>
+                        <span>{payments.length} {payments.length === 1 ? 'cuenta' : 'cuentas'}</span>
+                      </div>
+                      {payments.map((p, idx) => (
+                        <div key={p.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: '#334155' }}>
+                          <span>#{idx + 1} {p.method}</span>
+                          <b>{formatUSD(p.amountUSD)} <span className="muted small">({formatVES(p.amountVES)})</span></b>
+                        </div>
+                      ))}
+                    </div>
+                  )}
 
                   <div style={{ display: 'flex', justifyContent: 'space-between', color: '#059669', fontWeight: 700 }}>
                     <span>Vuelto:</span>

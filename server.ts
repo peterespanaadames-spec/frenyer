@@ -110,7 +110,14 @@ const tenantScopedTables = new Set([
   'bank_movements',
   'payment_methods',
   'suppliers',
-  'accounts_payable'
+  'accounts_payable',
+  'purchases',
+  'purchase_items',
+  'branches',
+  'expenses',
+  'expense_categories',
+  'expense_payments',
+  'inventory_movements'
 ]);
 
 async function authenticateSupabaseRequest(
@@ -184,7 +191,13 @@ app.use([
   '/api/quotes',
   '/api/sales',
   '/api/accounts-receivable',
-  '/api/accounts-payable'
+  '/api/accounts-payable',
+  '/api/purchases',
+  '/api/branches',
+  '/api/expenses',
+  '/api/expense-categories',
+  '/api/inventory/movements',
+  '/api/inventory/adjustments'
 ], authenticateSupabaseRequest);
 
 // HTTPS Agent for BCV
@@ -673,19 +686,45 @@ app.get('/api/products', async (_req, res: AuthenticatedResponse) => {
 
 app.post('/api/products', async (req, res) => {
   try {
-    const product = req.body;
-    const result = await authenticatedSupabaseRestRequest(res, 'products', {
-      method: 'POST',
-      headers: { 'Prefer': 'return=representation' },
-      body: product
-    });
+    const rawProduct = req.body || {};
+    let productPayload: Record<string, any> = { ...rawProduct };
 
-    if (result.error) {
-      return res.status(200).json({ success: false, error: result.error });
+    // Sanitizar branch_id si no es UUID válido
+    const isValidUuid = (val?: string | null) => typeof val === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val);
+    if (productPayload.branch_id && !isValidUuid(productPayload.branch_id)) {
+      delete productPayload.branch_id;
     }
 
-    const created = Array.isArray(result.data) ? result.data[0] : result.data;
-    return res.json({ success: true, data: created });
+    let attempts = 0;
+    let lastError: string | null = null;
+
+    while (attempts < 6) {
+      attempts++;
+      const result = await authenticatedSupabaseRestRequest(res, 'products', {
+        method: 'POST',
+        headers: { 'Prefer': 'return=representation' },
+        body: productPayload
+      });
+
+      if (!result.error && result.data) {
+        const created = Array.isArray(result.data) ? result.data[0] : result.data;
+        return res.json({ success: true, data: { ...rawProduct, ...created } });
+      }
+
+      lastError = result.error || 'Error creando producto';
+      if (/uuid|branch_id|branches|foreign key/i.test(lastError) && productPayload.branch_id) {
+        delete productPayload.branch_id;
+        continue;
+      }
+      const missingColMatch = lastError.match(/Could not find the '([^']+)' column of 'products'/i);
+      if (missingColMatch && missingColMatch[1] && missingColMatch[1] in productPayload) {
+        delete productPayload[missingColMatch[1]];
+        continue;
+      }
+      break;
+    }
+
+    return res.status(200).json({ success: false, error: lastError });
   } catch (err: any) {
     return res.status(200).json({ success: false, error: err?.message || 'Error en servidor' });
   }
@@ -694,18 +733,43 @@ app.post('/api/products', async (req, res) => {
 app.put('/api/products/:sku', async (req, res) => {
   try {
     const { sku } = req.params;
-    const updates = req.body;
+    const rawUpdates = req.body || {};
+    let updatesPayload: Record<string, any> = { ...rawUpdates };
 
-    const result = await authenticatedSupabaseRestRequest(res, `products?sku=eq.${encodeURIComponent(sku)}`, {
-      method: 'PATCH',
-      headers: { 'Prefer': 'return=representation' },
-      body: updates
-    });
-
-    if (result.error) {
-      return res.status(200).json({ success: false, error: result.error });
+    const isValidUuid = (val?: string | null) => typeof val === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val);
+    if (updatesPayload.branch_id && !isValidUuid(updatesPayload.branch_id)) {
+      delete updatesPayload.branch_id;
     }
-    return res.json({ success: true });
+
+    let attempts = 0;
+    let lastError: string | null = null;
+
+    while (attempts < 6) {
+      attempts++;
+      const result = await authenticatedSupabaseRestRequest(res, `products?sku=eq.${encodeURIComponent(sku)}`, {
+        method: 'PATCH',
+        headers: { 'Prefer': 'return=representation' },
+        body: updatesPayload
+      });
+
+      if (!result.error) {
+        return res.json({ success: true });
+      }
+
+      lastError = result.error || 'Error actualizando producto';
+      if (/uuid|branch_id|branches|foreign key/i.test(lastError) && updatesPayload.branch_id) {
+        delete updatesPayload.branch_id;
+        continue;
+      }
+      const missingColMatch = lastError.match(/Could not find the '([^']+)' column of 'products'/i);
+      if (missingColMatch && missingColMatch[1] && missingColMatch[1] in updatesPayload) {
+        delete updatesPayload[missingColMatch[1]];
+        continue;
+      }
+      break;
+    }
+
+    return res.status(200).json({ success: false, error: lastError });
   } catch (err: any) {
     return res.status(200).json({ success: false, error: err?.message });
   }
@@ -743,6 +807,245 @@ app.patch('/api/products/:sku/stock', async (req, res) => {
     return res.json({ success: true });
   } catch (err: any) {
     return res.status(200).json({ success: false, error: err?.message });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// 4.B INVENTORY MOVEMENTS AND ADJUSTMENTS PROXY
+// ---------------------------------------------------------------------------
+app.get('/api/inventory/movements', async (_req, res: AuthenticatedResponse) => {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  try {
+    const orgId = res.locals.supabaseContext?.organizationId;
+    if (!orgId) {
+      return res.status(200).json({ success: true, data: [] });
+    }
+
+    // 1. Consultar movimientos registrados directamente en inventory_movements
+    const movRes = await authenticatedSupabaseRestRequest(
+      res,
+      `inventory_movements?organization_id=eq.${encodeURIComponent(orgId)}&select=*&order=created_at.desc`
+    );
+    const rawMovements: any[] = (!movRes.error && Array.isArray(movRes.data)) ? movRes.data : [];
+    const loggedDocKeys = new Set(rawMovements.map(m => `${m.doc_number}-${m.sku}`));
+
+    // 2. Consultar ventas reales para integrar sus líneas al kárdex si no están registradas
+    const salesRes = await authenticatedSupabaseRestRequest(
+      res,
+      `sales?organization_id=eq.${encodeURIComponent(orgId)}&status=eq.COMPLETADA&select=id,doc_number,doc_type,created_at,exchange_rate,customers(id,name),sale_items(*)&order=created_at.desc&limit=250`
+    );
+
+    const syntheticSalesMovements: any[] = [];
+    if (!salesRes.error && Array.isArray(salesRes.data)) {
+      for (const sale of salesRes.data) {
+        const items = Array.isArray(sale.sale_items) ? sale.sale_items : [];
+        const clientName = sale.customers?.name || 'Cliente Mostrador';
+        for (const item of items) {
+          const docKey = `${sale.doc_number}-${item.sku}`;
+          if (loggedDocKeys.has(docKey)) continue;
+
+          syntheticSalesMovements.push({
+            id: `sale-${item.id || item.sku}-${sale.id}`,
+            organization_id: orgId,
+            sku: item.sku,
+            product_name: item.name,
+            movement_type: 'VENTA',
+            doc_type: sale.doc_type || 'FACTURA',
+            doc_number: sale.doc_number,
+            entity_type: 'CLIENTE',
+            entity_name: clientName,
+            quantity: -Math.abs(Number(item.quantity) || 1),
+            unit_price_usd: Number(item.unit_price_usd) || 0,
+            unit_cost_usd: 0,
+            exchange_rate: Number(sale.exchange_rate) || 1,
+            total_usd: Number(item.total_usd) || 0,
+            total_ves: Number(item.total_ves) || (Number(item.total_usd) * Number(sale.exchange_rate)),
+            previous_stock: 0,
+            new_stock: 0,
+            reason: `Venta POS (${sale.doc_type || 'Factura'})`,
+            notes: null,
+            created_at: sale.created_at
+          });
+        }
+      }
+    }
+
+    // 3. Consultar compras reales para integrar sus líneas al kárdex si no están registradas
+    const purchasesRes = await authenticatedSupabaseRestRequest(
+      res,
+      `purchases?organization_id=eq.${encodeURIComponent(orgId)}&status=eq.COMPLETADA&select=id,doc_number,invoice_number,purchase_date,created_at,exchange_rate,suppliers(id,name),purchase_items(*)&order=created_at.desc&limit=250`
+    );
+
+    const syntheticPurchasesMovements: any[] = [];
+    if (!purchasesRes.error && Array.isArray(purchasesRes.data)) {
+      for (const pur of purchasesRes.data) {
+        const items = Array.isArray(pur.purchase_items) ? pur.purchase_items : [];
+        const supplierName = pur.suppliers?.name || 'Proveedor';
+        for (const item of items) {
+          const docKey = `${pur.doc_number}-${item.sku}`;
+          if (loggedDocKeys.has(docKey)) continue;
+
+          syntheticPurchasesMovements.push({
+            id: `pur-${item.id || item.sku}-${pur.id}`,
+            organization_id: orgId,
+            sku: item.sku,
+            product_name: item.name,
+            movement_type: 'COMPRA',
+            doc_type: 'COMPRA',
+            doc_number: pur.doc_number,
+            entity_type: 'PROVEEDOR',
+            entity_name: supplierName,
+            quantity: Math.abs(Number(item.quantity) || 1),
+            unit_price_usd: 0,
+            unit_cost_usd: Number(item.unit_cost_usd) || 0,
+            exchange_rate: Number(pur.exchange_rate) || 1,
+            total_usd: Number(item.total_usd) || 0,
+            total_ves: Number(item.total_ves) || (Number(item.total_usd) * Number(pur.exchange_rate)),
+            previous_stock: 0,
+            new_stock: 0,
+            reason: `Compra interna (${pur.invoice_number || pur.doc_number})`,
+            notes: null,
+            created_at: pur.created_at || pur.purchase_date
+          });
+        }
+      }
+    }
+
+    // 4. Unificar y ordenar cronológicamente
+    const allMovements = [...rawMovements, ...syntheticSalesMovements, ...syntheticPurchasesMovements].sort((a, b) => {
+      const timeA = new Date(a.created_at).getTime() || 0;
+      const timeB = new Date(b.created_at).getTime() || 0;
+      return timeB - timeA;
+    });
+
+    return res.json({ success: true, data: allMovements });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message || 'Error consultando movimientos de inventario' });
+  }
+});
+
+app.post('/api/inventory/adjustments', async (req, res: AuthenticatedResponse) => {
+  try {
+    const orgId = res.locals.supabaseContext?.organizationId;
+    if (!orgId) {
+      return res.status(401).json({ success: false, error: 'Organización no autorizada' });
+    }
+
+    const {
+      sku,
+      adjustment_type,
+      quantity,
+      reason,
+      notes,
+      doc_number,
+      unit_cost_usd,
+      unit_price_usd,
+      exchange_rate
+    } = req.body || {};
+
+    if (!sku || !adjustment_type || quantity === undefined) {
+      return res.status(400).json({ success: false, error: 'El producto, el tipo de ajuste y la cantidad son obligatorios.' });
+    }
+
+    // 1. Obtener producto de Supabase
+    const prodRes = await authenticatedSupabaseRestRequest(
+      res,
+      `products?organization_id=eq.${encodeURIComponent(orgId)}&sku=eq.${encodeURIComponent(sku)}&limit=1`
+    );
+
+    if (prodRes.error || !Array.isArray(prodRes.data) || prodRes.data.length === 0) {
+      return res.status(404).json({ success: false, error: `Producto con código ${sku} no encontrado en catálogo.` });
+    }
+
+    const product = prodRes.data[0];
+    const prevStock = Number(product.stock) || 0;
+    const numQty = Math.abs(Number(quantity) || 0);
+
+    let nextStock = prevStock;
+    let netDelta = 0;
+    let movType = 'AJUSTE_ENTRADA';
+
+    if (adjustment_type === 'ENTRADA') {
+      nextStock = prevStock + numQty;
+      netDelta = numQty;
+      movType = 'AJUSTE_ENTRADA';
+    } else if (adjustment_type === 'SALIDA') {
+      nextStock = Math.max(0, prevStock - numQty);
+      netDelta = -numQty;
+      movType = 'AJUSTE_SALIDA';
+    } else if (adjustment_type === 'CORRECCION') {
+      nextStock = Math.max(0, Number(quantity) || 0);
+      netDelta = nextStock - prevStock;
+      movType = 'AJUSTE_CORRECCION';
+    } else {
+      return res.status(400).json({ success: false, error: 'Tipo de ajuste no reconocido.' });
+    }
+
+    const rate = Number(exchange_rate) || 1;
+    const unitVal = Number(unit_cost_usd) || Number(product.cost_usd) || Number(product.price_usd) || 0;
+    const totalUsd = Math.round(Math.abs(netDelta) * unitVal * 100) / 100;
+    const totalVes = Math.round(totalUsd * rate * 100) / 100;
+
+    const autoDoc = doc_number && doc_number.trim()
+      ? doc_number.trim()
+      : `AJU-${String(Math.floor(1000 + Math.random() * 9000))}`;
+
+    // 2. Actualizar stock en tabla products
+    const updateProdRes = await authenticatedSupabaseRestRequest(
+      res,
+      `products?organization_id=eq.${encodeURIComponent(orgId)}&sku=eq.${encodeURIComponent(sku)}`,
+      {
+        method: 'PATCH',
+        body: { stock: nextStock }
+      }
+    );
+
+    if (updateProdRes.error) {
+      return res.status(500).json({ success: false, error: `No se pudo actualizar el stock en Supabase: ${updateProdRes.error}` });
+    }
+
+    // 3. Insertar movimiento en inventory_movements
+    const movementPayload = {
+      organization_id: orgId,
+      branch_id: product.branch_id || null,
+      product_id: product.id || null,
+      sku: product.sku,
+      product_name: product.name,
+      movement_type: movType,
+      doc_type: 'AJUSTE',
+      doc_number: autoDoc,
+      entity_type: 'INTERNO',
+      entity_name: 'Ajuste manual de stock',
+      quantity: netDelta,
+      unit_cost_usd: Number(product.cost_usd) || 0,
+      unit_price_usd: Number(product.price_usd) || 0,
+      exchange_rate: rate,
+      total_usd: totalUsd,
+      total_ves: totalVes,
+      previous_stock: prevStock,
+      new_stock: nextStock,
+      reason: reason || 'Ajuste manual de inventario',
+      notes: notes || null,
+      created_at: new Date().toISOString()
+    };
+
+    const movInsertRes = await authenticatedSupabaseRestRequest(res, 'inventory_movements', {
+      method: 'POST',
+      headers: { Prefer: 'return=representation' },
+      body: movementPayload
+    });
+
+    const createdMovement = (movInsertRes.data && Array.isArray(movInsertRes.data))
+      ? movInsertRes.data[0]
+      : movementPayload;
+
+    return res.json({
+      success: true,
+      data: createdMovement,
+      new_stock: nextStock
+    });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message || 'Error registrando ajuste de inventario' });
   }
 });
 
@@ -1238,17 +1541,35 @@ app.get('/api/suppliers', async (_req, res: AuthenticatedResponse) => {
 
 app.post('/api/suppliers', async (req, res: AuthenticatedResponse) => {
   try {
-    const supplier = req.body;
-    const result = await authenticatedSupabaseRestRequest(res, 'suppliers', {
-      method: 'POST',
-      headers: { Prefer: 'return=representation' },
-      body: supplier
-    });
-    if (result.error) {
-      return res.status(200).json({ success: false, error: result.error });
+    const rawSupplier = req.body || {};
+    let supplierPayload: Record<string, any> = { ...rawSupplier };
+    let attempts = 0;
+    let lastError: string | null = null;
+
+    while (attempts < 6) {
+      attempts++;
+      const result = await authenticatedSupabaseRestRequest(res, 'suppliers', {
+        method: 'POST',
+        headers: { Prefer: 'return=representation' },
+        body: supplierPayload
+      });
+
+      if (!result.error && result.data) {
+        const created = Array.isArray(result.data) ? result.data[0] : result.data;
+        return res.json({ success: true, data: { ...rawSupplier, ...created } });
+      }
+
+      lastError = result.error || 'Error insertando proveedor';
+      const missingColMatch = lastError.match(/Could not find the '([^']+)' column of 'suppliers'/i);
+      if (missingColMatch && missingColMatch[1] && missingColMatch[1] in supplierPayload) {
+        const missingKey = missingColMatch[1];
+        delete supplierPayload[missingKey];
+        continue;
+      }
+      break;
     }
-    const created = Array.isArray(result.data) ? result.data[0] : result.data;
-    return res.json({ success: true, data: created });
+
+    return res.status(200).json({ success: false, error: lastError });
   } catch (err: any) {
     return res.status(200).json({ success: false, error: err?.message || 'Error en servidor' });
   }
@@ -1257,21 +1578,39 @@ app.post('/api/suppliers', async (req, res: AuthenticatedResponse) => {
 app.patch('/api/suppliers/:id', async (req, res: AuthenticatedResponse) => {
   try {
     const { id } = req.params;
-    const updates = req.body;
-    const result = await authenticatedSupabaseRestRequest(
-      res,
-      `suppliers?id=eq.${encodeURIComponent(id)}`,
-      {
-        method: 'PATCH',
-        headers: { Prefer: 'return=representation' },
-        body: updates
+    const rawUpdates = req.body || {};
+    let updatesPayload: Record<string, any> = { ...rawUpdates };
+    let attempts = 0;
+    let lastError: string | null = null;
+
+    while (attempts < 6) {
+      attempts++;
+      const result = await authenticatedSupabaseRestRequest(
+        res,
+        `suppliers?id=eq.${encodeURIComponent(id)}`,
+        {
+          method: 'PATCH',
+          headers: { Prefer: 'return=representation' },
+          body: updatesPayload
+        }
+      );
+
+      if (!result.error) {
+        const updated = Array.isArray(result.data) ? result.data[0] : result.data;
+        return res.json({ success: true, data: { ...rawUpdates, ...updated } });
       }
-    );
-    if (result.error) {
-      return res.status(200).json({ success: false, error: result.error });
+
+      lastError = result.error || 'Error actualizando proveedor';
+      const missingColMatch = lastError.match(/Could not find the '([^']+)' column of 'suppliers'/i);
+      if (missingColMatch && missingColMatch[1] && missingColMatch[1] in updatesPayload) {
+        const missingKey = missingColMatch[1];
+        delete updatesPayload[missingKey];
+        continue;
+      }
+      break;
     }
-    const updated = Array.isArray(result.data) ? result.data[0] : result.data;
-    return res.json({ success: true, data: updated });
+
+    return res.status(200).json({ success: false, error: lastError });
   } catch (err: any) {
     return res.status(200).json({ success: false, error: err?.message });
   }
@@ -1293,6 +1632,445 @@ app.delete('/api/suppliers/:id', async (req, res: AuthenticatedResponse) => {
     return res.json({ success: true });
   } catch (err: any) {
     return res.status(200).json({ success: false, error: err?.message });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// 7.B SEDES Y ALMACENES (BRANCHES) PROXY
+// ---------------------------------------------------------------------------
+app.get('/api/branches', async (_req, res: AuthenticatedResponse) => {
+  try {
+    const orgId = res.locals.supabaseContext?.organizationId;
+    if (!orgId) {
+      return res.status(200).json({ success: true, data: [] });
+    }
+    const result = await authenticatedSupabaseRestRequest(
+      res,
+      `branches?organization_id=eq.${encodeURIComponent(orgId)}&select=*&order=created_at.asc`
+    );
+    if (result.error) {
+      return res.status(200).json({ success: false, error: result.error, data: [] });
+    }
+    return res.json({ success: true, data: result.data || [] });
+  } catch (err: any) {
+    return res.status(200).json({ success: false, error: err?.message, data: [] });
+  }
+});
+
+app.post('/api/branches', async (req, res: AuthenticatedResponse) => {
+  try {
+    const orgId = res.locals.supabaseContext?.organizationId;
+    const rawBranch = req.body || {};
+    let branchPayload: Record<string, any> = { ...rawBranch };
+    if (orgId && !branchPayload.organization_id) {
+      branchPayload.organization_id = orgId;
+    }
+    let attempts = 0;
+    let lastError: string | null = null;
+
+    while (attempts < 6) {
+      attempts++;
+      const result = await authenticatedSupabaseRestRequest(res, 'branches', {
+        method: 'POST',
+        headers: { Prefer: 'return=representation' },
+        body: branchPayload
+      });
+
+      if (!result.error && result.data) {
+        const created = Array.isArray(result.data) ? result.data[0] : result.data;
+        return res.json({ success: true, data: { ...rawBranch, ...created } });
+      }
+
+      lastError = result.error || 'Error insertando sede/almacén';
+      const missingColMatch = lastError.match(/Could not find the '([^']+)' column of 'branches'/i);
+      if (missingColMatch && missingColMatch[1] && missingColMatch[1] in branchPayload) {
+        delete branchPayload[missingColMatch[1]];
+        continue;
+      }
+      break;
+    }
+
+    return res.status(200).json({ success: false, error: lastError });
+  } catch (err: any) {
+    return res.status(200).json({ success: false, error: err?.message || 'Error en servidor' });
+  }
+});
+
+app.patch('/api/branches/:id', async (req, res: AuthenticatedResponse) => {
+  try {
+    const { id } = req.params;
+    const rawUpdates = req.body || {};
+    let updatesPayload: Record<string, any> = { ...rawUpdates };
+    let attempts = 0;
+    let lastError: string | null = null;
+
+    while (attempts < 6) {
+      attempts++;
+      const result = await authenticatedSupabaseRestRequest(
+        res,
+        `branches?id=eq.${encodeURIComponent(id)}`,
+        {
+          method: 'PATCH',
+          headers: { Prefer: 'return=representation' },
+          body: updatesPayload
+        }
+      );
+
+      if (!result.error) {
+        const updated = Array.isArray(result.data) ? result.data[0] : result.data;
+        return res.json({ success: true, data: { ...rawUpdates, ...updated } });
+      }
+
+      lastError = result.error || 'Error actualizando sede/almacén';
+      const missingColMatch = lastError.match(/Could not find the '([^']+)' column of 'branches'/i);
+      if (missingColMatch && missingColMatch[1] && missingColMatch[1] in updatesPayload) {
+        delete updatesPayload[missingColMatch[1]];
+        continue;
+      }
+      break;
+    }
+
+    return res.status(200).json({ success: false, error: lastError });
+  } catch (err: any) {
+    return res.status(200).json({ success: false, error: err?.message });
+  }
+});
+
+app.delete('/api/branches/:id', async (req, res: AuthenticatedResponse) => {
+  try {
+    const { id } = req.params;
+    const result = await authenticatedSupabaseRestRequest(
+      res,
+      `branches?id=eq.${encodeURIComponent(id)}`,
+      {
+        method: 'DELETE'
+      }
+    );
+    if (result.error) {
+      return res.status(200).json({ success: false, error: result.error });
+    }
+    return res.json({ success: true });
+  } catch (err: any) {
+    return res.status(200).json({ success: false, error: err?.message });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// 7.C MÓDULO DE GASTOS FIJOS Y VARIABLES (EXPENSES) PROXY
+// ---------------------------------------------------------------------------
+app.get('/api/expense-categories', async (_req, res: AuthenticatedResponse) => {
+  try {
+    const orgId = res.locals.supabaseContext?.organizationId;
+    if (!orgId) {
+      return res.status(200).json({ success: true, data: [] });
+    }
+    const result = await authenticatedSupabaseRestRequest(
+      res,
+      `expense_categories?organization_id=eq.${encodeURIComponent(orgId)}&select=*&order=name.asc`
+    );
+    if (result.error) {
+      return res.status(200).json({ success: false, error: result.error, data: [] });
+    }
+    return res.json({ success: true, data: result.data || [] });
+  } catch (err: any) {
+    return res.status(200).json({ success: false, error: err?.message, data: [] });
+  }
+});
+
+app.post('/api/expense-categories', async (req, res: AuthenticatedResponse) => {
+  try {
+    const orgId = res.locals.supabaseContext?.organizationId;
+    const { name, is_default } = req.body || {};
+    if (!name || typeof name !== 'string' || !name.trim()) {
+      return res.status(400).json({ success: false, error: 'El nombre de la categoría es obligatorio.' });
+    }
+    const result = await authenticatedSupabaseRestRequest(res, 'expense_categories', {
+      method: 'POST',
+      headers: { Prefer: 'return=representation' },
+      body: {
+        organization_id: orgId,
+        name: name.trim(),
+        is_default: !!is_default,
+        created_at: new Date().toISOString()
+      }
+    });
+    if (result.error) {
+      return res.status(200).json({ success: false, error: result.error });
+    }
+    const created = Array.isArray(result.data) ? result.data[0] : result.data;
+    return res.json({ success: true, data: created });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message });
+  }
+});
+
+app.get('/api/expenses', async (_req, res: AuthenticatedResponse) => {
+  try {
+    const orgId = res.locals.supabaseContext?.organizationId;
+    if (!orgId) {
+      return res.status(200).json({ success: true, data: [] });
+    }
+    const result = await authenticatedSupabaseRestRequest(
+      res,
+      `expenses?organization_id=eq.${encodeURIComponent(orgId)}&select=*&order=due_date.asc,created_at.desc`
+    );
+    if (result.error) {
+      return res.status(200).json({ success: false, error: result.error, data: [] });
+    }
+    return res.json({ success: true, data: result.data || [] });
+  } catch (err: any) {
+    return res.status(200).json({ success: false, error: err?.message, data: [] });
+  }
+});
+
+app.post('/api/expenses', async (req, res: AuthenticatedResponse) => {
+  try {
+    const orgId = res.locals.supabaseContext?.organizationId;
+    const rawExpense = req.body || {};
+    let expensePayload: Record<string, any> = { ...rawExpense };
+    if (orgId && !expensePayload.organization_id) {
+      expensePayload.organization_id = orgId;
+    }
+
+    // Sanitizar UUIDs opcionales
+    const isValidUuid = (val?: string | null) =>
+      typeof val === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val);
+    if (expensePayload.branch_id && !isValidUuid(expensePayload.branch_id)) {
+      delete expensePayload.branch_id;
+    }
+    if (expensePayload.payment_account_id && !isValidUuid(expensePayload.payment_account_id)) {
+      delete expensePayload.payment_account_id;
+    }
+
+    let attempts = 0;
+    let lastError: string | null = null;
+
+    while (attempts < 6) {
+      attempts++;
+      const result = await authenticatedSupabaseRestRequest(res, 'expenses', {
+        method: 'POST',
+        headers: { Prefer: 'return=representation' },
+        body: expensePayload
+      });
+
+      if (!result.error && result.data) {
+        const created = Array.isArray(result.data) ? result.data[0] : result.data;
+        return res.json({ success: true, data: { ...rawExpense, ...created } });
+      }
+
+      lastError = result.error || 'Error insertando gasto';
+      const missingColMatch = lastError.match(/Could not find the '([^']+)' column of 'expenses'/i);
+      if (missingColMatch && missingColMatch[1] && missingColMatch[1] in expensePayload) {
+        delete expensePayload[missingColMatch[1]];
+        continue;
+      }
+      break;
+    }
+
+    return res.status(200).json({ success: false, error: lastError });
+  } catch (err: any) {
+    return res.status(200).json({ success: false, error: err?.message || 'Error en servidor' });
+  }
+});
+
+app.patch('/api/expenses/:id', async (req, res: AuthenticatedResponse) => {
+  try {
+    const { id } = req.params;
+    const rawUpdates = req.body || {};
+    let updatesPayload: Record<string, any> = { ...rawUpdates };
+
+    const isValidUuid = (val?: string | null) =>
+      typeof val === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val);
+    if ('branch_id' in updatesPayload && updatesPayload.branch_id && !isValidUuid(updatesPayload.branch_id)) {
+      delete updatesPayload.branch_id;
+    }
+    if ('payment_account_id' in updatesPayload && updatesPayload.payment_account_id && !isValidUuid(updatesPayload.payment_account_id)) {
+      delete updatesPayload.payment_account_id;
+    }
+
+    let attempts = 0;
+    let lastError: string | null = null;
+
+    while (attempts < 6) {
+      attempts++;
+      const result = await authenticatedSupabaseRestRequest(
+        res,
+        `expenses?id=eq.${encodeURIComponent(id)}`,
+        {
+          method: 'PATCH',
+          headers: { Prefer: 'return=representation' },
+          body: updatesPayload
+        }
+      );
+
+      if (!result.error) {
+        const updated = Array.isArray(result.data) ? result.data[0] : result.data;
+        return res.json({ success: true, data: { ...rawUpdates, ...updated } });
+      }
+
+      lastError = result.error || 'Error actualizando gasto';
+      const missingColMatch = lastError.match(/Could not find the '([^']+)' column of 'expenses'/i);
+      if (missingColMatch && missingColMatch[1] && missingColMatch[1] in updatesPayload) {
+        delete updatesPayload[missingColMatch[1]];
+        continue;
+      }
+      break;
+    }
+
+    return res.status(200).json({ success: false, error: lastError });
+  } catch (err: any) {
+    return res.status(200).json({ success: false, error: err?.message });
+  }
+});
+
+app.put('/api/expenses/:id', async (req, res: AuthenticatedResponse) => {
+  try {
+    const { id } = req.params;
+    const rawUpdates = req.body || {};
+    let updatesPayload: Record<string, any> = { ...rawUpdates };
+
+    const isValidUuid = (val?: string | null) =>
+      typeof val === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val);
+    if ('branch_id' in updatesPayload && updatesPayload.branch_id && !isValidUuid(updatesPayload.branch_id)) {
+      delete updatesPayload.branch_id;
+    }
+    if ('payment_account_id' in updatesPayload && updatesPayload.payment_account_id && !isValidUuid(updatesPayload.payment_account_id)) {
+      delete updatesPayload.payment_account_id;
+    }
+
+    const result = await authenticatedSupabaseRestRequest(
+      res,
+      `expenses?id=eq.${encodeURIComponent(id)}`,
+      {
+        method: 'PATCH',
+        headers: { Prefer: 'return=representation' },
+        body: updatesPayload
+      }
+    );
+
+    if (!result.error) {
+      const updated = Array.isArray(result.data) ? result.data[0] : result.data;
+      return res.json({ success: true, data: { ...rawUpdates, ...updated } });
+    }
+    return res.status(200).json({ success: false, error: result.error });
+  } catch (err: any) {
+    return res.status(200).json({ success: false, error: err?.message });
+  }
+});
+
+app.delete('/api/expenses/:id', async (req, res: AuthenticatedResponse) => {
+  try {
+    const { id } = req.params;
+    const result = await authenticatedSupabaseRestRequest(
+      res,
+      `expenses?id=eq.${encodeURIComponent(id)}`,
+      { method: 'DELETE' }
+    );
+    if (result.error) {
+      return res.status(200).json({ success: false, error: result.error });
+    }
+    return res.json({ success: true });
+  } catch (err: any) {
+    return res.status(200).json({ success: false, error: err?.message });
+  }
+});
+
+// Endpoint para registrar pago de gasto con auditoría y enlace a tesorería
+app.post('/api/expenses/:id/pay', async (req, res: AuthenticatedResponse) => {
+  try {
+    const orgId = res.locals.supabaseContext?.organizationId;
+    const { id } = req.params;
+    const {
+      amount,
+      currency,
+      exchangeRate,
+      paidAt,
+      paymentMethod,
+      bankAccountId,
+      reference,
+      notes,
+      nextDueDate
+    } = req.body || {};
+
+    const numAmount = parseFloat(amount);
+    if (!numAmount || numAmount <= 0) {
+      return res.status(400).json({ success: false, error: 'Monto de pago no válido.' });
+    }
+
+    const payDate = paidAt || new Date().toISOString().split('T')[0];
+
+    // 1. Registrar pago en expense_payments
+    try {
+      await authenticatedSupabaseRestRequest(res, 'expense_payments', {
+        method: 'POST',
+        body: {
+          expense_id: id,
+          organization_id: orgId,
+          amount: numAmount,
+          currency: currency || 'USD',
+          exchange_rate: exchangeRate || 1.0,
+          paid_at: new Date().toISOString(),
+          payment_method: paymentMethod || 'Transferencia bancaria',
+          bank_account_id: bankAccountId || null,
+          reference: reference || null,
+          notes: notes || null
+        }
+      });
+    } catch (e) {
+      console.warn('Aviso registrando en expense_payments:', e);
+    }
+
+    // 2. Si se especificó cuenta bancaria, registrar movimiento de egreso
+    if (bankAccountId) {
+      try {
+        await authenticatedSupabaseRestRequest(res, 'bank_movements', {
+          method: 'POST',
+          body: {
+            organization_id: orgId,
+            bank_account_id: bankAccountId,
+            movement_type: 'EGRESO',
+            amount: numAmount,
+            currency: currency || 'USD',
+            exchange_rate: exchangeRate || 1.0,
+            reference_number: reference || `EXP-${id.slice(0, 8)}`,
+            concept: notes || `Pago de gasto operativo (${currency || 'USD'} ${numAmount.toFixed(2)})`,
+            source: 'GASTO_OPERATIVO'
+          }
+        });
+      } catch (bmErr) {
+        console.warn('Aviso registrando movimiento bancario de gasto:', bmErr);
+      }
+    }
+
+    // 3. Actualizar el registro del gasto (último pago y próxima fecha si es fijo)
+    const updates: Record<string, any> = {
+      last_payment_date: payDate,
+      updated_at: new Date().toISOString()
+    };
+    if (nextDueDate) {
+      updates.due_date = nextDueDate;
+      updates.status = 'PENDIENTE';
+    } else {
+      updates.status = 'PAGADO';
+    }
+
+    const updateRes = await authenticatedSupabaseRestRequest(
+      res,
+      `expenses?id=eq.${encodeURIComponent(id)}`,
+      {
+        method: 'PATCH',
+        headers: { Prefer: 'return=representation' },
+        body: updates
+      }
+    );
+
+    return res.json({
+      success: true,
+      message: 'Pago de gasto registrado exitosamente.',
+      data: updateRes.data || updates
+    });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message || 'Error procesando pago de gasto' });
   }
 });
 
@@ -1344,6 +2122,46 @@ app.get('/api/accounts-payable', async (_req, res: AuthenticatedResponse) => {
     return res.json({ success: true, data: result.data || [] });
   } catch (err: any) {
     return res.status(200).json({ success: false, error: err?.message, data: [] });
+  }
+});
+
+app.get('/api/purchases', async (_req, res: AuthenticatedResponse) => {
+  try {
+    const orgId = res.locals.supabaseContext!.organizationId;
+    const result = await authenticatedSupabaseRestRequest(
+      res,
+      `purchases?organization_id=eq.${encodeURIComponent(orgId)}&select=*,suppliers(id,name,rif,doc_number,phone),purchase_items(*)&order=created_at.desc`
+    );
+    if (result.error) {
+      return res.status(200).json({ success: false, error: result.error, data: [] });
+    }
+    return res.json({ success: true, data: result.data || [] });
+  } catch (err: any) {
+    return res.status(200).json({ success: false, error: err?.message, data: [] });
+  }
+});
+
+app.post('/api/purchases', async (req, res: AuthenticatedResponse) => {
+  try {
+    const orgId = res.locals.supabaseContext!.organizationId;
+    const payload = { ...req.body, p_organization_id: orgId };
+    
+    // Intentar RPC record_internal_purchase
+    const rpcRes = await authenticatedSupabaseRestRequest(res, 'rpc/record_internal_purchase', {
+      method: 'POST',
+      body: payload
+    });
+
+    if (!rpcRes.error && rpcRes.data) {
+      return res.json({ success: true, data: rpcRes.data });
+    }
+
+    return res.status(rpcRes.status || 400).json({
+      success: false,
+      error: rpcRes.error || 'No se pudo registrar la compra en Supabase'
+    });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message || 'Error en servidor registrando compra.' });
   }
 });
 
@@ -1477,7 +2295,7 @@ app.get('/api/supabase/migrations-bundle', (_req, res) => {
       return res.status(404).json({ success: false, error: 'Directorio de migraciones no encontrado.' });
     }
     const files = fs.readdirSync(migrationsDir).filter(f => f.endsWith('.sql')).sort();
-    let bundledSql = `-- ==============================================================================\n-- FRENYER ERP — PAQUETE COMPLETO DE MIGRACIONES UNIFICADAS (0001 - 0012)\n-- ==============================================================================\n-- Ejecuta este script en el SQL Editor de tu consola de Supabase para inicializar\n-- todas las tablas, índices, triggers y políticas RLS necesarias para Frenyer.\n-- ==============================================================================\n\n`;
+    let bundledSql = `-- ==============================================================================\n-- FRENYER ERP — PAQUETE COMPLETO DE MIGRACIONES UNIFICADAS (0001 - 0015)\n-- ==============================================================================\n-- Ejecuta este script en el SQL Editor de tu consola de Supabase para inicializar\n-- todas las tablas, índices, triggers y políticas RLS necesarias para Frenyer.\n-- ==============================================================================\n\n`;
 
     for (const file of files) {
       bundledSql += `-- ------------------------------------------------------------------------------\n`;

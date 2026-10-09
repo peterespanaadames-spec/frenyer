@@ -20,7 +20,8 @@ import {
   FolderPlus,
   Image as ImageIcon,
   Database,
-  FileText
+  FileText,
+  MapPin
 } from 'lucide-react';
 import { Card } from '../../../components/ui/Card';
 import { Button } from '../../../components/ui/Button';
@@ -32,6 +33,9 @@ import {
   updateProductInSupabase,
   deleteProductFromSupabase,
   updateProductStockInSupabase,
+  fetchBranchesFromSupabase,
+  isValidUuid,
+  DbBranch,
   DbProduct
 } from '../../../lib/supabase/db';
 
@@ -50,11 +54,16 @@ interface Product {
   status: string;
   expiry: string;
   location: string;
+  branchId?: string;
+  branchName?: string;
   image?: string;
 }
 
 export function Inventory() {
   const [products, setProducts] = useState<Product[]>([]);
+  const [branches, setBranches] = useState<DbBranch[]>([]);
+  const [selectedBranchFilter, setSelectedBranchFilter] = useState('all');
+  const [newBranchId, setNewBranchId] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
@@ -62,8 +71,21 @@ export function Inventory() {
 
   const loadProducts = async () => {
     setIsLoading(true);
-    const dbProds = await fetchProductsFromSupabase();
-    const mappedProducts = (dbProds || []).map(p => ({
+    const [dbProds, dbBranches] = await Promise.all([
+      fetchProductsFromSupabase(),
+      fetchBranchesFromSupabase()
+    ]);
+    setBranches(dbBranches || []);
+
+    const branchMap = new Map<string, string>();
+    (dbBranches || []).forEach(b => {
+      if (b.id) branchMap.set(b.id, b.name);
+      if (b.code) branchMap.set(b.code, b.name);
+    });
+
+    const mappedProducts = (dbProds || []).map(p => {
+      const bName = p.branch_id ? (branchMap.get(p.branch_id) || p.branch_id) : 'Sede Principal';
+      return {
         sku: p.sku,
         name: p.name,
         barcode: p.barcode || '',
@@ -77,9 +99,12 @@ export function Inventory() {
         minStock: Number(p.min_stock) || 0,
         status: p.status || 'Activo',
         expiry: '—',
-        location: '—',
+        location: bName,
+        branchId: p.branch_id || '',
+        branchName: bName,
         image: p.image_url
-      }));
+      };
+    });
     setProducts(mappedProducts);
     setCategories(Array.from(new Set(mappedProducts.map((product) => product.category).filter(Boolean))));
     setIsLoading(false);
@@ -305,14 +330,23 @@ export function Inventory() {
   const totalCostValue = products.reduce((sum, p) => sum + (p.stock * p.cost), 0);
   const totalPvpValue = products.reduce((sum, p) => sum + (p.stock * p.price), 0);
 
-  // Filtered list for search bar
-  const filteredProducts = products.filter(p =>
-    p.sku.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    p.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    p.category.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    p.location.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    p.barcode.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  // Filtered list for search bar and branch selector
+  const filteredProducts = products.filter(p => {
+    const matchesSearch =
+      p.sku.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      p.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      p.category.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (p.branchName && p.branchName.toLowerCase().includes(searchTerm.toLowerCase())) ||
+      p.location.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      p.barcode.toLowerCase().includes(searchTerm.toLowerCase());
+
+    const matchesBranch =
+      selectedBranchFilter === 'all' ||
+      p.branchId === selectedBranchFilter ||
+      p.branchName === selectedBranchFilter;
+
+    return matchesSearch && matchesBranch;
+  });
 
   // Filtered list for preview & export inside Management Modal
   const previewProducts = products.filter(p => {
@@ -344,6 +378,8 @@ export function Inventory() {
     setNewStatus('Activo');
     setNewExpiry('');
     setNewLocation('—');
+    const validFirstBranch = branches.find(b => isValidUuid(b.id));
+    setNewBranchId(validFirstBranch ? validFirstBranch.id! : '');
     setImageUrl(null);
     setIsNewProductOpen(true);
   };
@@ -364,6 +400,7 @@ export function Inventory() {
     setNewStatus(p.status);
     setNewExpiry(p.expiry === '—' ? '' : p.expiry);
     setNewLocation(p.location);
+    setNewBranchId(isValidUuid(p.branchId) ? p.branchId! : '');
     setImageUrl(p.image || null);
     setIsNewProductOpen(true);
   };
@@ -392,11 +429,14 @@ export function Inventory() {
       targetSku = `${prefix}-${nextNum.toString().padStart(4, '0')}`;
     }
 
+    const sanitizedBranchId = isValidUuid(newBranchId) ? newBranchId : undefined;
+
     const payload: DbProduct = {
       sku: targetSku,
       name: newName.trim(),
       barcode: newBarcode.trim() || undefined,
       category: newCategory || 'General',
+      branch_id: sanitizedBranchId,
       unit: newUnit || 'UND',
       cost_usd: parseFloat(newCost) || 0,
       price_usd: parseFloat(newPrice) || 0,
@@ -687,7 +727,25 @@ export function Inventory() {
             />
           </div>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            {/* Sede / Almacén Filter */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <MapPin size={15} style={{ color: '#0066f5' }} />
+              <select
+                className="input"
+                style={{ height: 38, fontSize: 12, width: 190, fontWeight: 600 }}
+                value={selectedBranchFilter}
+                onChange={(e) => setSelectedBranchFilter(e.target.value)}
+              >
+                <option value="all">Todas las Sedes / Almacenes</option>
+                {branches.map(b => (
+                  <option key={b.id || b.code} value={b.id || b.code}>
+                    {b.code ? `[${b.code}] ` : ''}{b.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
             <button
               type="button"
               onClick={loadProducts}
@@ -721,7 +779,7 @@ export function Inventory() {
                 <th>SKU</th>
                 <th>Producto</th>
                 <th>Categoría</th>
-                <th>Ubicación</th>
+                <th>Sede / Almacén</th>
                 <th>Vencimiento</th>
                 <th className="num">Costo ($)</th>
                 <th className="num">Precio ($ / Bs.)</th>
@@ -792,7 +850,25 @@ export function Inventory() {
                     </div>
                   </td>
                   <td>{p.category}</td>
-                  <td>{p.location}</td>
+                  <td>
+                    <span
+                      style={{
+                        background: '#eff6ff',
+                        border: '1px solid #bfdbfe',
+                        color: '#1d4ed8',
+                        padding: '3px 8px',
+                        borderRadius: 6,
+                        fontSize: 11,
+                        fontWeight: 700,
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 4
+                      }}
+                    >
+                      <MapPin size={11} style={{ color: '#2563eb' }} />
+                      {p.branchName || 'Sede Principal'}
+                    </span>
+                  </td>
                   <td>{p.expiry}</td>
                   <td className="num">
                     <span style={{ fontWeight: 600 }}>${p.cost.toFixed(2)}</span>
@@ -1410,6 +1486,31 @@ export function Inventory() {
                 />
                 <span className="muted small" style={{ fontSize: 11, display: 'block', marginTop: 4, color: '#64748b' }}>
                   No es obligatorio registrar la fecha de vencimiento. Puedes guardar los cambios sin llenarla.
+                </span>
+              </div>
+
+              {/* Row 8: Sede o Almacén */}
+              <div className="field full">
+                <label style={{ fontSize: 12, fontWeight: 600, color: '#334155', marginBottom: 4, display: 'block' }}>
+                  Sede o Almacén
+                </label>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <select
+                    className="input"
+                    style={{ height: 38, fontSize: 13, flex: 1, fontWeight: 500 }}
+                    value={newBranchId}
+                    onChange={(e) => setNewBranchId(e.target.value)}
+                  >
+                    <option value="">Seleccionar Sede o Almacén...</option>
+                    {branches.map(b => (
+                      <option key={b.id || b.code} value={isValidUuid(b.id) ? b.id : ''}>
+                        {b.code ? `[${b.code}] ` : ''}{b.name} ({b.status || 'Habilitada'})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <span className="muted small" style={{ fontSize: 11, display: 'block', marginTop: 4, color: '#64748b' }}>
+                  Asigna este producto a una sucursal física o almacén de inventario.
                 </span>
               </div>
 

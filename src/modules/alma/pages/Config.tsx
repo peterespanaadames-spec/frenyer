@@ -20,7 +20,10 @@ import {
   AlertTriangle,
   X,
   CreditCard,
-  Database
+  Database,
+  MapPin,
+  Phone,
+  Monitor
 } from 'lucide-react';
 import { Card } from '../../../components/ui/Card';
 import { Button } from '../../../components/ui/Button';
@@ -29,6 +32,13 @@ import { getActiveExchangeRate, setActiveExchangeRate, formatUSD, formatVES } fr
 import { authenticatedFetch } from '../../../lib/supabase/api';
 import { isSupabaseConfigured, SUPABASE_URL } from '../../../lib/supabase/client';
 import { SupabaseConnectionModal } from '../../../components/modals/SupabaseConnectionModal';
+import {
+  DbBranch,
+  fetchBranchesFromSupabase,
+  createBranchInSupabase,
+  updateBranchInSupabase,
+  deleteBranchFromSupabase
+} from '../../../lib/supabase/db';
 
 interface AssociatedUser {
   id: number;
@@ -59,8 +69,148 @@ interface BankAccountRecord {
 }
 
 export function ConfigPage() {
-  const [activeTab, setActiveTab] = useState<'negocio' | 'usuarios' | 'auditoria'>('negocio');
+  const [activeTab, setActiveTab] = useState<'negocio' | 'almacen' | 'usuarios' | 'auditoria'>('negocio');
   const [isDbModalOpen, setIsDbModalOpen] = useState(false);
+
+  // --- SEDES Y ALMACENES (BRANCHES) STATE ---
+  const [branches, setBranches] = useState<DbBranch[]>([]);
+  const [isBranchesLoading, setIsBranchesLoading] = useState(false);
+  const [isBranchModalOpen, setIsBranchModalOpen] = useState(false);
+  const [editingBranch, setEditingBranch] = useState<DbBranch | null>(null);
+
+  // Form state matching Image 1
+  const [branchCode, setBranchCode] = useState('SUC-05');
+  const [branchName, setBranchName] = useState('');
+  const [branchAddress, setBranchAddress] = useState('');
+  const [branchPhone, setBranchPhone] = useState('+58 412-5043857');
+  const [branchStatus, setBranchStatus] = useState<'Habilitada' | 'Deshabilitada'>('Habilitada');
+  const [isSavingBranch, setIsSavingBranch] = useState(false);
+
+  // Delete branch modal
+  const [branchToDelete, setBranchToDelete] = useState<DbBranch | null>(null);
+
+  // Manage cash registers modal
+  const [managingBranchCajas, setManagingBranchCajas] = useState<DbBranch | null>(null);
+  const [newCajasCount, setNewCajasCount] = useState<number>(0);
+
+  const loadBranches = async () => {
+    setIsBranchesLoading(true);
+    try {
+      const data = await fetchBranchesFromSupabase();
+      setBranches(data);
+    } catch {
+      // ignore
+    } finally {
+      setIsBranchesLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadBranches();
+  }, []);
+
+  const handleOpenNewBranch = () => {
+    setEditingBranch(null);
+    const nextNum = branches.length + 1;
+    setBranchCode(`SUC-${nextNum.toString().padStart(2, '0')}`);
+    setBranchName('');
+    setBranchAddress('');
+    setBranchPhone('+58 412-5043857');
+    setBranchStatus('Habilitada');
+    setIsBranchModalOpen(true);
+  };
+
+  const handleOpenEditBranch = (b: DbBranch) => {
+    setEditingBranch(b);
+    setBranchCode(b.code);
+    setBranchName(b.name);
+    setBranchAddress(b.address || '');
+    setBranchPhone(b.phone || '');
+    setBranchStatus(b.status === 'Deshabilitada' ? 'Deshabilitada' : 'Habilitada');
+    setIsBranchModalOpen(true);
+  };
+
+  const handleSaveBranch = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!branchName.trim()) {
+      showNotification('Ingrese el nombre de la sede o almacén.', 'info');
+      return;
+    }
+
+    setIsSavingBranch(true);
+    try {
+      if (editingBranch && editingBranch.id) {
+        const res = await updateBranchInSupabase(editingBranch.id, {
+          code: branchCode.trim(),
+          name: branchName.trim(),
+          address: branchAddress.trim(),
+          phone: branchPhone.trim(),
+          status: branchStatus,
+          is_active: branchStatus === 'Habilitada'
+        });
+        if (res.success) {
+          showNotification(`Sede "${branchName.trim()}" actualizada con éxito.`);
+          await loadBranches();
+          setIsBranchModalOpen(false);
+        } else {
+          showNotification(`Error: ${res.error || 'No se pudo actualizar'}`, 'info');
+        }
+      } else {
+        const res = await createBranchInSupabase({
+          code: branchCode.trim(),
+          name: branchName.trim(),
+          address: branchAddress.trim(),
+          phone: branchPhone.trim(),
+          status: branchStatus,
+          is_active: branchStatus === 'Habilitada',
+          cash_registers: 0
+        });
+        if (res.success) {
+          showNotification(`Sede "${branchName.trim()}" guardada exitosamente.`);
+          await loadBranches();
+          setIsBranchModalOpen(false);
+        } else {
+          showNotification(`Error: ${res.error || 'No se pudo guardar'}`, 'info');
+        }
+      }
+    } catch {
+      showNotification('Error al procesar la operación.', 'info');
+    } finally {
+      setIsSavingBranch(false);
+    }
+  };
+
+  const handleDeleteBranchConfirm = async () => {
+    if (!branchToDelete || !branchToDelete.id) return;
+    try {
+      const res = await deleteBranchFromSupabase(branchToDelete.id);
+      if (res.success) {
+        showNotification(`Sede "${branchToDelete.name}" eliminada.`);
+        await loadBranches();
+      } else {
+        showNotification(`Error: ${res.error || 'No se pudo eliminar'}`, 'info');
+      }
+    } catch {
+      showNotification('Error eliminando la sede.', 'info');
+    } finally {
+      setBranchToDelete(null);
+    }
+  };
+
+  const handleUpdateCajas = async () => {
+    if (!managingBranchCajas || !managingBranchCajas.id) return;
+    try {
+      await updateBranchInSupabase(managingBranchCajas.id, {
+        cash_registers: Math.max(0, newCajasCount)
+      });
+      showNotification(`Terminales de "${managingBranchCajas.name}" actualizados.`);
+      await loadBranches();
+    } catch {
+      showNotification('Error al actualizar cajas.', 'info');
+    } finally {
+      setManagingBranchCajas(null);
+    }
+  };
 
   // --- BANK ACCOUNTS AUDIT STATE ---
   const [auditFolder, setAuditFolder] = useState<'activas' | 'inactivas'>('activas');
@@ -396,6 +546,15 @@ export function ConfigPage() {
           className={`config-tab-btn ${activeTab === 'negocio' ? 'active' : ''}`}
         >
           Negocio
+        </button>
+        <button
+          onClick={() => {
+            setActiveTab('almacen');
+            loadBranches();
+          }}
+          className={`config-tab-btn ${activeTab === 'almacen' ? 'active' : ''}`}
+        >
+          Almacén
         </button>
         <button
           onClick={() => setActiveTab('usuarios')}
@@ -800,6 +959,591 @@ export function ConfigPage() {
             </div>
           </Card>
 
+        </div>
+      )}
+
+      {/* Tab: Almacén y Sedes (Matching Image 2) */}
+      {activeTab === 'almacen' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          {/* Header matching Image 2 */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 12 }}>
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+              <div style={{ color: '#0066f5', marginTop: 2 }}>
+                <MapPin size={22} />
+              </div>
+              <div>
+                <h2 style={{ margin: 0, fontSize: 16, fontWeight: 800, color: '#0f172a', letterSpacing: '-0.01em' }}>
+                  SEDES Y TERMINALES (PUNTOS DE VENTA)
+                </h2>
+                <p style={{ margin: '3px 0 0 0', color: '#64748b', fontSize: 13 }}>
+                  Cree, modifique y gestione las sucursales físicas y sus puntos de venta asociados con sincronización en la nube.
+                </p>
+              </div>
+            </div>
+
+            <button
+              onClick={handleOpenNewBranch}
+              style={{
+                background: '#0066f5',
+                color: '#fff',
+                border: 'none',
+                borderRadius: 8,
+                padding: '9px 18px',
+                fontSize: 13,
+                fontWeight: 700,
+                display: 'flex',
+                alignItems: 'center',
+                gap: 6,
+                cursor: 'pointer',
+                boxShadow: '0 1px 2px rgba(0,0,0,0.05)'
+              }}
+            >
+              <Plus size={16} strokeWidth={2.5} /> + Agregar Sede
+            </button>
+          </div>
+
+          {/* Cards Grid matching Image 2 */}
+          {isBranchesLoading ? (
+            <div style={{ padding: '60px 20px', textAlign: 'center', color: '#64748b' }}>
+              <RefreshCw size={24} style={{ animation: 'spin 1s linear infinite', margin: '0 auto 8px auto' }} />
+              <span>Cargando sedes y almacenes...</span>
+            </div>
+          ) : branches.length === 0 ? (
+            <Card>
+              <div style={{ textAlign: 'center', padding: '40px 20px', color: '#64748b' }}>
+                <MapPin size={36} style={{ color: '#94a3b8', margin: '0 auto 12px auto' }} />
+                <h3 style={{ margin: 0, fontSize: 15, fontWeight: 700, color: '#1e293b' }}>
+                  No hay sedes o almacenes registrados
+                </h3>
+                <p style={{ margin: '6px 0 16px 0', fontSize: 13, color: '#64748b' }}>
+                  Comienza agregando tu primera sucursal física o almacén de inventario.
+                </p>
+                <button
+                  onClick={handleOpenNewBranch}
+                  style={{
+                    background: '#0066f5',
+                    color: '#fff',
+                    border: 'none',
+                    borderRadius: 8,
+                    padding: '8px 18px',
+                    fontSize: 13,
+                    fontWeight: 700,
+                    cursor: 'pointer'
+                  }}
+                >
+                  + Agregar Primera Sede
+                </button>
+              </div>
+            </Card>
+          ) : (
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fill, minmax(440px, 1fr))',
+                gap: 16
+              }}
+            >
+              {branches.map((b) => (
+                <div
+                  key={b.id || b.code}
+                  style={{
+                    background: '#fff',
+                    borderRadius: 12,
+                    border: '1px solid #e2e8f0',
+                    boxShadow: '0 1px 3px rgba(0,0,0,0.02)',
+                    padding: '16px 18px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    justifyContent: 'space-between',
+                    gap: 12,
+                    transition: 'all 0.15s ease'
+                  }}
+                >
+                  {/* Top: Code & Badge */}
+                  <div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                      <span style={{ fontSize: 11, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                        {b.code}
+                      </span>
+                      <span
+                        style={{
+                          background: b.status === 'Deshabilitada' ? '#f1f5f9' : '#e0f2fe',
+                          color: b.status === 'Deshabilitada' ? '#64748b' : '#0284c7',
+                          padding: '3px 10px',
+                          borderRadius: 999,
+                          fontSize: 11,
+                          fontWeight: 700
+                        }}
+                      >
+                        {b.status || 'Habilitada'}
+                      </span>
+                    </div>
+
+                    {/* Sede Name */}
+                    <h3 style={{ margin: '2px 0 6px 0', fontSize: 15, fontWeight: 800, color: '#0f172a' }}>
+                      {b.name}
+                    </h3>
+
+                    {/* Address */}
+                    {b.address && (
+                      <p style={{ margin: '0 0 6px 0', fontSize: 12, color: '#64748b', lineHeight: 1.4 }}>
+                        {b.address}
+                      </p>
+                    )}
+
+                    {/* Phone */}
+                    {b.phone && (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: '#475569' }}>
+                        <span style={{ color: '#ef4444', display: 'flex', alignItems: 'center' }}>
+                          <Phone size={13} fill="#ef4444" />
+                        </span>
+                        <span style={{ fontWeight: 500 }}>{b.phone}</span>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Divider and Footer */}
+                  <div
+                    style={{
+                      borderTop: '1px solid #f1f5f9',
+                      paddingTop: 12,
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center'
+                    }}
+                  >
+                    {/* Gestionar Cajas */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setManagingBranchCajas(b);
+                        setNewCajasCount(b.cash_registers || 0);
+                      }}
+                      style={{
+                        background: '#f8fafc',
+                        border: '1px solid #e2e8f0',
+                        borderRadius: 6,
+                        padding: '6px 12px',
+                        fontSize: 12,
+                        fontWeight: 700,
+                        color: '#0284c7',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 6,
+                        cursor: 'pointer'
+                      }}
+                    >
+                      <Monitor size={14} style={{ color: '#0284c7' }} />
+                      Gestionar Cajas ({b.cash_registers || 0})
+                    </button>
+
+                    {/* Action icons */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <button
+                        type="button"
+                        onClick={() => handleOpenEditBranch(b)}
+                        title="Editar Sede"
+                        style={{
+                          background: 'transparent',
+                          border: 'none',
+                          color: '#64748b',
+                          cursor: 'pointer',
+                          padding: 5,
+                          borderRadius: 6,
+                          display: 'grid',
+                          placeItems: 'center'
+                        }}
+                      >
+                        <Edit2 size={16} />
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setBranchToDelete(b)}
+                        title="Eliminar Sede"
+                        style={{
+                          background: 'transparent',
+                          border: 'none',
+                          color: '#ef4444',
+                          cursor: 'pointer',
+                          padding: 5,
+                          borderRadius: 6,
+                          display: 'grid',
+                          placeItems: 'center'
+                        }}
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Modal Crear / Editar Sede (Image 1) */}
+          {isBranchModalOpen && (
+            <div
+              style={{
+                position: 'fixed',
+                top: 0,
+                left: 0,
+                right: 0,
+                bottom: 0,
+                background: 'rgba(15,23,42,0.5)',
+                backdropFilter: 'blur(4px)',
+                display: 'grid',
+                placeItems: 'center',
+                zIndex: 1100,
+                padding: 16
+              }}
+            >
+              <div
+                className="card"
+                style={{
+                  width: '100%',
+                  maxWidth: 480,
+                  padding: 0,
+                  background: '#fff',
+                  borderRadius: 12,
+                  overflow: 'hidden',
+                  boxShadow: '0 25px 50px -12px rgba(0,0,0,0.25)',
+                  border: '1px solid #e2e8f0'
+                }}
+              >
+                {/* Header */}
+                <div
+                  style={{
+                    padding: '18px 24px',
+                    borderBottom: '1px solid #e2e8f0',
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    background: '#f8fafc'
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <div
+                      style={{
+                        width: 34,
+                        height: 34,
+                        borderRadius: 8,
+                        background: '#eff6ff',
+                        color: '#0066f5',
+                        display: 'grid',
+                        placeItems: 'center'
+                      }}
+                    >
+                      <MapPin size={18} />
+                    </div>
+                    <div>
+                      <h3 style={{ margin: 0, fontSize: 16, fontWeight: 800, color: '#0f172a' }}>
+                        {editingBranch ? 'Editar Sede o Almacén' : 'Nueva Sede'}
+                      </h3>
+                      <span style={{ fontSize: 12, color: '#64748b' }}>
+                        Complete la información de la sede física o almacén
+                      </span>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => setIsBranchModalOpen(false)}
+                    style={{
+                      background: 'transparent',
+                      border: 'none',
+                      color: '#64748b',
+                      cursor: 'pointer',
+                      padding: 4
+                    }}
+                  >
+                    <X size={20} />
+                  </button>
+                </div>
+
+                {/* Form */}
+                <form onSubmit={handleSaveBranch} style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 16 }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+                    <div>
+                      <label style={{ fontSize: 12, fontWeight: 700, color: '#334155', display: 'block', marginBottom: 6 }}>
+                        Código de la Sede
+                      </label>
+                      <input
+                        className="input"
+                        value={branchCode}
+                        onChange={(e) => setBranchCode(e.target.value)}
+                        placeholder="Ej. SUC-05"
+                        style={{ fontWeight: 600 }}
+                        required
+                      />
+                    </div>
+
+                    <div>
+                      <label style={{ fontSize: 12, fontWeight: 700, color: '#334155', display: 'block', marginBottom: 6 }}>
+                        Estado
+                      </label>
+                      <select
+                        className="input"
+                        value={branchStatus}
+                        onChange={(e) => setBranchStatus(e.target.value as 'Habilitada' | 'Deshabilitada')}
+                        style={{ fontWeight: 600 }}
+                      >
+                        <option value="Habilitada">Habilitada</option>
+                        <option value="Deshabilitada">Deshabilitada</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label style={{ fontSize: 12, fontWeight: 700, color: '#334155', display: 'block', marginBottom: 6 }}>
+                      Nombre de la Sede o Almacén *
+                    </label>
+                    <input
+                      className="input"
+                      value={branchName}
+                      onChange={(e) => setBranchName(e.target.value)}
+                      placeholder="Ej: Sede Principal, Almacén Central..."
+                      autoFocus
+                      required
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{ fontSize: 12, fontWeight: 700, color: '#334155', display: 'block', marginBottom: 6 }}>
+                      Dirección física
+                    </label>
+                    <input
+                      className="input"
+                      value={branchAddress}
+                      onChange={(e) => setBranchAddress(e.target.value)}
+                      placeholder="Ej: Carrera 7, Calle 20, Local 3..."
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{ fontSize: 12, fontWeight: 700, color: '#334155', display: 'block', marginBottom: 6 }}>
+                      Teléfono de contacto
+                    </label>
+                    <input
+                      className="input"
+                      value={branchPhone}
+                      onChange={(e) => setBranchPhone(e.target.value)}
+                      placeholder="+58 412-5043857"
+                    />
+                  </div>
+
+                  {/* Buttons */}
+                  <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 12, paddingTop: 16, borderTop: '1px solid #e2e8f0' }}>
+                    <button
+                      type="button"
+                      onClick={() => setIsBranchModalOpen(false)}
+                      style={{
+                        height: 38,
+                        padding: '0 16px',
+                        borderRadius: 8,
+                        border: '1px solid #cbd5e1',
+                        background: '#fff',
+                        fontSize: 13,
+                        fontWeight: 600,
+                        color: '#475569',
+                        cursor: 'pointer'
+                      }}
+                    >
+                      Cancelar
+                    </button>
+
+                    <button
+                      type="submit"
+                      disabled={isSavingBranch}
+                      style={{
+                        height: 38,
+                        padding: '0 20px',
+                        borderRadius: 8,
+                        border: 'none',
+                        background: '#0066f5',
+                        color: '#fff',
+                        fontSize: 13,
+                        fontWeight: 700,
+                        cursor: isSavingBranch ? 'wait' : 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 6,
+                        boxShadow: '0 1px 2px rgba(0,0,0,0.1)'
+                      }}
+                    >
+                      {isSavingBranch ? (
+                        <>
+                          <RefreshCw size={14} className="animate-spin" /> Guardando...
+                        </>
+                      ) : (
+                        <>
+                          <Check size={16} /> {editingBranch ? 'Actualizar Sede' : 'Guardar Sede'}
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          )}
+
+          {/* Modal Confirmar Eliminación de Sede */}
+          {branchToDelete && (
+            <div
+              style={{
+                position: 'fixed',
+                top: 0,
+                left: 0,
+                right: 0,
+                bottom: 0,
+                background: 'rgba(15,23,42,0.5)',
+                backdropFilter: 'blur(4px)',
+                display: 'grid',
+                placeItems: 'center',
+                zIndex: 1100,
+                padding: 16
+              }}
+            >
+              <div
+                className="card"
+                style={{
+                  width: '100%',
+                  maxWidth: 420,
+                  padding: 0,
+                  background: '#fff',
+                  borderRadius: 12,
+                  overflow: 'hidden',
+                  boxShadow: '0 25px 50px -12px rgba(0,0,0,0.25)'
+                }}
+              >
+                <div style={{ padding: '16px 20px', background: '#dc2626', color: '#fff', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <AlertTriangle size={18} />
+                    <h3 style={{ margin: 0, fontSize: 14, fontWeight: 800, color: '#fff' }}>
+                      Eliminar Sede / Almacén
+                    </h3>
+                  </div>
+                  <button
+                    onClick={() => setBranchToDelete(null)}
+                    style={{ background: 'transparent', border: 'none', color: '#fff', cursor: 'pointer' }}
+                  >
+                    <X size={18} />
+                  </button>
+                </div>
+                <div style={{ padding: 20 }}>
+                  <p style={{ margin: 0, fontSize: 14, color: '#334155', lineHeight: 1.5 }}>
+                    ¿Está seguro de que desea eliminar la sede <b>{branchToDelete.name}</b> ({branchToDelete.code})? Esta acción no se puede deshacer.
+                  </p>
+                  <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 20 }}>
+                    <button
+                      type="button"
+                      onClick={() => setBranchToDelete(null)}
+                      style={{ height: 36, padding: '0 14px', borderRadius: 6, border: '1px solid #cbd5e1', background: '#fff', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}
+                    >
+                      Cancelar
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleDeleteBranchConfirm}
+                      style={{ height: 36, padding: '0 16px', borderRadius: 6, background: '#dc2626', color: '#fff', border: 'none', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}
+                    >
+                      Sí, Eliminar
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Modal Gestionar Cajas */}
+          {managingBranchCajas && (
+            <div
+              style={{
+                position: 'fixed',
+                top: 0,
+                left: 0,
+                right: 0,
+                bottom: 0,
+                background: 'rgba(15,23,42,0.5)',
+                backdropFilter: 'blur(4px)',
+                display: 'grid',
+                placeItems: 'center',
+                zIndex: 1100,
+                padding: 16
+              }}
+            >
+              <div
+                className="card"
+                style={{
+                  width: '100%',
+                  maxWidth: 420,
+                  padding: 0,
+                  background: '#fff',
+                  borderRadius: 12,
+                  overflow: 'hidden',
+                  boxShadow: '0 25px 50px -12px rgba(0,0,0,0.25)'
+                }}
+              >
+                <div style={{ padding: '16px 20px', background: '#f8fafc', borderBottom: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <Monitor size={18} style={{ color: '#0284c7' }} />
+                    <h3 style={{ margin: 0, fontSize: 15, fontWeight: 800, color: '#0f172a' }}>
+                      Gestionar Cajas / Terminales POS
+                    </h3>
+                  </div>
+                  <button
+                    onClick={() => setManagingBranchCajas(null)}
+                    style={{ background: 'transparent', border: 'none', color: '#64748b', cursor: 'pointer' }}
+                  >
+                    <X size={18} />
+                  </button>
+                </div>
+                <div style={{ padding: 20 }}>
+                  <p style={{ margin: '0 0 16px 0', fontSize: 13, color: '#64748b' }}>
+                    Defina la cantidad de cajas de cobro o terminales autorizados para <b>{managingBranchCajas.name}</b>:
+                  </p>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 12, justifyContent: 'center', margin: '16px 0' }}>
+                    <button
+                      type="button"
+                      onClick={() => setNewCajasCount(Math.max(0, newCajasCount - 1))}
+                      style={{ width: 36, height: 36, borderRadius: 8, border: '1px solid #cbd5e1', background: '#f8fafc', fontSize: 18, fontWeight: 700, cursor: 'pointer' }}
+                    >
+                      -
+                    </button>
+                    <input
+                      type="number"
+                      className="input"
+                      style={{ width: 100, textAlign: 'center', fontSize: 18, fontWeight: 800 }}
+                      value={newCajasCount}
+                      onChange={(e) => setNewCajasCount(Math.max(0, parseInt(e.target.value) || 0))}
+                      min={0}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setNewCajasCount(newCajasCount + 1)}
+                      style={{ width: 36, height: 36, borderRadius: 8, border: '1px solid #cbd5e1', background: '#f8fafc', fontSize: 18, fontWeight: 700, cursor: 'pointer' }}
+                    >
+                      +
+                    </button>
+                  </div>
+                  <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 20, paddingTop: 14, borderTop: '1px solid #e2e8f0' }}>
+                    <button
+                      type="button"
+                      onClick={() => setManagingBranchCajas(null)}
+                      style={{ height: 36, padding: '0 14px', borderRadius: 6, border: '1px solid #cbd5e1', background: '#fff', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}
+                    >
+                      Cancelar
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleUpdateCajas}
+                      style={{ height: 36, padding: '0 16px', borderRadius: 6, background: '#0066f5', color: '#fff', border: 'none', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}
+                    >
+                      Guardar Terminales
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
