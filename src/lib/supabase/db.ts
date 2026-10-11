@@ -291,71 +291,10 @@ export async function deleteCustomerFromSupabase(id: string): Promise<boolean> {
 // SUPPLIERS
 // ---------------------------------------------------------------------------
 
-export const DEFAULT_INITIAL_SUPPLIERS: DbSupplier[] = [
-  {
-    id: 'b1c2d3e4-1111-4000-8000-000000000001',
-    organization_id: '00000000-0000-0000-0000-000000000001',
-    code: 'PRV-001',
-    name: 'Distribuidora Polar C.A.',
-    doc_type: 'RIF (J / G / V)',
-    doc_number: 'J-00041312-3',
-    contact_person: 'Carlos Mendoza',
-    phone: '+58 212-2023344',
-    email: 'ventas@polar.com.ve',
-    address: 'Av. Principal Los Cortijos, Caracas',
-    category: 'Alimentos y Bebidas',
-    balance_usd: 0,
-    status: 'Activo',
-    created_at: new Date().toISOString()
-  },
-  {
-    id: 'b1c2d3e4-2222-4000-8000-000000000002',
-    organization_id: '00000000-0000-0000-0000-000000000001',
-    code: 'PRV-002',
-    name: 'Importadora Caracas S.A.',
-    doc_type: 'RIF (J / G / V)',
-    doc_number: 'J-31456789-0',
-    contact_person: 'Mariana Silva',
-    phone: '+58 414-9988776',
-    email: 'contacto@importadoraccs.com',
-    address: 'Boleíta Norte, Calle 3, Galpón 4',
-    category: 'General',
-    balance_usd: 0,
-    status: 'Activo',
-    created_at: new Date().toISOString()
-  }
-];
-
-function syncSupplierToLocalStorage(supplier: DbSupplier) {
-  if (typeof window === 'undefined') return;
-  const list: DbSupplier[] = JSON.parse(localStorage.getItem('frenyer_local_suppliers') || 'null') || [...DEFAULT_INITIAL_SUPPLIERS];
-  const idx = list.findIndex(s => s.id === supplier.id || (s.doc_number && s.doc_number.toUpperCase() === supplier.doc_number.toUpperCase()));
-  if (idx >= 0) {
-    list[idx] = { ...list[idx], ...supplier };
-  } else {
-    list.unshift(supplier);
-  }
-  localStorage.setItem('frenyer_local_suppliers', JSON.stringify(list));
-}
-
-function updateSupplierInLocalStorage(id: string, updates: Partial<DbSupplier>) {
-  if (typeof window === 'undefined') return;
-  const list: DbSupplier[] = JSON.parse(localStorage.getItem('frenyer_local_suppliers') || 'null') || [...DEFAULT_INITIAL_SUPPLIERS];
-  const updated = list.map(s => s.id === id ? { ...s, ...updates } : s);
-  localStorage.setItem('frenyer_local_suppliers', JSON.stringify(updated));
-}
-
-function deleteSupplierFromLocalStorage(id: string) {
-  if (typeof window === 'undefined') return;
-  const list: DbSupplier[] = JSON.parse(localStorage.getItem('frenyer_local_suppliers') || 'null') || [...DEFAULT_INITIAL_SUPPLIERS];
-  const updated = list.filter(s => s.id !== id);
-  localStorage.setItem('frenyer_local_suppliers', JSON.stringify(updated));
-}
-
 export async function fetchSuppliersFromSupabase(organizationId?: string): Promise<DbSupplier[]> {
   const rawLocal: DbSupplier[] = typeof window !== 'undefined'
-    ? JSON.parse(localStorage.getItem('frenyer_local_suppliers') || 'null') || DEFAULT_INITIAL_SUPPLIERS
-    : DEFAULT_INITIAL_SUPPLIERS;
+    ? JSON.parse(localStorage.getItem('frenyer_local_suppliers') || '[]')
+    : [];
 
   // 1. Try server proxy
   try {
@@ -446,7 +385,6 @@ export async function createSupplierInSupabase(
           ...json.data,
           address: supplier.address || json.data.address || ''
         };
-        syncSupplierToLocalStorage(resultSupplier);
         return resultSupplier;
       }
     }
@@ -492,7 +430,6 @@ export async function createSupplierInSupabase(
             ...data,
             address: supplier.address || data.address || ''
           };
-          syncSupplierToLocalStorage(synced);
           return synced;
         }
 
@@ -514,13 +451,10 @@ export async function createSupplierInSupabase(
   }
 
   // 3. Fallback resiliente con persistencia local garantizada
-  syncSupplierToLocalStorage(supplierRecord);
   return supplierRecord;
 }
 
 export async function updateSupplierInSupabase(id: string, updates: Partial<DbSupplier>): Promise<boolean> {
-  updateSupplierInLocalStorage(id, updates);
-
   // 1. Try server proxy
   try {
     const res = await authenticatedFetch(`/api/suppliers/${encodeURIComponent(id)}`, {
@@ -571,8 +505,6 @@ export async function updateSupplierInSupabase(id: string, updates: Partial<DbSu
 }
 
 export async function deleteSupplierFromSupabase(id: string): Promise<boolean> {
-  deleteSupplierFromLocalStorage(id);
-
   try {
     const res = await authenticatedFetch(`/api/suppliers/${encodeURIComponent(id)}`, {
       method: 'DELETE'

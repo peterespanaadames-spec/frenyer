@@ -1,6 +1,6 @@
 {
-  "name": "Frenyer",
-  "description": "Sistema de gestión empresarial bimonetario para ventas, inventario, finanzas, cuentas por cobrar y pagar, proveedores y asistente Alma.",
+  "name": "F1111",
+  "description": "Sistema de gestión empresarial para ventas, inventario, finanzas, cuentas por cobrar y pagar, proveedores y asistente Alma.",
   "permissions": [],
   "capabilities": [
     "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"

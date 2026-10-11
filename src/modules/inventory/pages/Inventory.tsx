@@ -226,7 +226,7 @@ export function Inventory() {
   const [newCategoryInput, setNewCategoryInput] = useState('');
 
   // Dynamic Brands State
-  const [brands, setBrands] = useState<string[]>(['Genérica', 'Monroe', 'Duncan', 'Castrol', 'Sony', 'Samsung', 'Nike', 'Adidas']);
+  const [brands, setBrands] = useState<string[]>(['Genérica']);
   const [newBrand, setNewBrand] = useState('Genérica');
   const [isAddBrandOpen, setIsAddBrandOpen] = useState(false);
   const [newBrandInput, setNewBrandInput] = useState('');

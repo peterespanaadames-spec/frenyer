@@ -22,6 +22,7 @@ import { AccountsReportPage } from '../../modules/finance/pages/AccountsReport';
 import { ExpensesPage } from '../../modules/finance/pages/Expenses';
 import { SuppliersPage } from '../../modules/customers/pages/Suppliers';
 import { MarketingPage } from '../../modules/customers/pages/Marketing';
+import { CompanyHealthPage } from '../../modules/finance/pages/CompanyHealth';
 import { ProfitLossPage } from '../../modules/finance/pages/ProfitLoss';
 import { ConfigPage } from '../../modules/alma/pages/Config';
 
@@ -69,7 +70,7 @@ export const router = createBrowserRouter([
       { path: 'marketing', element: <MarketingPage /> },
 
       // Finanzas
-      { path: 'finanzas/salud', element: <Finance /> },
+      { path: 'finanzas/salud', element: <CompanyHealthPage /> },
       { path: 'finanzas/ganancias-perdidas', element: <ProfitLossPage /> },
 
       // Configuración

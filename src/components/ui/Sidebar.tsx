@@ -136,10 +136,10 @@ export function Sidebar({ isMobileOpen = false, onNavigate }: SidebarProps) {
   }, [location.pathname]);
 
   const toggleExpand = (label: string) => {
-    setExpanded((prev) => ({
-      ...prev,
-      [label]: !prev[label],
-    }));
+    setExpanded((prev) => {
+      const isAlreadyOpen = !!prev[label];
+      return isAlreadyOpen ? {} : { [label]: true };
+    });
   };
 
   return (

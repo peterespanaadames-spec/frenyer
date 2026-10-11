@@ -72,13 +72,13 @@ export function ShopPage() {
       phone: profile.phone,
       email: profile.email,
       address: profile.address,
-      slogan: 'Contruyendo Juntos...',
+      slogan: profile.slogan || 'Todo a tu mano',
       logo: profile.logo,
       favicon: profile.favicon,
       bcvRate: getActiveExchangeRate(),
-      bcvRateDate: 'Hoy',
+      bcvRateDate: 'Actual',
       branches: [
-        { id: 'suc-01', name: 'Sede Principal - Despacho Central', address: profile.address },
+        { id: 'suc-01', name: 'Sede Principal - Despacho Central', address: profile.address }
       ]
     };
   });
@@ -208,7 +208,7 @@ export function ShopPage() {
           sku: p.sku,
           barcode: p.barcode,
           category: p.category || 'General',
-          brand: (p as any).brand || 'Frenyer',
+          brand: (p as any).brand || businessConfig.businessName,
           description: (p as any).description || 'Producto disponible para despacho y facturación inmediata.',
           priceUsd: Number(p.price_usd) || 0,
           costUsd: Number(p.cost_usd) || 0,

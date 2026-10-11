@@ -1805,7 +1805,7 @@ export function MovementsPage() {
                 </thead>
 
                 <tbody>
-                  {paginatedMovements.map(mov => {
+                  {paginatedMovements.map((mov, index) => {
                     const { date, time } = formatDateTime(mov.created_at);
                     const qty = Number(mov.quantity) || 0;
                     const isPositive = qty > 0;
@@ -1821,7 +1821,7 @@ export function MovementsPage() {
 
                     return (
                       <tr
-                        key={mov.id}
+                        key={`${mov.id}-${index}`}
                         style={{ cursor: 'pointer', transition: 'background 0.15s ease' }}
                         onClick={() => setSelectedMovementDetail(mov)}
                       >

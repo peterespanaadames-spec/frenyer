@@ -3,7 +3,16 @@ Memoria breve de estado y decisiones. No guardar secretos ni datos personales.
 
 ## Correcciones Recientes
 - [x] Ajuste de stock en Inventario: Se mejoró la persistencia y la capacidad de respuesta de la interfaz al actualizar el stock de productos, forzando la actualización local inmediata.
-- [x] Shoppage: Se reemplazó el valor estático por dinámico y se verificaron los cambios manuales del usuario (slogan, sucursales).
+- [x] Menu: Se ajustó el comportamiento de los submenús para que se cierren automáticamente al abrir un nuevo ítem.
+- [x] Salud de Empresa (KPIs): Recreación de la sección de KPIs utilizando la jerarquía de clases `grid-4`, `kpi-label`, `kpi-value`, `muted small` y lógica de carga siguiendo estrictamente el diseño de referencia.
+- [x] Refactorización de `CompanyHealth.tsx`: Aplicación de estructura y estilos coherentes con el sistema de diseño y reordenamiento de los elementos (filtros y diagnóstico por encima de los KPIs).
+- [x] Implementación de Índice de Salud Empresarial dinámico: Cálculo basado en rentabilidad, liquidez, etc., visualización con iconos de corazón (Saludable: verde, Atención: ámbar, Crítica: rojo) y manejo de estados parciales.
+- [x] **Integración de Datos Reales en CompanyHealth**: Sustitución de datos ficticios por consultas directas a Supabase (tablas `sales`, `expenses`, `bank_accounts`) para el cálculo dinámico de ingresos, gastos y utilidad, cumpliendo con las normas contables requeridas.
+- [x] Corrección de Sintaxis: Restauración de `grid-cols-4` por `grid-4` (que sí existe en `globals.css`) tras intento manual del usuario.
+- [x] `src/lib/businessProfile.ts`: Cambios manuales del usuario guardados y verificados (actualización de nombre de empresa a 'CompuRepuestos, C.A.' y dirección a 'Altamira de Caceres').
+- [x] Shoppage: Se actualizó el eslogan por defecto a "Todo a tu mano".
+- [x] Refactorización y Limpieza de Código: Se eliminaron datos mock y valores hardcodeados en `db.ts` (proveedores iniciales) e `Inventory.tsx` (marcas de ejemplo). Se consolidó la lógica de persistencia y se arreglaron dependencias en el perfil de negocio (`ShopPage`).
+- [x] MovementsPage: Se corrigió el error de "unique key prop" en la renderización de la lista de movimientos de inventario.
 
 ## Estado
 - ERP React 19/Vite + Express + Supabase. `.env` es local e ignorado.

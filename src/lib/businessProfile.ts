@@ -1,5 +1,6 @@
 export interface BusinessProfile {
   businessName: string;
+  slogan: string;
   rif: string;
   email: string;
   address: string;
@@ -9,28 +10,26 @@ export interface BusinessProfile {
   favicon: string | null;
 }
 
-const DEFAULT_PROFILE: BusinessProfile = {
-  businessName: 'Frenyer, C.A.',
-  rif: 'J-123456789',
-  email: 'contacto@frenyer.com',
-  address: 'Av. Francisco de Miranda, Centro Financiero, Caracas',
-  phone: '+58 212 555 1212',
-  whatsapp: '+584120000000',
-  logo: null,
-  favicon: null
-};
-
 export function getBusinessProfile(): BusinessProfile {
   try {
     const raw = localStorage.getItem('frenyer_business_profile');
     if (raw) {
-      const parsed = JSON.parse(raw);
-      return { ...DEFAULT_PROFILE, ...parsed };
+      return JSON.parse(raw);
     }
   } catch {
     // ignore
   }
-  return DEFAULT_PROFILE;
+  return {
+    businessName: 'CompuRepuestos, C.A.',
+    slogan: 'Gestión empresarial inteligente',
+    rif: 'J-123456789',
+    email: 'contacto@frenyer.com',
+    address: 'Altamira de Caceres',
+    phone: '+58 212 555 1212',
+    whatsapp: '+584120000000',
+    logo: null,
+    favicon: null
+  };
 }
 
 export function saveBusinessProfile(profile: Partial<BusinessProfile>): BusinessProfile {
