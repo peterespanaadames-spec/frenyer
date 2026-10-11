@@ -234,12 +234,9 @@ export function InternalPurchasesPage() {
             <ShoppingCart size={24} />
           </div>
           <div>
-            <h1 style={{ margin: 0, fontSize: 24, fontWeight: 800, color: '#0f172a', letterSpacing: '-0.4px' }}>
-              COMPRAS E INGRESO DE INVENTARIO
+            <h1 style={{ margin: 0, fontSize: 24, fontWeight: 800, color: 'var(--brand-900)', letterSpacing: '-0.4px' }}>
+              COMPRAS DE DE PRODUCTOS
             </h1>
-            <p style={{ margin: '3px 0 0', fontSize: 13, color: '#64748b' }}>
-              Registra facturas de proveedores, abastece el inventario con incremento de stock automático y actualiza costos en USD.
-            </p>
           </div>
         </div>
         <div className="actions">
@@ -256,7 +253,7 @@ export function InternalPurchasesPage() {
             onClick={() => setIsModalOpen(true)}
             style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 700 }}
           >
-            <Plus size={16} /> + COMPRAS
+            <Plus size={16} /> Agregar Compras
           </Button>
         </div>
       </div>
@@ -287,8 +284,8 @@ export function InternalPurchasesPage() {
             value: `${purchases.length} Facturas`,
             subtitle: purchases.length > 0 ? '✓ Transacciones validadas' : 'Sin transacciones registradas',
             icon: FileText,
-            color: '#0284c7',
-            bg: '#e0f2fe'
+            color: 'var(--brand-600)',
+            bg: 'var(--brand-50)'
           },
           {
             title: 'UNIDADES INGRESADAS',
@@ -320,7 +317,7 @@ export function InternalPurchasesPage() {
               <div style={{
                 width: 38,
                 height: 38,
-                borderRadius: 12,
+                borderRadius: 14,
                 background: kpi.bg,
                 color: kpi.color,
                 display: 'grid',
@@ -400,7 +397,7 @@ export function InternalPurchasesPage() {
             <FileText size={17} style={{ color: 'var(--brand-600)' }} />
             HISTORIAL DE COMPRAS RECIENTES ({filteredPurchases.length})
           </h2>
-          <span style={{ fontSize: 12.5, color: '#0284c7', fontWeight: 600 }}>
+          <span style={{ fontSize: 12.5, color: 'var(--brand-600)', fontWeight: 600 }}>
             Tasa BCV del día: <b>{formatVES(activeRate)}/USD</b>
           </span>
         </div>
@@ -501,7 +498,7 @@ export function InternalPurchasesPage() {
                       <td style={{ textAlign: 'right', fontWeight: 700, color: '#0f172a' }}>
                         {formatUSD(Number(p.total_usd) || 0)}
                       </td>
-                      <td style={{ textAlign: 'right', fontWeight: 600, color: '#0284c7' }}>
+                      <td style={{ textAlign: 'right', fontWeight: 600, color: 'var(--brand-600)' }}>
                         {formatVES(Number(p.total_ves) || (Number(p.total_usd) * (Number(p.exchange_rate) || activeRate)))}
                       </td>
                       <td style={{ textAlign: 'center' }}>
@@ -515,9 +512,9 @@ export function InternalPurchasesPage() {
                             variant="ghost"
                             onClick={() => setSelectedPurchase(p)}
                             title="Ver desglose completo de la compra"
-                            style={{ padding: '6px 8px', borderRadius: 8 }}
+                            style={{ padding: '6px 8px', borderRadius: 10 }}
                           >
-                            <Eye size={15} style={{ color: '#0284c7' }} />
+                            <Eye size={15} style={{ color: 'var(--brand-600)' }} />
                           </Button>
                           <Button
                             variant="ghost"
@@ -562,7 +559,7 @@ export function InternalPurchasesPage() {
             overflow: 'hidden'
           }}>
             <div style={{
-              background: 'linear-gradient(135deg, #094783 0%, #0d5ea6 100%)',
+              background: 'linear-gradient(135deg, var(--brand-800) 0%, var(--brand-700) 100%)',
               padding: '16px 20px',
               display: 'flex',
               alignItems: 'center',
@@ -625,7 +622,7 @@ export function InternalPurchasesPage() {
                   <div style={{ fontWeight: 700, color: '#0f172a', fontSize: 14, marginTop: 2 }}>
                     {selectedPurchase.warehouse || 'Tienda Bella Vista'}
                   </div>
-                  <div style={{ fontSize: 11.5, color: '#0284c7' }}>
+                  <div style={{ fontSize: 11.5, color: 'var(--brand-600)' }}>
                     Tasa: {formatVES(Number(selectedPurchase.exchange_rate) || activeRate)}/USD
                   </div>
                 </div>
@@ -652,7 +649,7 @@ export function InternalPurchasesPage() {
                         <td style={{ textAlign: 'center', fontWeight: 700 }}>{it.quantity}</td>
                         <td style={{ textAlign: 'right' }}>${Number(it.unit_cost_usd).toFixed(2)}</td>
                         <td style={{ textAlign: 'right', fontWeight: 700 }}>${Number(it.total_usd).toFixed(2)}</td>
-                        <td style={{ textAlign: 'right', color: '#0284c7' }}>
+                        <td style={{ textAlign: 'right', color: 'var(--brand-600)' }}>
                           Bs. {Number(it.total_ves).toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                         </td>
                       </tr>
@@ -679,7 +676,7 @@ export function InternalPurchasesPage() {
                 </div>
                 <div style={{ textAlign: 'right' }}>
                   <span style={{ fontSize: 12, color: '#64748b' }}>Equivalente en Bolívares:</span>
-                  <div style={{ fontSize: 20, fontWeight: 800, color: '#0284c7' }}>
+                  <div style={{ fontSize: 20, fontWeight: 800, color: 'var(--brand-600)' }}>
                     {formatVES(Number(selectedPurchase.total_ves) || (Number(selectedPurchase.total_usd) * (Number(selectedPurchase.exchange_rate) || activeRate)))}
                   </div>
                 </div>

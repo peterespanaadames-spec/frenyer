@@ -215,18 +215,6 @@ export function DashboardLayout() {
         onNavigate={() => setIsMobileMenuOpen(false)}
       />
       <main className="main" style={{ position: 'relative' }}>
-        {!isAuthenticationRequired && (
-          <div role="status" style={{
-            padding: '9px 16px',
-            background: '#fffbeb',
-            borderBottom: '1px solid #fde68a',
-            color: '#92400e',
-            fontSize: 12,
-            textAlign: 'center'
-          }}>
-            Vista previa sin inicio de sesión. Las operaciones de Supabase siguen protegidas y pueden requerir una cuenta.
-          </div>
-        )}
         <header className="topbar">
           <button
             type="button"

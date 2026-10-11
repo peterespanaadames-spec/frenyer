@@ -645,25 +645,6 @@ export function Inventory() {
         </div>
 
         <div className="actions" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          {/* Rate indicator */}
-          <div
-            style={{
-              background: '#e9fcf4',
-              border: '1px solid #b2f1d5',
-              borderRadius: 999,
-              padding: '6px 14px',
-              fontSize: 12,
-              fontWeight: 600,
-              color: '#136041',
-              display: 'flex',
-              alignItems: 'center',
-              gap: 6
-            }}
-          >
-            <span style={{ color: '#237d5f' }}>$ Tasa Activa:</span>
-            <b>Bs. {activeExchangeRate.toFixed(2).replace('.', ',')}</b>
-          </div>
-
           <Button
             style={{
               display: 'flex',
@@ -1139,10 +1120,6 @@ export function Inventory() {
                   {selectedImportFile ? selectedImportFile.name : 'Sin archivos seleccionados'}
                 </span>
               </div>
-
-              <span style={{ fontSize: 11, color: '#94a3b8', fontStyle: 'italic', marginTop: 2 }}>
-                * Compatible con exportaciones de a2 Software (Listado de Artículos / Lista de Precios).
-              </span>
 
               <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8, cursor: 'pointer', fontSize: 12, fontWeight: 700, color: '#0f172a', userSelect: 'none' }}>
                 <input

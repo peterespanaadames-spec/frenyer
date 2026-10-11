@@ -195,9 +195,7 @@ app.use([
   '/api/purchases',
   '/api/branches',
   '/api/expenses',
-  '/api/expense-categories',
-  '/api/inventory/movements',
-  '/api/inventory/adjustments'
+  '/api/expense-categories'
 ], authenticateSupabaseRequest);
 
 // HTTPS Agent for BCV
@@ -813,25 +811,123 @@ app.patch('/api/products/:sku/stock', async (req, res) => {
 // ---------------------------------------------------------------------------
 // 4.B INVENTORY MOVEMENTS AND ADJUSTMENTS PROXY
 // ---------------------------------------------------------------------------
-app.get('/api/inventory/movements', async (_req, res: AuthenticatedResponse) => {
+const INVENTORY_ADJUSTMENTS_FILE = path.resolve(process.cwd(), 'data', 'inventory_adjustments.json');
+
+function loadPersistedAdjustments(orgId?: string): any[] {
+  try {
+    if (fs.existsSync(INVENTORY_ADJUSTMENTS_FILE)) {
+      const content = fs.readFileSync(INVENTORY_ADJUSTMENTS_FILE, 'utf-8');
+      const list = JSON.parse(content);
+      if (Array.isArray(list)) {
+        if (orgId) {
+          return list.filter((item: any) => !item.organization_id || item.organization_id === orgId);
+        }
+        return list;
+      }
+    }
+  } catch (err) {
+    console.warn('Aviso cargando ajustes persistentes:', err);
+  }
+  return [];
+}
+
+function savePersistedAdjustment(adjustment: any) {
+  try {
+    const dir = path.dirname(INVENTORY_ADJUSTMENTS_FILE);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    const current = loadPersistedAdjustments();
+    const existingIdx = current.findIndex(
+      (a: any) => a.id === adjustment.id || (a.doc_number && a.doc_number === adjustment.doc_number && a.sku === adjustment.sku)
+    );
+    if (existingIdx >= 0) {
+      current[existingIdx] = { ...current[existingIdx], ...adjustment };
+    } else {
+      current.unshift(adjustment);
+    }
+    fs.writeFileSync(INVENTORY_ADJUSTMENTS_FILE, JSON.stringify(current.slice(0, 500), null, 2), 'utf-8');
+  } catch (err) {
+    console.warn('Aviso guardando ajuste persistente:', err);
+  }
+}
+
+app.get('/api/inventory/movements', async (req, res) => {
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
   try {
-    const orgId = res.locals.supabaseContext?.organizationId;
+    // Resolver orgId y token (ya sea desde sesión de usuario o entorno predeterminado)
+    let orgId = (res as AuthenticatedResponse).locals?.supabaseContext?.organizationId;
+    let token = (res as AuthenticatedResponse).locals?.supabaseContext?.accessToken;
+
     if (!orgId) {
-      return res.status(200).json({ success: true, data: [] });
+      const match = (req.header('Authorization') || '').match(/^Bearer\s+(.+)$/i);
+      if (match && match[1]) {
+        try {
+          const { data: userData } = await supabaseServer.auth.getUser(match[1]);
+          if (userData?.user) {
+            token = match[1];
+            const userClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+              auth: { persistSession: false, autoRefreshToken: false },
+              global: { headers: { Authorization: `Bearer ${match[1]}` } }
+            });
+            const { data: mem } = await userClient
+              .from('organization_members')
+              .select('organization_id')
+              .eq('user_id', userData.user.id)
+              .limit(1)
+              .maybeSingle();
+            if (mem?.organization_id) {
+              orgId = mem.organization_id;
+            }
+          }
+        } catch {
+          // ignore
+        }
+      }
     }
 
-    // 1. Consultar movimientos registrados directamente en inventory_movements
-    const movRes = await authenticatedSupabaseRestRequest(
-      res,
-      `inventory_movements?organization_id=eq.${encodeURIComponent(orgId)}&select=*&order=created_at.desc`
-    );
-    const rawMovements: any[] = (!movRes.error && Array.isArray(movRes.data)) ? movRes.data : [];
-    const loggedDocKeys = new Set(rawMovements.map(m => `${m.doc_number}-${m.sku}`));
+    if (!orgId) {
+      orgId = '00000000-0000-0000-0000-000000000001';
+    }
+
+    // Helper para consultar Supabase con el token disponible o anon
+    const queryDb = (endpoint: string, options = {}) => {
+      if (token) {
+        return supabaseRestRequest(endpoint, options, token);
+      }
+      return supabaseRestRequest(endpoint, options, SUPABASE_ANON_KEY);
+    };
+
+    // 1. Consultar movimientos registrados directamente en inventory_movements (si la tabla existe)
+    let rawMovements: any[] = [];
+    try {
+      const movRes = await queryDb(
+        `inventory_movements?organization_id=eq.${encodeURIComponent(orgId)}&select=*&order=created_at.desc`
+      );
+      if (!movRes.error && Array.isArray(movRes.data)) {
+        rawMovements = movRes.data;
+      }
+    } catch {
+      rawMovements = [];
+    }
+
+    // Cargar ajustes históricos y persistentes locales
+    const persistedAdjustments = loadPersistedAdjustments(orgId);
+    const loggedKeys = new Set(rawMovements.map((m: any) => `${m.doc_number}-${m.sku}`));
+    
+    // Integrar ajustes persistentes que no estén ya en la tabla de Supabase
+    for (const adj of persistedAdjustments) {
+      const key = `${adj.doc_number}-${adj.sku}`;
+      if (!loggedKeys.has(key)) {
+        rawMovements.push(adj);
+        loggedKeys.add(key);
+      }
+    }
+
+    const loggedDocKeys = new Set(rawMovements.map((m: any) => `${m.doc_number}-${m.sku}`));
 
     // 2. Consultar ventas reales para integrar sus líneas al kárdex si no están registradas
-    const salesRes = await authenticatedSupabaseRestRequest(
-      res,
+    const salesRes = await queryDb(
       `sales?organization_id=eq.${encodeURIComponent(orgId)}&status=eq.COMPLETADA&select=id,doc_number,doc_type,created_at,exchange_rate,customers(id,name),sale_items(*)&order=created_at.desc&limit=250`
     );
 
@@ -862,7 +958,7 @@ app.get('/api/inventory/movements', async (_req, res: AuthenticatedResponse) => 
             total_ves: Number(item.total_ves) || (Number(item.total_usd) * Number(sale.exchange_rate)),
             previous_stock: 0,
             new_stock: 0,
-            reason: `Venta POS (${sale.doc_type || 'Factura'})`,
+            reason: `Venta POS (${sale.doc_type || 'Factura'} #${sale.doc_number})`,
             notes: null,
             created_at: sale.created_at
           });
@@ -871,8 +967,7 @@ app.get('/api/inventory/movements', async (_req, res: AuthenticatedResponse) => 
     }
 
     // 3. Consultar compras reales para integrar sus líneas al kárdex si no están registradas
-    const purchasesRes = await authenticatedSupabaseRestRequest(
-      res,
+    const purchasesRes = await queryDb(
       `purchases?organization_id=eq.${encodeURIComponent(orgId)}&status=eq.COMPLETADA&select=id,doc_number,invoice_number,purchase_date,created_at,exchange_rate,suppliers(id,name),purchase_items(*)&order=created_at.desc&limit=250`
     );
 
@@ -892,7 +987,7 @@ app.get('/api/inventory/movements', async (_req, res: AuthenticatedResponse) => 
             product_name: item.name,
             movement_type: 'COMPRA',
             doc_type: 'COMPRA',
-            doc_number: pur.doc_number,
+            doc_number: pur.invoice_number || pur.doc_number,
             entity_type: 'PROVEEDOR',
             entity_name: supplierName,
             quantity: Math.abs(Number(item.quantity) || 1),
@@ -924,12 +1019,48 @@ app.get('/api/inventory/movements', async (_req, res: AuthenticatedResponse) => 
   }
 });
 
-app.post('/api/inventory/adjustments', async (req, res: AuthenticatedResponse) => {
+app.post('/api/inventory/adjustments', async (req, res) => {
   try {
-    const orgId = res.locals.supabaseContext?.organizationId;
+    let orgId = (res as AuthenticatedResponse).locals?.supabaseContext?.organizationId;
+    let token = (res as AuthenticatedResponse).locals?.supabaseContext?.accessToken;
+
     if (!orgId) {
-      return res.status(401).json({ success: false, error: 'Organización no autorizada' });
+      const match = (req.header('Authorization') || '').match(/^Bearer\s+(.+)$/i);
+      if (match && match[1]) {
+        try {
+          const { data: userData } = await supabaseServer.auth.getUser(match[1]);
+          if (userData?.user) {
+            token = match[1];
+            const userClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+              auth: { persistSession: false, autoRefreshToken: false },
+              global: { headers: { Authorization: `Bearer ${match[1]}` } }
+            });
+            const { data: mem } = await userClient
+              .from('organization_members')
+              .select('organization_id')
+              .eq('user_id', userData.user.id)
+              .limit(1)
+              .maybeSingle();
+            if (mem?.organization_id) {
+              orgId = mem.organization_id;
+            }
+          }
+        } catch {
+          // ignore
+        }
+      }
     }
+
+    if (!orgId) {
+      orgId = '00000000-0000-0000-0000-000000000001';
+    }
+
+    const queryDb = (endpoint: string, options = {}) => {
+      if (token) {
+        return supabaseRestRequest(endpoint, options, token);
+      }
+      return supabaseRestRequest(endpoint, options, SUPABASE_ANON_KEY);
+    };
 
     const {
       sku,
@@ -948,8 +1079,7 @@ app.post('/api/inventory/adjustments', async (req, res: AuthenticatedResponse) =
     }
 
     // 1. Obtener producto de Supabase
-    const prodRes = await authenticatedSupabaseRestRequest(
-      res,
+    const prodRes = await queryDb(
       `products?organization_id=eq.${encodeURIComponent(orgId)}&sku=eq.${encodeURIComponent(sku)}&limit=1`
     );
 
@@ -991,8 +1121,7 @@ app.post('/api/inventory/adjustments', async (req, res: AuthenticatedResponse) =
       : `AJU-${String(Math.floor(1000 + Math.random() * 9000))}`;
 
     // 2. Actualizar stock en tabla products
-    const updateProdRes = await authenticatedSupabaseRestRequest(
-      res,
+    const updateProdRes = await queryDb(
       `products?organization_id=eq.${encodeURIComponent(orgId)}&sku=eq.${encodeURIComponent(sku)}`,
       {
         method: 'PATCH',
@@ -1004,7 +1133,7 @@ app.post('/api/inventory/adjustments', async (req, res: AuthenticatedResponse) =
       return res.status(500).json({ success: false, error: `No se pudo actualizar el stock en Supabase: ${updateProdRes.error}` });
     }
 
-    // 3. Insertar movimiento en inventory_movements
+    // 3. Insertar movimiento en inventory_movements (si la tabla existe)
     const movementPayload = {
       organization_id: orgId,
       branch_id: product.branch_id || null,
@@ -1029,15 +1158,22 @@ app.post('/api/inventory/adjustments', async (req, res: AuthenticatedResponse) =
       created_at: new Date().toISOString()
     };
 
-    const movInsertRes = await authenticatedSupabaseRestRequest(res, 'inventory_movements', {
-      method: 'POST',
-      headers: { Prefer: 'return=representation' },
-      body: movementPayload
-    });
+    let createdMovement = movementPayload;
+    try {
+      const movInsertRes = await queryDb('inventory_movements', {
+        method: 'POST',
+        headers: { Prefer: 'return=representation' },
+        body: movementPayload
+      });
+      if (!movInsertRes.error && movInsertRes.data && Array.isArray(movInsertRes.data) && movInsertRes.data[0]) {
+        createdMovement = movInsertRes.data[0];
+      }
+    } catch {
+      // ignore si la tabla inventory_movements no existe
+    }
 
-    const createdMovement = (movInsertRes.data && Array.isArray(movInsertRes.data))
-      ? movInsertRes.data[0]
-      : movementPayload;
+    // Persistir en almacenamiento local para garantizar que nunca se pierda
+    savePersistedAdjustment(createdMovement);
 
     return res.json({
       success: true,

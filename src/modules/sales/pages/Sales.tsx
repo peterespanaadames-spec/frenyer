@@ -973,11 +973,11 @@ export function Sales() {
                 }}
                 onClick={() => setIsParkedModalOpen(true)}
               >
-                <Clock size={14} style={{ color: '#6366f1' }} />
+                <Clock size={14} style={{ color: 'var(--brand-500)' }} />
                 FACTURAS EN ESPERA
                 <span
                   style={{
-                    background: '#6366f1',
+                    background: 'var(--brand-500)',
                     color: 'white',
                     borderRadius: 999,
                     fontSize: 10,
@@ -1070,7 +1070,7 @@ export function Sales() {
                     transition: 'all 0.15s ease'
                   }}
                 >
-                  <span style={{ background: '#e0e7ff', color: '#4338ca', fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 6 }}>
+                  <span style={{ background: 'var(--brand-50)', color: 'var(--brand-700)', fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 6 }}>
                     LIBRE
                   </span>
                   <Tag size={24} style={{ color: 'var(--brand-500)' }} />
@@ -1297,7 +1297,7 @@ export function Sales() {
 
       {/* VIEW B: 3-STEP CHECKOUT (Paso 1, Paso 2, Paso 3) */}
       {checkoutStep !== null && (
-        <div style={{ maxWidth: 860, margin: '0 auto' }}>
+        <div style={{ maxWidth: 960, margin: '0 auto' }}>
           
           {/* Checkout Header Navigation */}
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
@@ -1623,7 +1623,7 @@ export function Sales() {
               </div>
 
               {/* Payments Configuration Right Box */}
-              <div className="card" style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 16 }}>
+              <div className="card" style={{ width: '600px', maxWidth: '100%', padding: 20, display: 'flex', flexDirection: 'column', gap: 16 }}>
                 
                 {/* Contado vs Crédito Buttons */}
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
@@ -1647,9 +1647,9 @@ export function Sales() {
                     style={{
                       padding: 10,
                       borderRadius: 8,
-                      border: paymentType === 'CREDITO' ? '2px solid #6366f1' : '1px solid var(--border)',
+                      border: paymentType === 'CREDITO' ? '2px solid var(--brand-500)' : '1px solid var(--border)',
                       background: paymentType === 'CREDITO' ? '#eef2ff' : '#fff',
-                      color: paymentType === 'CREDITO' ? '#4338ca' : '#475569',
+                      color: paymentType === 'CREDITO' ? 'var(--brand-700)' : '#475569',
                       fontSize: 13,
                       fontWeight: 700,
                       cursor: 'pointer'

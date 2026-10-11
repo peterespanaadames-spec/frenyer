@@ -418,9 +418,9 @@ export function NewPurchaseModal({ isOpen, onClose, onSuccess }: NewPurchaseModa
         overflow: 'hidden',
         border: '1px solid rgba(226, 232, 240, 0.8)'
       }}>
-        {/* HEADER AZUL SUPERIOR (Imagen 1, 2, 3, 4) */}
+        {/* HEADER BRAND (Morado del Sistema) */}
         <div style={{
-          background: 'linear-gradient(135deg, #094783 0%, #0d5ea6 100%)',
+          background: 'linear-gradient(135deg, #6d28d9 0%, #7c3aed 55%, #8b5cf6 100%)',
           padding: '16px 24px',
           display: 'flex',
           alignItems: 'center',
@@ -432,17 +432,17 @@ export function NewPurchaseModal({ isOpen, onClose, onSuccess }: NewPurchaseModa
               width: 44,
               height: 44,
               borderRadius: 14,
-              background: '#06b6d4',
+              background: 'rgba(255, 255, 255, 0.2)',
               color: '#fff',
               display: 'grid',
               placeItems: 'center',
-              boxShadow: '0 4px 12px rgba(6, 182, 212, 0.35)'
+              boxShadow: '0 4px 12px rgba(0, 0, 0, 0.12)'
             }}>
               <ShoppingCart size={24} />
             </div>
             <div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                <h2 style={{ margin: 0, fontSize: 18, fontWeight: 800, letterSpacing: '-0.3px' }}>
+                <h2 style={{ margin: 0, fontSize: 18, fontWeight: 800, letterSpacing: '-0.3px', color: '#fff' }}>
                   REGISTRO DE COMPRA NUEVA
                 </h2>
                 <span style={{
@@ -450,15 +450,15 @@ export function NewPurchaseModal({ isOpen, onClose, onSuccess }: NewPurchaseModa
                   fontWeight: 800,
                   padding: '3px 9px',
                   borderRadius: 20,
-                  background: 'rgba(6, 182, 212, 0.25)',
-                  border: '1px solid rgba(6, 182, 212, 0.5)',
-                  color: '#67e8f9',
+                  background: 'rgba(255, 255, 255, 0.25)',
+                  border: '1px solid rgba(255, 255, 255, 0.4)',
+                  color: '#fff',
                   letterSpacing: '0.5px'
                 }}>
                   PASO {step} DE 4
                 </span>
               </div>
-              <p style={{ margin: '3px 0 0', fontSize: 12, color: 'rgba(255, 255, 255, 0.85)' }}>
+              <p style={{ margin: '3px 0 0', fontSize: 12, color: 'rgba(255, 255, 255, 0.9)' }}>
                 {step === 1 && '1. Datos del Proveedor y Factura de Compra'}
                 {step === 2 && '2. Catálogo de Productos y Cesta de Compra'}
                 {step === 3 && '3. Método de Pago (Cuentas Bancarias y Cuentas por Pagar)'}
@@ -477,7 +477,7 @@ export function NewPurchaseModal({ isOpen, onClose, onSuccess }: NewPurchaseModa
               cursor: 'pointer',
               display: 'grid',
               placeItems: 'center',
-              color: '#1e293b',
+              color: '#6d28d9',
               transition: 'all 0.15s ease'
             }}
           >
@@ -512,11 +512,11 @@ export function NewPurchaseModal({ isOpen, onClose, onSuccess }: NewPurchaseModa
                   padding: '7px 16px',
                   borderRadius: 30,
                   background: isCurrent ? '#fff' : isPast ? '#f1f5f9' : '#fff',
-                  border: isCurrent ? '1.5px solid #06b6d4' : '1px solid #e2e8f0',
-                  color: isCurrent ? '#0e7490' : isPast ? '#0f172a' : '#94a3b8',
+                  border: isCurrent ? '1.5px solid var(--brand-500)' : '1px solid #e2e8f0',
+                  color: isCurrent ? 'var(--brand-700)' : isPast ? '#0f172a' : '#94a3b8',
                   fontWeight: isCurrent || isPast ? 700 : 500,
                   fontSize: 12.5,
-                  boxShadow: isCurrent ? '0 2px 8px rgba(6, 182, 212, 0.15)' : 'none',
+                  boxShadow: isCurrent ? '0 2px 8px rgba(var(--brand-500-rgb), 0.15)' : 'none',
                   whiteSpace: 'nowrap'
                 }}
               >
@@ -528,7 +528,7 @@ export function NewPurchaseModal({ isOpen, onClose, onSuccess }: NewPurchaseModa
                   placeItems: 'center',
                   fontSize: 11,
                   fontWeight: 800,
-                  background: isCurrent ? '#06b6d4' : isPast ? '#0f172a' : '#e2e8f0',
+                  background: isCurrent ? 'var(--brand-500)' : isPast ? '#0f172a' : '#e2e8f0',
                   color: '#fff'
                 }}>
                   {isPast ? '✓' : s.num}
@@ -540,7 +540,7 @@ export function NewPurchaseModal({ isOpen, onClose, onSuccess }: NewPurchaseModa
         </div>
 
         {/* CONTENEDOR PRINCIPAL CON SCROLL */}
-        <div style={{ flex: 1, overflowY: 'auto', padding: '24px 28px' }}>
+        <div style={{ flex: 1, height: '600px', overflowY: 'auto', padding: '24px 28px' }}>
           {errorMessage && (
             <div style={{
               background: '#fee2e2',
@@ -566,7 +566,7 @@ export function NewPurchaseModal({ isOpen, onClose, onSuccess }: NewPurchaseModa
           {step === 1 && (
             <Card style={{ padding: 24, border: '1px solid #e2e8f0', borderRadius: 16, background: '#fff' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 20 }}>
-                <div style={{ width: 32, height: 32, borderRadius: 10, background: '#e0f2fe', color: '#0284c7', display: 'grid', placeItems: 'center' }}>
+                <div style={{ width: 32, height: 32, borderRadius: 10, background: 'var(--brand-50)', color: 'var(--brand-600)', display: 'grid', placeItems: 'center' }}>
                   <Truck size={18} />
                 </div>
                 <h3 style={{ margin: 0, fontSize: 15, fontWeight: 800, color: '#0f172a' }}>
@@ -587,7 +587,7 @@ export function NewPurchaseModal({ isOpen, onClose, onSuccess }: NewPurchaseModa
                       style={{
                         background: 'transparent',
                         border: 'none',
-                        color: '#0284c7',
+                        color: 'var(--brand-600)',
                         fontSize: 12,
                         fontWeight: 700,
                         cursor: 'pointer',
@@ -711,7 +711,7 @@ export function NewPurchaseModal({ isOpen, onClose, onSuccess }: NewPurchaseModa
                   type="checkbox"
                   checked={updateCosts}
                   onChange={(e) => setUpdateCosts(e.target.checked)}
-                  style={{ width: 17, height: 17, accentColor: '#0284c7' }}
+                  style={{ width: 17, height: 17, accentColor: 'var(--brand-600)' }}
                 />
                 <span>Actualizar automáticamente el costo unitario de los productos en catálogo según los valores de esta compra.</span>
               </label>
@@ -727,7 +727,7 @@ export function NewPurchaseModal({ isOpen, onClose, onSuccess }: NewPurchaseModa
               <Card style={{ padding: 18, borderRadius: 16, background: '#fff', border: '1px solid #e2e8f0' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 14, fontWeight: 800, color: '#0f172a' }}>
-                    <Package size={18} style={{ color: '#0284c7' }} />
+                    <Package size={18} style={{ color: 'var(--brand-600)' }} />
                     <span>CATÁLOGO DE PRODUCTOS</span>
                   </div>
                   <button
@@ -824,7 +824,7 @@ export function NewPurchaseModal({ isOpen, onClose, onSuccess }: NewPurchaseModa
                         <span style={{ fontSize: 12.5, fontWeight: 800, color: '#0f172a' }}>
                           Costo: ${Number(p.cost_usd || 0).toFixed(2)}
                         </span>
-                        <span style={{ fontSize: 12, fontWeight: 700, color: '#0284c7' }}>
+                        <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--brand-600)' }}>
                           + Agregar
                         </span>
                       </div>
@@ -836,7 +836,7 @@ export function NewPurchaseModal({ isOpen, onClose, onSuccess }: NewPurchaseModa
               {/* COLUMNA DERECHA: CESTA DE COMPRA */}
               <Card style={{ padding: 18, borderRadius: 16, background: '#fff', border: '1px solid #e2e8f0', display: 'flex', flexDirection: 'column' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 14, fontWeight: 800, color: '#0f172a', marginBottom: 14 }}>
-                  <ShoppingCart size={18} style={{ color: '#0284c7' }} />
+                  <ShoppingCart size={18} style={{ color: 'var(--brand-600)' }} />
                   <span>CESTA DE COMPRA ({basket.length})</span>
                 </div>
 
@@ -911,7 +911,7 @@ export function NewPurchaseModal({ isOpen, onClose, onSuccess }: NewPurchaseModa
                       <span style={{ fontSize: 11, fontWeight: 700, color: '#166534', textTransform: 'uppercase' }}>
                         TOTAL CESTA ({totalItemsCount} UDS.)
                       </span>
-                      <div style={{ fontSize: 24, fontWeight: 900, color: '#0284c7' }}>
+                      <div style={{ fontSize: 24, fontWeight: 900, color: 'var(--brand-600)' }}>
                         ${totalUSD.toFixed(2)} USD
                       </div>
                     </div>
@@ -934,7 +934,7 @@ export function NewPurchaseModal({ isOpen, onClose, onSuccess }: NewPurchaseModa
             <Card style={{ padding: 24, borderRadius: 16, background: '#fff', border: '1px solid #e2e8f0' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                  <div style={{ width: 32, height: 32, borderRadius: 10, background: '#e0f2fe', color: '#0284c7', display: 'grid', placeItems: 'center' }}>
+                  <div style={{ width: 32, height: 32, borderRadius: 10, background: 'var(--brand-50)', color: 'var(--brand-600)', display: 'grid', placeItems: 'center' }}>
                     <CreditCard size={18} />
                   </div>
                   <h3 style={{ margin: 0, fontSize: 15, fontWeight: 800, color: '#0f172a' }}>
@@ -942,7 +942,7 @@ export function NewPurchaseModal({ isOpen, onClose, onSuccess }: NewPurchaseModa
                   </h3>
                 </div>
                 <div style={{ fontSize: 14, fontWeight: 800, color: '#0f172a' }}>
-                  TOTAL A LIQUIDAR <span style={{ color: '#0284c7' }}>${totalUSD.toFixed(2)} USD</span>
+                  TOTAL A LIQUIDAR <span style={{ color: 'var(--brand-600)' }}>${totalUSD.toFixed(2)} USD</span>
                 </div>
               </div>
 
@@ -952,8 +952,8 @@ export function NewPurchaseModal({ isOpen, onClose, onSuccess }: NewPurchaseModa
                 <div
                   onClick={() => setPaymentType('CONTADO')}
                   style={{
-                    border: paymentType === 'CONTADO' ? '2px solid #0284c7' : '1px solid #e2e8f0',
-                    background: paymentType === 'CONTADO' ? '#f0f9ff' : '#fff',
+                    border: paymentType === 'CONTADO' ? '2px solid var(--brand-600)' : '1px solid #e2e8f0',
+                    background: paymentType === 'CONTADO' ? 'var(--brand-50)' : '#fff',
                     borderRadius: 14,
                     padding: 18,
                     cursor: 'pointer',
@@ -978,8 +978,8 @@ export function NewPurchaseModal({ isOpen, onClose, onSuccess }: NewPurchaseModa
                 <div
                   onClick={() => setPaymentType('CREDITO')}
                   style={{
-                    border: paymentType === 'CREDITO' ? '2px solid #0284c7' : '1px solid #e2e8f0',
-                    background: paymentType === 'CREDITO' ? '#f0f9ff' : '#fff',
+                    border: paymentType === 'CREDITO' ? '2px solid var(--brand-600)' : '1px solid #e2e8f0',
+                    background: paymentType === 'CREDITO' ? 'var(--brand-50)' : '#fff',
                     borderRadius: 14,
                     padding: 18,
                     cursor: 'pointer',
@@ -995,7 +995,7 @@ export function NewPurchaseModal({ isOpen, onClose, onSuccess }: NewPurchaseModa
                   <div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                       <b style={{ fontSize: 14, color: '#0f172a' }}>CRÉDITO / CUENTAS POR PAGAR (CXP)</b>
-                      <span style={{ fontSize: 10, fontWeight: 800, padding: '2px 6px', borderRadius: 6, background: '#e0f2fe', color: '#0284c7' }}>
+                      <span style={{ fontSize: 10, fontWeight: 800, padding: '2px 6px', borderRadius: 6, background: 'var(--brand-50)', color: 'var(--brand-600)' }}>
                         VINCULAR
                       </span>
                     </div>
@@ -1010,7 +1010,7 @@ export function NewPurchaseModal({ isOpen, onClose, onSuccess }: NewPurchaseModa
               {paymentType === 'CONTADO' && (
                 <Card style={{ padding: 18, background: '#f8fafc', borderRadius: 12, border: '1px solid #e2e8f0' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, fontWeight: 700, color: '#0f172a', marginBottom: 14 }}>
-                    <Building2 size={16} style={{ color: '#0284c7' }} />
+                    <Building2 size={16} style={{ color: 'var(--brand-600)' }} />
                     <span>SELECCIÓN DE CUENTA BANCARIA / ORIGEN DEL PAGO</span>
                   </div>
 
@@ -1094,7 +1094,7 @@ export function NewPurchaseModal({ isOpen, onClose, onSuccess }: NewPurchaseModa
                     </div>
                   </div>
 
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5, fontWeight: 600, color: '#0369a1', background: '#e0f2fe', padding: '10px 14px', borderRadius: 8 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5, fontWeight: 600, color: 'var(--brand-700)', background: 'var(--brand-50)', padding: '10px 14px', borderRadius: 8 }}>
                     <CheckCircle2 size={16} />
                     <span>Se registrará automáticamente el egreso por <b>${totalUSD.toFixed(2)} USD</b> en el módulo de Cuentas Bancarias y Caja.</span>
                   </div>
@@ -1122,8 +1122,8 @@ export function NewPurchaseModal({ isOpen, onClose, onSuccess }: NewPurchaseModa
                           style={{
                             padding: '6px 14px',
                             borderRadius: 8,
-                            border: creditDays === d ? '1.5px solid #0284c7' : '1px solid #cbd5e1',
-                            background: creditDays === d ? '#0284c7' : '#fff',
+                            border: creditDays === d ? '1.5px solid var(--brand-600)' : '1px solid #cbd5e1',
+                            background: creditDays === d ? 'var(--brand-600)' : '#fff',
                             color: creditDays === d ? '#fff' : '#0f172a',
                             fontWeight: 700,
                             fontSize: 12,
@@ -1166,7 +1166,7 @@ export function NewPurchaseModal({ isOpen, onClose, onSuccess }: NewPurchaseModa
           {step === 4 && (
             <div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
-                <div style={{ width: 32, height: 32, borderRadius: 10, background: '#e0f2fe', color: '#0284c7', display: 'grid', placeItems: 'center' }}>
+                <div style={{ width: 32, height: 32, borderRadius: 10, background: 'var(--brand-50)', color: 'var(--brand-600)', display: 'grid', placeItems: 'center' }}>
                   <FileText size={18} />
                 </div>
                 <h3 style={{ margin: 0, fontSize: 15, fontWeight: 800, color: '#0f172a' }}>
@@ -1179,7 +1179,7 @@ export function NewPurchaseModal({ isOpen, onClose, onSuccess }: NewPurchaseModa
                 {/* TARJETA PROVEEDOR Y COMPROBANTE */}
                 <Card style={{ padding: 18, borderRadius: 14, background: '#fff', border: '1px solid #e2e8f0' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, fontWeight: 800, color: '#64748b', textTransform: 'uppercase', marginBottom: 8 }}>
-                    <Truck size={14} style={{ color: '#0284c7' }} />
+                    <Truck size={14} style={{ color: 'var(--brand-600)' }} />
                     <span>PROVEEDOR Y COMPROBANTE</span>
                   </div>
                   <div style={{ fontSize: 16, fontWeight: 800, color: '#0f172a' }}>
@@ -1207,7 +1207,7 @@ export function NewPurchaseModal({ isOpen, onClose, onSuccess }: NewPurchaseModa
                 {/* TARJETA CONDICIONES DE PAGO */}
                 <Card style={{ padding: 18, borderRadius: 14, background: '#fff', border: '1px solid #e2e8f0' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, fontWeight: 800, color: '#64748b', textTransform: 'uppercase', marginBottom: 8 }}>
-                    <CreditCard size={14} style={{ color: '#0284c7' }} />
+                    <CreditCard size={14} style={{ color: 'var(--brand-600)' }} />
                     <span>CONDICIONES DE PAGO</span>
                   </div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
@@ -1281,7 +1281,7 @@ export function NewPurchaseModal({ isOpen, onClose, onSuccess }: NewPurchaseModa
                             <div style={{ fontWeight: 700, color: '#0f172a' }}>{it.name}</div>
                             <div style={{ fontSize: 11, color: '#64748b' }}>SKU: {it.sku}</div>
                           </td>
-                          <td style={{ textAlign: 'center', fontWeight: 800, color: '#0284c7' }}>
+                          <td style={{ textAlign: 'center', fontWeight: 800, color: 'var(--brand-600)' }}>
                             +{it.quantity}
                           </td>
                           <td style={{ textAlign: 'right' }}>
@@ -1296,8 +1296,8 @@ export function NewPurchaseModal({ isOpen, onClose, onSuccess }: NewPurchaseModa
                               fontWeight: 800,
                               padding: '3px 8px',
                               borderRadius: 6,
-                              background: '#e0f2fe',
-                              color: '#0369a1'
+                              background: 'var(--brand-50)',
+                              color: 'var(--brand-700)'
                             }}>
                               {it.currentStock} → {it.currentStock + it.quantity}
                             </span>
@@ -1309,16 +1309,16 @@ export function NewPurchaseModal({ isOpen, onClose, onSuccess }: NewPurchaseModa
                 </div>
               </Card>
 
-              {/* BANNER TOTAL FACTURA (Degradado azul) */}
+              {/* BANNER TOTAL FACTURA (Degradado morado) */}
               <div style={{
-                background: 'linear-gradient(135deg, #094783 0%, #0369a1 100%)',
+                background: 'linear-gradient(135deg, #6d28d9 0%, #7c3aed 100%)',
                 borderRadius: 16,
                 padding: '20px 24px',
                 color: '#fff',
                 display: 'flex',
                 justifyContent: 'space-between',
                 alignItems: 'center',
-                boxShadow: '0 8px 24px rgba(3, 105, 161, 0.25)'
+                boxShadow: '0 8px 24px rgba(109, 40, 217, 0.25)'
               }}>
                 <div>
                   <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: '0.6px', color: 'rgba(255, 255, 255, 0.8)' }}>
@@ -1332,7 +1332,7 @@ export function NewPurchaseModal({ isOpen, onClose, onSuccess }: NewPurchaseModa
                   <span style={{ fontSize: 12, color: 'rgba(255, 255, 255, 0.85)' }}>
                     Tasa Oficial BCV: Bs. {activeRate.toFixed(2)} / USD
                   </span>
-                  <div style={{ fontSize: 22, fontWeight: 800, color: '#67e8f9', marginTop: 4 }}>
+                  <div style={{ fontSize: 22, fontWeight: 800, color: '#e9d5ff', marginTop: 4 }}>
                     Bs. {totalVES.toLocaleString('es-VE')}
                   </div>
                 </div>
@@ -1393,7 +1393,7 @@ export function NewPurchaseModal({ isOpen, onClose, onSuccess }: NewPurchaseModa
               type="button"
               onClick={handleNextStep}
               style={{
-                background: '#0f172a',
+                background: 'var(--brand-500)',
                 border: 'none',
                 borderRadius: 10,
                 padding: '11px 22px',
@@ -1404,7 +1404,8 @@ export function NewPurchaseModal({ isOpen, onClose, onSuccess }: NewPurchaseModa
                 display: 'inline-flex',
                 alignItems: 'center',
                 gap: 8,
-                boxShadow: '0 4px 12px rgba(15, 23, 42, 0.2)'
+                boxShadow: '0 4px 14px rgba(139, 120, 232, 0.4)',
+                transition: 'all 0.15s ease'
               }}
             >
               {step === 1 && 'CONTINUAR AL CATÁLOGO DE PRODUCTOS'}
@@ -1418,7 +1419,7 @@ export function NewPurchaseModal({ isOpen, onClose, onSuccess }: NewPurchaseModa
               onClick={handleConfirmPurchase}
               disabled={isSubmitting}
               style={{
-                background: '#094783',
+                background: 'var(--brand-500)',
                 border: 'none',
                 borderRadius: 10,
                 padding: '12px 26px',
@@ -1429,8 +1430,9 @@ export function NewPurchaseModal({ isOpen, onClose, onSuccess }: NewPurchaseModa
                 display: 'inline-flex',
                 alignItems: 'center',
                 gap: 8,
-                boxShadow: '0 4px 16px rgba(9, 71, 131, 0.35)',
-                opacity: isSubmitting ? 0.7 : 1
+                boxShadow: '0 4px 16px rgba(139, 120, 232, 0.4)',
+                opacity: isSubmitting ? 0.7 : 1,
+                transition: 'all 0.15s ease'
               }}
             >
               {isSubmitting ? <RefreshCw size={18} className="animate-spin" /> : <Check size={18} />}
@@ -1463,7 +1465,7 @@ export function NewPurchaseModal({ isOpen, onClose, onSuccess }: NewPurchaseModa
           }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <Truck size={18} style={{ color: '#0284c7' }} />
+                <Truck size={18} style={{ color: 'var(--brand-600)' }} />
                 <h3 style={{ margin: 0, fontSize: 16, fontWeight: 800 }}>Registrar Nuevo Proveedor</h3>
               </div>
               <button
@@ -1566,7 +1568,7 @@ export function NewPurchaseModal({ isOpen, onClose, onSuccess }: NewPurchaseModa
           }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <Package size={18} style={{ color: '#0284c7' }} />
+                <Package size={18} style={{ color: 'var(--brand-600)' }} />
                 <h3 style={{ margin: 0, fontSize: 16, fontWeight: 800 }}>Crear Nuevo Producto</h3>
               </div>
               <button

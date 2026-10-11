@@ -519,24 +519,6 @@ export function ConfigPage() {
         </div>
 
         {/* Tasa USD Display on top-right header */}
-        <div
-          style={{
-            background: '#e9fcf4',
-            border: '1px solid #b2f1d5',
-            borderRadius: 999,
-            padding: '6px 14px',
-            fontSize: 12,
-            fontWeight: 600,
-            color: '#136041',
-            display: 'flex',
-            alignItems: 'center',
-            gap: 6
-          }}
-        >
-          <span style={{ color: '#237d5f' }}>$ Tasa USD:</span>
-          <b>Bs. {currentRate}</b>
-          <span style={{ cursor: 'pointer', fontSize: 11 }}>✏</span>
-        </div>
       </div>
 
       {/* Tabs Menu */}
@@ -976,7 +958,6 @@ export function ConfigPage() {
                   SEDES Y TERMINALES (PUNTOS DE VENTA)
                 </h2>
                 <p style={{ margin: '3px 0 0 0', color: '#64748b', fontSize: 13 }}>
-                  Cree, modifique y gestione las sucursales físicas y sus puntos de venta asociados con sincronización en la nube.
                 </p>
               </div>
             </div>
@@ -984,7 +965,7 @@ export function ConfigPage() {
             <button
               onClick={handleOpenNewBranch}
               style={{
-                background: '#0066f5',
+                background: 'var(--brand-500)',
                 color: '#fff',
                 border: 'none',
                 borderRadius: 8,
@@ -998,7 +979,7 @@ export function ConfigPage() {
                 boxShadow: '0 1px 2px rgba(0,0,0,0.05)'
               }}
             >
-              <Plus size={16} strokeWidth={2.5} /> + Agregar Sede
+              <Plus size={16} strokeWidth={2.5} /> Agregar Sede
             </button>
           </div>
 
@@ -1021,7 +1002,7 @@ export function ConfigPage() {
                 <button
                   onClick={handleOpenNewBranch}
                   style={{
-                    background: '#0066f5',
+                    background: 'var(--brand-500)',
                     color: '#fff',
                     border: 'none',
                     borderRadius: 8,
@@ -1031,7 +1012,7 @@ export function ConfigPage() {
                     cursor: 'pointer'
                   }}
                 >
-                  + Agregar Primera Sede
+                  + Agregar Sede
                 </button>
               </div>
             </Card>
@@ -1326,7 +1307,7 @@ export function ConfigPage() {
                       className="input"
                       value={branchPhone}
                       onChange={(e) => setBranchPhone(e.target.value)}
-                      placeholder="+58 412-5043857"
+                      placeholder="Ej: 0412-5000101"
                     />
                   </div>
 
@@ -1358,7 +1339,7 @@ export function ConfigPage() {
                         padding: '0 20px',
                         borderRadius: 8,
                         border: 'none',
-                        background: '#0066f5',
+                        background: 'var(--brand-500)',
                         color: '#fff',
                         fontSize: 13,
                         fontWeight: 700,

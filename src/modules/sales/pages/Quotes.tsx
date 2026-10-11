@@ -31,7 +31,8 @@ import {
   CreditCard,
   Building2,
   DollarSign,
-  CheckCircle2
+  CheckCircle2,
+  Users
 } from 'lucide-react';
 import { Card } from '../../../components/ui/Card';
 import { Button } from '../../../components/ui/Button';
@@ -117,6 +118,7 @@ export function QuotesPage() {
   const [newCustomerDocType, setNewCustomerDocType] = useState('Natural (V / E)');
   const [newCustomerDocNumber, setNewCustomerDocNumber] = useState('');
   const [newCustomerPhone, setNewCustomerPhone] = useState('');
+  const [newCustomerCreditLimit, setNewCustomerCreditLimit] = useState('0');
   const [newCustomerEmail, setNewCustomerEmail] = useState('');
   const [newCustomerAddress, setNewCustomerAddress] = useState('');
   const [isSavingCustomer, setIsSavingCustomer] = useState(false);
@@ -403,14 +405,11 @@ export function QuotesPage() {
     setIsTaxSubject(false);
     setIsIgtfApplied(false);
     setConvertResult(null);
+    setAutoGenerateFile(true);
   };
 
   const openCreateModal = () => {
     resetDraft();
-    if (customers.length > 0) {
-      setDraftCustomerId(customers[0].id);
-      setCustomerSearch(customers[0].name);
-    }
     setIsCreateOpen(true);
   };
 
@@ -495,6 +494,17 @@ _Válida por ${docData.validityDays || 7} días. Cotizado con Frenyer ERP._`;
     setTimeout(() => setIsCopiedShare(false), 2500);
   };
 
+  const handleOpenNewCustomerModal = () => {
+    setNewCustomerName('');
+    setNewCustomerDocType('Natural (V / E)');
+    setNewCustomerDocNumber('');
+    setNewCustomerPhone('');
+    setNewCustomerCreditLimit('0');
+    setNewCustomerEmail('');
+    setNewCustomerAddress('');
+    setIsNewCustomerOpen(true);
+  };
+
   const handleSaveNewCustomer = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newCustomerName.trim() || !newCustomerDocNumber.trim()) {
@@ -511,7 +521,7 @@ _Válida por ${docData.validityDays || 7} días. Cotizado con Frenyer ERP._`;
         doc_number: newCustomerDocNumber.trim(),
         phone: newCustomerPhone.trim(),
         email: newCustomerEmail.trim(),
-        credit_limit: 0,
+        credit_limit: parseFloat(newCustomerCreditLimit) || 0,
         address: newCustomerAddress.trim(),
         status: 'Activo',
         orders_count: 0,
@@ -520,9 +530,10 @@ _Válida por ${docData.validityDays || 7} días. Cotizado con Frenyer ERP._`;
       });
       if (created) {
         const option: CustomerOption = { id: created.id, name: created.name, docNumber: created.doc_number };
-        setCustomers(prev => [option, ...prev]);
+        setCustomers(prev => [option, ...prev.filter(c => c.id !== created.id)]);
         setDraftCustomerId(created.id);
         setCustomerSearch(created.name);
+        setIsCustomerDropdownOpen(false);
         setIsNewCustomerOpen(false);
         showToast(`Cliente ${created.name} registrado y seleccionado.`);
       } else {
@@ -583,9 +594,20 @@ _Válida por ${docData.validityDays || 7} días. Cotizado con Frenyer ERP._`;
 
   const handleCotizar = async () => {
     let effectiveCustomerId = draftCustomerId;
-    if (!effectiveCustomerId && customers.length > 0) {
-      effectiveCustomerId = customers[0].id;
-      setDraftCustomerId(customers[0].id);
+    if (!effectiveCustomerId && customerSearch.trim()) {
+      const match = customers.find(c =>
+        c.name.toLowerCase() === customerSearch.trim().toLowerCase() ||
+        c.docNumber.toLowerCase() === customerSearch.trim().toLowerCase()
+      );
+      if (match) {
+        effectiveCustomerId = match.id;
+        setDraftCustomerId(match.id);
+      }
+    }
+
+    if (!effectiveCustomerId) {
+      showToast('Por favor selecciona o registra un cliente para la cotización.', 'info');
+      return;
     }
 
     if (draftItems.length === 0) {
@@ -1400,46 +1422,74 @@ _Válida por ${docData.validityDays || 7} días. Cotizado con Frenyer ERP._`;
                   </div>
                   <div style={{ position: 'relative' }}>
                     <div style={{ display: 'flex', gap: 8 }}>
-                      <input
-                        className="input"
-                        placeholder="Buscar cliente por nombre o documento..."
-                        value={customerSearch}
-                        onFocus={() => setIsCustomerDropdownOpen(true)}
-                        onChange={(e) => { setCustomerSearch(e.target.value); setIsCustomerDropdownOpen(true); }}
-                        style={{ flex: 1, height: 40 }}
-                      />
+                      <div style={{ position: 'relative', flex: 1 }}>
+                        <input
+                          className="input"
+                          placeholder="Buscar cliente por nombre o documento..."
+                          value={customerSearch}
+                          onFocus={() => setIsCustomerDropdownOpen(true)}
+                          onChange={(e) => { setCustomerSearch(e.target.value); setIsCustomerDropdownOpen(true); }}
+                          style={{ width: '100%', height: 40, paddingRight: draftCustomerId ? 36 : 12 }}
+                        />
+                        {draftCustomerId && (
+                          <button
+                            onClick={() => { setDraftCustomerId(''); setCustomerSearch(''); }}
+                            style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', background: 'transparent', border: 'none', color: '#94a3b8', cursor: 'pointer', padding: 0 }}
+                          >
+                            <X size={16} />
+                          </button>
+                        )}
+                      </div>
                       <Button
                         variant="secondary"
-                        onClick={() => setIsNewCustomerOpen(true)}
+                        onClick={handleOpenNewCustomerModal}
                         style={{ display: 'flex', alignItems: 'center', gap: 6, whiteSpace: 'nowrap' }}
                       >
                         <UserPlus size={14} /> + Nuevo Cliente
                       </Button>
                     </div>
-                    {isCustomerDropdownOpen && customerSearch.trim() && (
-                      <div style={{ position: 'absolute', top: 44, left: 0, right: 0, background: '#fff', border: '1px solid var(--border)', borderRadius: 10, boxShadow: '0 10px 25px rgba(0,0,0,0.1)', zIndex: 50, maxHeight: 220, overflowY: 'auto' }}>
-                        {filteredCustomers.length === 0 ? (
-                          <div style={{ padding: 14, fontSize: 12, color: '#94a3b8', textAlign: 'center' }}>
-                            Sin resultados. Registra un nuevo cliente.
-                          </div>
-                        ) : (
-                          filteredCustomers.map(c => (
-                            <button
-                              key={c.id}
-                              onClick={() => { setDraftCustomerId(c.id); setCustomerSearch(c.name); setIsCustomerDropdownOpen(false); }}
-                              style={{ width: '100%', textAlign: 'left', padding: '10px 14px', background: 'transparent', border: 'none', borderBottom: '1px solid #f1f5f9', cursor: 'pointer', fontSize: 13, display: 'flex', justifyContent: 'space-between', gap: 8 }}
-                            >
-                              <span style={{ fontWeight: 600, color: '#1e293b' }}>{c.name}</span>
-                              <span style={{ color: '#94a3b8', fontSize: 11 }}>{c.docNumber}</span>
-                            </button>
-                          ))
-                        )}
-                      </div>
+                    {isCustomerDropdownOpen && (
+                      <>
+                        <div
+                          style={{ position: 'fixed', inset: 0, zIndex: 45 }}
+                          onClick={() => setIsCustomerDropdownOpen(false)}
+                        />
+                        <div style={{ position: 'absolute', top: 44, left: 0, right: 0, background: '#fff', border: '1px solid var(--border)', borderRadius: 10, boxShadow: '0 10px 25px rgba(0,0,0,0.1)', zIndex: 50, maxHeight: 220, overflowY: 'auto' }}>
+                          {filteredCustomers.length === 0 ? (
+                            <div style={{ padding: 14, fontSize: 12, color: '#94a3b8', textAlign: 'center' }}>
+                              Sin resultados. Registra un nuevo cliente.
+                            </div>
+                          ) : (
+                            filteredCustomers.map(c => (
+                              <button
+                                key={c.id}
+                                type="button"
+                                onClick={() => { setDraftCustomerId(c.id); setCustomerSearch(c.name); setIsCustomerDropdownOpen(false); }}
+                                style={{ width: '100%', textAlign: 'left', padding: '10px 14px', background: 'transparent', border: 'none', borderBottom: '1px solid #f1f5f9', cursor: 'pointer', fontSize: 13, display: 'flex', justifyContent: 'space-between', gap: 8 }}
+                              >
+                                <span style={{ fontWeight: 600, color: '#1e293b' }}>{c.name}</span>
+                                <span style={{ color: '#94a3b8', fontSize: 11 }}>{c.docNumber}</span>
+                              </button>
+                            ))
+                          )}
+                        </div>
+                      </>
                     )}
                   </div>
                   {draftCustomerId && (
-                    <div style={{ marginTop: 10, padding: '8px 12px', background: 'var(--brand-50)', borderRadius: 8, fontSize: 12, color: 'var(--brand-700)', fontWeight: 600 }}>
-                      Cliente seleccionado: {customers.find(c => c.id === draftCustomerId)?.name}
+                    <div style={{ marginTop: 10, padding: '8px 12px', background: 'var(--brand-50)', borderRadius: 8, fontSize: 12, color: 'var(--brand-700)', fontWeight: 600, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <span>Cliente seleccionado: {customers.find(c => c.id === draftCustomerId)?.name}</span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setDraftCustomerId('');
+                          setCustomerSearch('');
+                        }}
+                        style={{ background: 'transparent', border: 'none', color: 'var(--brand-700)', cursor: 'pointer', display: 'flex', alignItems: 'center', padding: 2 }}
+                        title="Quitar cliente seleccionado"
+                      >
+                        <X size={14} />
+                      </button>
                     </div>
                   )}
 
@@ -1677,60 +1727,206 @@ _Válida por ${docData.validityDays || 7} días. Cotizado con Frenyer ERP._`;
           </div>
 
           {/* "+ Nuevo Cliente" inline sub-modal */}
+          {/* ================= MODAL: NUEVO CLIENTE (idéntico al módulo Clientes) ================= */}
           {isNewCustomerOpen && (
-            <div style={{ position: 'absolute', inset: 0, background: 'rgba(15,23,42,0.55)', display: 'grid', placeItems: 'center', zIndex: 1400, padding: 16 }}>
-              <Card style={{ width: '100%', maxWidth: 480, padding: 24, position: 'relative' }}>
-                <button onClick={() => setIsNewCustomerOpen(false)} style={{ position: 'absolute', top: 18, right: 18, background: 'transparent', border: 'none', color: '#64748b', cursor: 'pointer' }}>
-                  <X size={20} />
-                </button>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 18 }}>
-                  <div style={{ width: 38, height: 38, borderRadius: 10, background: 'var(--brand-50)', color: 'var(--brand-600)', display: 'grid', placeItems: 'center' }}>
-                    <UserPlus size={19} />
+            <div
+              style={{
+                position: 'fixed',
+                top: 0,
+                left: 0,
+                right: 0,
+                bottom: 0,
+                background: 'rgba(0,0,0,0.5)',
+                backdropFilter: 'blur(3px)',
+                display: 'grid',
+                placeItems: 'center',
+                zIndex: 1500,
+                padding: 16
+              }}
+            >
+              <div
+                className="card"
+                style={{
+                  width: '100%',
+                  maxWidth: 480,
+                  padding: 0,
+                  overflow: 'hidden',
+                  boxShadow: '0 20px 40px rgba(0,0,0,0.2)',
+                  background: '#fff'
+                }}
+              >
+                {/* Modal Header con gradiente violeta */}
+                <div
+                  style={{
+                    background: 'linear-gradient(135deg, #7c3aed 0%, #6d28d9 100%)',
+                    color: 'white',
+                    padding: '16px 20px',
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center'
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <Users size={18} style={{ color: '#ddd6fe' }} />
+                    <h3 style={{ margin: 0, fontSize: 15, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                      NUEVO CLIENTE
+                    </h3>
                   </div>
-                  <h3 style={{ margin: 0, fontSize: 16, fontWeight: 800, color: '#0f172a' }}>Nuevo cliente</h3>
+                  <button
+                    type="button"
+                    onClick={() => setIsNewCustomerOpen(false)}
+                    style={{ background: 'transparent', border: 'none', color: '#ddd6fe', cursor: 'pointer' }}
+                  >
+                    <X size={20} />
+                  </button>
                 </div>
-                <form onSubmit={handleSaveNewCustomer} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                  <div>
-                    <label style={{ fontSize: 12, fontWeight: 700, color: '#334155', display: 'block', marginBottom: 5 }}>Nombre completo</label>
-                    <input className="input" value={newCustomerName} onChange={(e) => setNewCustomerName(e.target.value)} placeholder="Ej. Juan Pérez" style={{ height: 38 }} required />
+
+                {/* Formulario idéntico a imagen y módulo Clientes */}
+                <form onSubmit={handleSaveNewCustomer} style={{ padding: 22, display: 'flex', flexDirection: 'column', gap: 14 }}>
+                  <div className="field">
+                    <label style={{ fontSize: 11, fontWeight: 700, color: '#334155', textTransform: 'uppercase', marginBottom: 4 }}>
+                      NOMBRE COMPLETO / RAZÓN SOCIAL *
+                    </label>
+                    <input
+                      className="input"
+                      value={newCustomerName}
+                      onChange={(e) => setNewCustomerName(e.target.value)}
+                      placeholder="Ej: Inversiones Pérez C.A., María Gómez"
+                      required
+                      autoFocus
+                    />
                   </div>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-                    <div>
-                      <label style={{ fontSize: 12, fontWeight: 700, color: '#334155', display: 'block', marginBottom: 5 }}>Tipo de documento</label>
-                      <select className="input" value={newCustomerDocType} onChange={(e) => setNewCustomerDocType(e.target.value)} style={{ height: 38 }}>
-                        <option>Natural (V / E)</option>
-                        <option>Jurídico (J)</option>
-                        <option>RIF (V / E / J / G / P)</option>
-                        <option>Pasaporte</option>
+
+                  <div className="form-grid" style={{ gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                    <div className="field">
+                      <label style={{ fontSize: 11, fontWeight: 700, color: '#334155', textTransform: 'uppercase', marginBottom: 4 }}>
+                        TIPO IDENTIFICACIÓN *
+                      </label>
+                      <select
+                        className="input"
+                        value={newCustomerDocType}
+                        onChange={(e) => setNewCustomerDocType(e.target.value)}
+                      >
+                        <option value="Natural (V / E)">Natural (V / E)</option>
+                        <option value="Jurídico (J)">Jurídico (J)</option>
+                        <option value="Gubernamental (G)">Gubernamental (G)</option>
+                        <option value="Pasaporte (P)">Pasaporte (P)</option>
                       </select>
                     </div>
-                    <div>
-                      <label style={{ fontSize: 12, fontWeight: 700, color: '#334155', display: 'block', marginBottom: 5 }}>Cédula / RIF</label>
-                      <input className="input" value={newCustomerDocNumber} onChange={(e) => setNewCustomerDocNumber(e.target.value)} placeholder="V-12.345.678" style={{ height: 38 }} required />
+
+                    <div className="field">
+                      <label style={{ fontSize: 11, fontWeight: 700, color: '#334155', textTransform: 'uppercase', marginBottom: 4 }}>
+                        CÉDULA O RIF *
+                      </label>
+                      <input
+                        className="input"
+                        value={newCustomerDocNumber}
+                        onChange={(e) => setNewCustomerDocNumber(e.target.value)}
+                        placeholder="Ej: V-12345678 o J-314569"
+                        required
+                      />
                     </div>
                   </div>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-                    <div>
-                      <label style={{ fontSize: 12, fontWeight: 700, color: '#334155', display: 'block', marginBottom: 5 }}>Teléfono</label>
-                      <input className="input" value={newCustomerPhone} onChange={(e) => setNewCustomerPhone(e.target.value)} placeholder="+58 414-0000000" style={{ height: 38 }} />
+
+                  <div className="form-grid" style={{ gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                    <div className="field">
+                      <label style={{ fontSize: 11, fontWeight: 700, color: '#334155', textTransform: 'uppercase', marginBottom: 4 }}>
+                        TELÉFONO / WHATSAPP
+                      </label>
+                      <input
+                        className="input"
+                        value={newCustomerPhone}
+                        onChange={(e) => setNewCustomerPhone(e.target.value)}
+                        placeholder="Ej: 0412-5551234"
+                      />
                     </div>
-                    <div>
-                      <label style={{ fontSize: 12, fontWeight: 700, color: '#334155', display: 'block', marginBottom: 5 }}>Correo</label>
-                      <input className="input" type="email" value={newCustomerEmail} onChange={(e) => setNewCustomerEmail(e.target.value)} placeholder="cliente@correo.com" style={{ height: 38 }} />
+
+                    <div className="field">
+                      <label style={{ fontSize: 11, fontWeight: 700, color: '#334155', textTransform: 'uppercase', marginBottom: 4 }}>
+                        LÍMITE DE CRÉDITO (USD)
+                      </label>
+                      <input
+                        className="input"
+                        type="number"
+                        step="1"
+                        min="0"
+                        value={newCustomerCreditLimit}
+                        onChange={(e) => setNewCustomerCreditLimit(e.target.value)}
+                        placeholder="0"
+                      />
                     </div>
                   </div>
-                  <div>
-                    <label style={{ fontSize: 12, fontWeight: 700, color: '#334155', display: 'block', marginBottom: 5 }}>Dirección</label>
-                    <input className="input" value={newCustomerAddress} onChange={(e) => setNewCustomerAddress(e.target.value)} placeholder="Dirección de facturación" style={{ height: 38 }} />
+
+                  <div className="field">
+                    <label style={{ fontSize: 11, fontWeight: 700, color: '#334155', textTransform: 'uppercase', marginBottom: 4 }}>
+                      CORREO ELECTRÓNICO
+                    </label>
+                    <input
+                      className="input"
+                      type="email"
+                      value={newCustomerEmail}
+                      onChange={(e) => setNewCustomerEmail(e.target.value)}
+                      placeholder="Ej: cliente@ejemplo.com"
+                    />
                   </div>
-                  <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 6 }}>
-                    <Button variant="secondary" onClick={() => setIsNewCustomerOpen(false)}>Cancelar</Button>
-                    <Button variant="primary" type="submit" disabled={isSavingCustomer} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                      <UserPlus size={14} /> {isSavingCustomer ? 'Guardando...' : 'Registrar cliente'}
-                    </Button>
+
+                  <div className="field">
+                    <label style={{ fontSize: 11, fontWeight: 700, color: '#334155', textTransform: 'uppercase', marginBottom: 4 }}>
+                      DIRECCIÓN
+                    </label>
+                    <input
+                      className="input"
+                      value={newCustomerAddress}
+                      onChange={(e) => setNewCustomerAddress(e.target.value)}
+                      placeholder="Ej: Av. Bella Vista, Calle 72, Sector Tierra Negra"
+                    />
+                  </div>
+
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, borderTop: '1px solid #f1f5f9', paddingTop: 14, marginTop: 4 }}>
+                    <button
+                      type="button"
+                      onClick={() => setIsNewCustomerOpen(false)}
+                      style={{
+                        padding: '10px 16px',
+                        borderRadius: 8,
+                        border: '1px solid var(--border)',
+                        background: '#fff',
+                        color: '#475569',
+                        fontSize: 13,
+                        fontWeight: 700,
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: 6
+                      }}
+                    >
+                      <X size={16} /> Cancelar
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={isSavingCustomer}
+                      style={{
+                        padding: '10px 16px',
+                        borderRadius: 8,
+                        border: 'none',
+                        background: '#7c3aed',
+                        color: '#fff',
+                        fontSize: 13,
+                        fontWeight: 700,
+                        cursor: isSavingCustomer ? 'not-allowed' : 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: 6,
+                        opacity: isSavingCustomer ? 0.7 : 1
+                      }}
+                    >
+                      <CheckCircle2 size={16} /> {isSavingCustomer ? 'Guardando...' : 'Guardar Cliente'}
+                    </button>
                   </div>
                 </form>
-              </Card>
+              </div>
             </div>
           )}
         </div>
@@ -2230,7 +2426,7 @@ GRANT ALL ON TABLE public.sale_items TO anon, authenticated;`}
             <div style={{ background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: 12, padding: 14, marginBottom: 16 }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
                 <label style={{ fontSize: 12, fontWeight: 700, color: '#0f172a', display: 'flex', alignItems: 'center', gap: 6, margin: 0 }}>
-                  <Hash size={14} color="#6366f1" /> Número / Correlativo de Factura en el Sistema
+                  <Hash size={14} color="var(--brand-500)" /> Número / Correlativo de Factura en el Sistema
                 </label>
                 {isCheckingCorrelative ? (
                   <Badge tone="warning">
@@ -2262,7 +2458,7 @@ GRANT ALL ON TABLE public.sale_items TO anon, authenticated;`}
             {/* 2. Método de Pago y Destino Financiero */}
             <div style={{ background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: 12, padding: 14, marginBottom: 16 }}>
               <label style={{ fontSize: 12, fontWeight: 700, color: '#0f172a', display: 'flex', alignItems: 'center', gap: 6, marginBottom: 10 }}>
-                <Wallet size={14} color="#6366f1" /> Destino Financiero y Método de Pago
+                <Wallet size={14} color="var(--brand-500)" /> Destino Financiero y Método de Pago
               </label>
 
               {/* Selector de Contado / Crédito */}
@@ -2273,9 +2469,9 @@ GRANT ALL ON TABLE public.sale_items TO anon, authenticated;`}
                   style={{
                     padding: '10px 12px',
                     borderRadius: 10,
-                    border: convertPaymentType === 'CONTADO' ? '2px solid #6366f1' : '1px solid #e2e8f0',
+                    border: convertPaymentType === 'CONTADO' ? '2px solid var(--brand-500)' : '1px solid #e2e8f0',
                     background: convertPaymentType === 'CONTADO' ? '#eef2ff' : '#f8fafc',
-                    color: convertPaymentType === 'CONTADO' ? '#4338ca' : '#475569',
+                    color: convertPaymentType === 'CONTADO' ? 'var(--brand-700)' : '#475569',
                     fontWeight: 700,
                     fontSize: 13,
                     cursor: 'pointer',
@@ -2294,9 +2490,9 @@ GRANT ALL ON TABLE public.sale_items TO anon, authenticated;`}
                   style={{
                     padding: '10px 12px',
                     borderRadius: 10,
-                    border: convertPaymentType === 'CREDITO' ? '2px solid #6366f1' : '1px solid #e2e8f0',
+                    border: convertPaymentType === 'CREDITO' ? '2px solid var(--brand-500)' : '1px solid #e2e8f0',
                     background: convertPaymentType === 'CREDITO' ? '#eef2ff' : '#f8fafc',
-                    color: convertPaymentType === 'CREDITO' ? '#4338ca' : '#475569',
+                    color: convertPaymentType === 'CREDITO' ? 'var(--brand-700)' : '#475569',
                     fontWeight: 700,
                     fontSize: 13,
                     cursor: 'pointer',
@@ -2316,7 +2512,7 @@ GRANT ALL ON TABLE public.sale_items TO anon, authenticated;`}
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
                   <div>
                     <label style={{ fontSize: 11, fontWeight: 700, color: '#334155', display: 'flex', alignItems: 'center', gap: 4, marginBottom: 4 }}>
-                      <Building2 size={13} color="#6366f1" /> Cuenta Bancaria / Caja Receptora (Tesorería)
+                      <Building2 size={13} color="var(--brand-500)" /> Cuenta Bancaria / Caja Receptora (Tesorería)
                     </label>
                     <select
                       className="input"
@@ -2429,9 +2625,9 @@ GRANT ALL ON TABLE public.sale_items TO anon, authenticated;`}
                             borderRadius: 8,
                             fontSize: 12,
                             fontWeight: 700,
-                            border: convertDueDateDays === days ? '1px solid #6366f1' : '1px solid #cbd5e1',
+                            border: convertDueDateDays === days ? '1px solid var(--brand-500)' : '1px solid #cbd5e1',
                             background: convertDueDateDays === days ? '#eef2ff' : '#f8fafc',
-                            color: convertDueDateDays === days ? '#4338ca' : '#475569',
+                            color: convertDueDateDays === days ? 'var(--brand-700)' : '#475569',
                             cursor: 'pointer'
                           }}
                         >
