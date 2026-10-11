@@ -58,6 +58,7 @@ export interface DbProduct {
   barcode?: string;
   name: string;
   category: string;
+  brand?: string;
   cost_usd: number;
   price_usd: number;
   stock: number;
@@ -237,14 +238,13 @@ export async function createCustomerInSupabase(customer: Omit<DbCustomer, 'id' |
     const { data, error } = await supabase
       .from('customers')
       .insert([payload])
-      .select()
-      .single();
+      .select();
 
     if (error) {
       console.error('Error creating customer in Supabase:', error.message);
       return null;
     }
-    return data;
+    return Array.isArray(data) ? data[0] : (data || payload);
   } catch (err) {
     console.error('Network error creating customer in Supabase:', err);
     return null;
@@ -695,7 +695,13 @@ export async function fetchProductsFromSupabase(): Promise<DbProduct[]> {
     if (res.ok) {
       const json = await res.json();
       if (json.success && Array.isArray(json.data)) {
-        return json.data;
+        const map = new Map<string, DbProduct>();
+        json.data.forEach((p: DbProduct) => {
+          if (p.sku && !map.has(p.sku)) {
+            map.set(p.sku, p);
+          }
+        });
+        return Array.from(map.values());
       }
     }
   } catch {
@@ -717,10 +723,101 @@ export async function fetchProductsFromSupabase(): Promise<DbProduct[]> {
       console.warn('Error querying Supabase products:', error.message);
       return [];
     }
-    return data || [];
+    const productsList = data || [];
+    const map = new Map<string, DbProduct>();
+    productsList.forEach(p => {
+      if (p.sku && !map.has(p.sku)) {
+        map.set(p.sku, p);
+      }
+    });
+    return Array.from(map.values());
   } catch (err) {
     console.error('Network error fetching products from Supabase:', err);
     return [];
+  }
+}
+
+export async function fetchProductBySkuFromSupabase(sku: string): Promise<DbProduct | null> {
+  if (!sku) return null;
+
+  // Free item synthetic product
+  if (sku.startsWith('LIB-')) {
+    return {
+      sku,
+      name: 'Venta Libre',
+      category: 'Venta Libre',
+      brand: 'Venta Libre',
+      cost_usd: 0,
+      price_usd: 0,
+      stock: 5,
+      min_stock: 0,
+      unit: 'unidad',
+      status: 'Activo'
+    };
+  }
+
+  // 1. Try local server proxy
+  try {
+    const res = await fetch(`/api/products/${encodeURIComponent(sku)}`);
+    if (res.ok) {
+      const json = await res.json();
+      if (json.success && json.data) {
+        return json.data;
+      }
+    }
+  } catch {
+    // fallback
+  }
+
+  // 2. Direct Supabase
+  try {
+    const { data, error } = await supabase
+      .from('products')
+      .select('*')
+      .eq('sku', sku)
+      .limit(1);
+
+    if (!error && Array.isArray(data) && data.length > 0) {
+      return data[0];
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+export async function fetchProductStockFromSupabase(sku: string): Promise<number> {
+  if (!sku || sku.startsWith('LIB-')) {
+    return 5;
+  }
+
+  // 1. Try server proxy
+  try {
+    const res = await fetch(`/api/products/${encodeURIComponent(sku)}/stock`);
+    if (res.ok) {
+      const json = await res.json();
+      if (json.success && typeof json.stock === 'number') {
+        return json.stock;
+      }
+    }
+  } catch {
+    // fallback
+  }
+
+  // 2. Direct Supabase
+  try {
+    const { data, error } = await supabase
+      .from('products')
+      .select('stock')
+      .eq('sku', sku)
+      .limit(1);
+
+    if (!error && Array.isArray(data) && data.length > 0) {
+      return Number(data[0].stock) || 0;
+    }
+    return 0;
+  } catch {
+    return 0;
   }
 }
 
@@ -778,11 +875,30 @@ export async function createProductInSupabase(product: DbProduct): Promise<{ suc
       delete payload.branch_id;
     }
 
+    if (payload.sku) {
+      const { data: existing } = await supabase
+        .from('products')
+        .select('*')
+        .eq('sku', payload.sku)
+        .limit(1);
+
+      if (existing && existing.length > 0) {
+        const { data: updateData, error: updateError } = await supabase
+          .from('products')
+          .update(payload)
+          .eq('sku', payload.sku)
+          .select();
+        if (!updateError && updateData) {
+          const row = Array.isArray(updateData) ? updateData[0] : updateData;
+          return { success: true, data: row };
+        }
+      }
+    }
+
     const { data, error } = await supabase
       .from('products')
       .insert([payload])
-      .select()
-      .single();
+      .select();
 
     if (error) {
       if (/uuid|branch_id|branches|foreign key/i.test(error.message) && payload.branch_id) {
@@ -791,16 +907,17 @@ export async function createProductInSupabase(product: DbProduct): Promise<{ suc
         const retryResult = await supabase
           .from('products')
           .insert([retryPayload])
-          .select()
-          .single();
+          .select();
         if (!retryResult.error && retryResult.data) {
-          return { success: true, data: retryResult.data };
+          const resRow = Array.isArray(retryResult.data) ? retryResult.data[0] : retryResult.data;
+          return { success: true, data: resRow || retryPayload };
         }
       }
       console.error('Error inserting product in Supabase:', error);
       return { success: false, error: error.message };
     }
-    return { success: true, data };
+    const createdRow = Array.isArray(data) ? data[0] : (data || payload);
+    return { success: true, data: createdRow };
   } catch (err: any) {
     console.error('Network error creating product in Supabase:', err);
     return { success: false, error: err?.message || 'Error de conexión con Supabase' };
@@ -912,6 +1029,11 @@ export async function deleteProductFromSupabase(sku: string): Promise<{ success:
 }
 
 export async function updateProductStockInSupabase(sku: string, newStock: number): Promise<boolean> {
+  // Free items do not track physical stock
+  if (sku && sku.startsWith('LIB-')) {
+    return true;
+  }
+
   // 1. Try server proxy
   try {
     const res = await authenticatedFetch(`/api/products/${encodeURIComponent(sku)}/stock`, {
@@ -982,11 +1104,12 @@ export async function recordSaleInSupabase(
     };
 
     // 1. Insert Sale record
-    const { data: saleData, error: saleError } = await supabase
+    const { data: saleDataRows, error: saleError } = await supabase
       .from('sales')
       .insert([cleanSale])
-      .select()
-      .single();
+      .select();
+
+    const saleData = Array.isArray(saleDataRows) ? saleDataRows[0] : saleDataRows;
 
     if (saleError || !saleData) {
       console.error('Error inserting sale into Supabase:', saleError?.message);
@@ -1067,16 +1190,35 @@ export async function recordSaleInSupabase(
 
     // 4. Deduct Stocks & Register Inventory Movements in real-time
     for (const item of items) {
-      const { data: currentProd, error: productError } = await supabase
+      // Free items (venta libre: LIB-XXXX) do not track catalog stock but ensure catalog existence
+      if (!item.sku || item.sku.startsWith('LIB-')) {
+        if (item.sku && item.sku.startsWith('LIB-')) {
+          createProductInSupabase({
+            sku: item.sku,
+            name: item.name || 'Venta Libre',
+            category: 'Venta Libre',
+            cost_usd: 0,
+            price_usd: Number(item.unit_price_usd) || 0,
+            stock: 5,
+            min_stock: 0,
+            unit: 'unidad',
+            status: 'Activo'
+          }).catch(() => {});
+        }
+        continue;
+      }
+
+      const { data: prodList, error: productError } = await supabase
         .from('products')
         .select('*')
         .eq('sku', item.sku)
-        .single();
+        .limit(1);
 
       if (productError) {
-        console.error(`Error loading stock for ${item.sku}:`, productError.message);
-        return { success: false, saleId, error: `La venta se creó, pero no se pudo actualizar el inventario de ${item.sku}.` };
+        console.warn(`Aviso consultando stock para ${item.sku}:`, productError.message);
       }
+
+      const currentProd = prodList && prodList.length > 0 ? prodList[0] : null;
       if (currentProd) {
         const prevStock = Number(currentProd.stock) || 0;
         const qtySold = Number(item.quantity) || 1;
@@ -1088,8 +1230,7 @@ export async function recordSaleInSupabase(
           .eq('sku', item.sku);
 
         if (stockError) {
-          console.error(`Error updating stock for ${item.sku}:`, stockError.message);
-          return { success: false, saleId, error: `La venta se creó, pero no se pudo actualizar el inventario de ${item.sku}.` };
+          console.warn(`Aviso actualizando stock para ${item.sku}:`, stockError.message);
         }
 
         // Registrar trazabilidad en el kárdex de inventory_movements
@@ -1329,8 +1470,7 @@ export async function createQuoteInSupabase(input: {
     let insertSaleRes = await supabase
       .from('sales')
       .insert([salePayload])
-      .select('id, doc_number, created_at')
-      .single();
+      .select('id, doc_number, created_at');
 
     // Si falló por las columnas opcionales quote_status o expires_at, reintentar sin ellas
     if (
@@ -1344,11 +1484,12 @@ export async function createQuoteInSupabase(input: {
       insertSaleRes = await supabase
         .from('sales')
         .insert([salePayload])
-        .select('id, doc_number, created_at')
-        .single();
+        .select('id, doc_number, created_at');
     }
 
-    if (insertSaleRes.error || !insertSaleRes.data) {
+    const quoteRow = Array.isArray(insertSaleRes.data) ? insertSaleRes.data[0] : insertSaleRes.data;
+
+    if (insertSaleRes.error || !quoteRow) {
       console.warn('Aviso guardando cotización en Supabase:', insertSaleRes.error?.message);
       // Fallback seguro a almacenamiento local para garantizar persistencia y no perder datos
       const localId = `local_quote_${Date.now()}`;
@@ -1384,7 +1525,7 @@ export async function createQuoteInSupabase(input: {
       return { success: true, quoteId: localId, docNumber };
     }
 
-    const quoteId = insertSaleRes.data.id;
+    const quoteId = quoteRow.id;
 
     // Inserción de ítems en la tabla core 'sale_items'
     if (input.items && input.items.length > 0) {
@@ -1418,7 +1559,7 @@ export async function createQuoteInSupabase(input: {
         notes: input.notes,
         quote_status: 'Creada',
         expires_at: expiresAt,
-        created_at: insertSaleRes.data.created_at || new Date().toISOString(),
+        created_at: quoteRow.created_at || new Date().toISOString(),
         items: input.items,
         sale_items: input.items
       });
@@ -1563,17 +1704,19 @@ export async function convertQuoteToInvoiceInSupabase(
       const unitPrice = Number(it.unit_price_usd) || 0;
       const itemSku = it.sku;
 
-      if (!itemSku) {
+      if (!itemSku || itemSku.startsWith('LIB-')) {
         keptItems.push(it);
         runningTotalUsd += Number(it.total_usd) || (qty * unitPrice);
         continue;
       }
 
-      const { data: prod } = await supabase
+      const { data: prodList } = await supabase
         .from('products')
         .select('id, stock, name')
         .eq('sku', itemSku)
-        .maybeSingle();
+        .limit(1);
+
+      const prod = prodList && prodList.length > 0 ? prodList[0] : null;
 
       const currentStock = prod ? Number(prod.stock) || 0 : null;
       if (currentStock !== null && currentStock <= 0) {
@@ -1634,11 +1777,12 @@ export async function convertQuoteToInvoiceInSupabase(
     };
 
     let newInvoiceId = '';
-    const { data: newInvoice, error: invErr } = await supabase
+    const { data: newInvoiceRows, error: invErr } = await supabase
       .from('sales')
       .insert([invoicePayload])
-      .select('id, doc_number')
-      .single();
+      .select('id, doc_number');
+
+    const newInvoice = Array.isArray(newInvoiceRows) ? newInvoiceRows[0] : newInvoiceRows;
 
     if (invErr || !newInvoice) {
       console.warn('Aviso insertando factura en Supabase:', invErr?.message);
@@ -2310,12 +2454,17 @@ export async function createPurchaseInSupabase(input: {
 
     // Actualizar stock de productos en Supabase e inventario
     for (const it of input.items) {
+      if (!it.sku || it.sku.startsWith('LIB-')) {
+        continue;
+      }
       try {
-        const { data: prod } = await supabase
+        const { data: prodList } = await supabase
           .from('products')
           .select('id, stock, cost_usd')
           .eq('sku', it.sku)
-          .maybeSingle();
+          .limit(1);
+
+        const prod = prodList && prodList.length > 0 ? prodList[0] : null;
 
         if (prod) {
           const newStock = Math.max(0, (Number(prod.stock) || 0) + it.quantity);
@@ -3401,12 +3550,18 @@ export async function recordInventoryAdjustmentInSupabase(adjustment: {
     try {
       const orgId = (await getActiveOrgId()) || '00000000-0000-0000-0000-000000000001';
       
-      // Obtener producto
-      const { data: prodData, error: prodErr } = await supabase
+      // Obtener producto (omitir para ítems libres)
+      if (adjustment.sku && adjustment.sku.startsWith('LIB-')) {
+        return { success: true };
+      }
+
+      const { data: prodList, error: prodErr } = await supabase
         .from('products')
         .select('*')
         .eq('sku', adjustment.sku)
-        .maybeSingle();
+        .limit(1);
+
+      const prodData = prodList && prodList.length > 0 ? prodList[0] : null;
 
       if (prodErr || !prodData) {
         return { success: false, error: `Producto ${adjustment.sku} no encontrado en base de datos.` };
@@ -3480,11 +3635,12 @@ export async function recordInventoryAdjustmentInSupabase(adjustment: {
       }
 
       try {
-        const { data: insertedData, error: insErr } = await supabase
+        const { data: insertedRows, error: insErr } = await supabase
           .from('inventory_movements')
           .insert([movPayload])
-          .select()
-          .single();
+          .select();
+
+        const insertedData = Array.isArray(insertedRows) ? insertedRows[0] : insertedRows;
 
         if (!insErr && insertedData) {
           return { success: true, data: insertedData as DbInventoryMovement };
@@ -3504,5 +3660,117 @@ export async function recordInventoryAdjustmentInSupabase(adjustment: {
 
   return { success: false, error: 'Supabase no está configurado.' };
 }
+
+// ---------------------------------------------------------------------------
+// ORDERS & PUBLIC COMMERCE API METHODS
+// ---------------------------------------------------------------------------
+
+export async function fetchOrdersFromApi(): Promise<any[]> {
+  try {
+    const res = await fetch('/api/orders');
+    if (res.ok) {
+      const json = await res.json();
+      if (json.success && Array.isArray(json.data)) {
+        return json.data;
+      }
+    }
+  } catch (err) {
+    console.warn('Aviso cargando pedidos desde API:', err);
+  }
+
+  if (typeof window !== 'undefined') {
+    const stored = localStorage.getItem('frenyer_local_orders');
+    if (stored) {
+      try {
+        return JSON.parse(stored);
+      } catch {
+        // ignore
+      }
+    }
+  }
+  return [];
+}
+
+export async function createOrderInApi(payload: any): Promise<{ success: boolean; data?: any; error?: string }> {
+  try {
+    const res = await fetch('/api/orders', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    const json = await res.json();
+    if (res.ok && json.success) {
+      if (typeof window !== 'undefined') {
+        const stored = JSON.parse(localStorage.getItem('frenyer_local_orders') || '[]');
+        stored.unshift(json.data);
+        localStorage.setItem('frenyer_local_orders', JSON.stringify(stored.slice(0, 100)));
+      }
+      return { success: true, data: json.data };
+    }
+    return { success: false, error: json.error || 'No se pudo crear el pedido.' };
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Error de conexión creando el pedido.' };
+  }
+}
+
+export async function updateOrderDeliveryStatusInApi(
+  id: string,
+  status: string,
+  user: string = 'Operador',
+  notes?: string
+): Promise<{ success: boolean; data?: any; error?: string }> {
+  try {
+    const res = await fetch(`/api/orders/${encodeURIComponent(id)}/delivery-status`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status, user, notes })
+    });
+    const json = await res.json();
+    if (res.ok && json.success) {
+      return { success: true, data: json.data };
+    }
+    return { success: false, error: json.error || 'No se pudo actualizar el estado de entrega.' };
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Error de conexión.' };
+  }
+}
+
+export async function updateOrderPaymentStatusInApi(
+  id: string,
+  status: string,
+  user: string = 'Operador',
+  reference?: string
+): Promise<{ success: boolean; data?: any; error?: string }> {
+  try {
+    const res = await fetch(`/api/orders/${encodeURIComponent(id)}/payment-status`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status, user, reference })
+    });
+    const json = await res.json();
+    if (res.ok && json.success) {
+      return { success: true, data: json.data };
+    }
+    return { success: false, error: json.error || 'No se pudo actualizar el estado de pago.' };
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Error de conexión.' };
+  }
+}
+
+export async function fetchPublicConfigFromApi(): Promise<any> {
+  try {
+    const res = await fetch('/api/public/config');
+    if (res.ok) {
+      const json = await res.json();
+      if (json.success && json.data) {
+        return json.data;
+      }
+    }
+  } catch (err) {
+    console.warn('Aviso cargando configuración pública:', err);
+  }
+  return null;
+}
+
 
 

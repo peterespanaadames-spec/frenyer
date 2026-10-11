@@ -1,4 +1,5 @@
 import { createBrowserRouter } from 'react-router-dom';
+import { ShopPage } from '../../modules/shop/pages/ShopPage';
 import { DashboardLayout } from '../../layouts/DashboardLayout';
 import { Dashboard } from '../../pages/Dashboard';
 import { Sales } from '../../modules/sales/pages/Sales';
@@ -8,7 +9,7 @@ import { Accounts } from '../../modules/accounts-receivable/pages/Accounts';
 import { Customers } from '../../modules/customers/pages/Customers';
 import { Alma } from '../../modules/alma/pages/Alma';
 
-// Import new high-fidelity modules
+// High-fidelity domain modules
 import { OrdersPage } from '../../modules/sales/pages/Orders';
 import { QuotesPage } from '../../modules/sales/pages/Quotes';
 import { SalesReportPage } from '../../modules/sales/pages/SalesReport';
@@ -25,57 +26,65 @@ import { ProfitLossPage } from '../../modules/finance/pages/ProfitLoss';
 import { ConfigPage } from '../../modules/alma/pages/Config';
 
 export const router = createBrowserRouter([
+  // 1. Ruta principal / : Tienda virtual pública con catálogo, filtros y carrito
   {
     path: '/',
+    element: <ShopPage />,
+  },
+
+  // 2. Panel administrativo y de gestión empresarial (AppShell con Sidebar)
+  {
     element: <DashboardLayout />,
     children: [
-      { index: true, element: <Dashboard /> },
-      
+      { path: 'dashboard', element: <Dashboard /> },
+      { path: 'admin', element: <Dashboard /> },
+
       // Ventas Flash
       { path: 'ventas-flash/ventas', element: <Sales /> },
       { path: 'ventas-flash/pedidos', element: <OrdersPage /> },
       { path: 'ventas-flash/cotizaciones', element: <QuotesPage /> },
       { path: 'ventas-flash/reporte', element: <SalesReportPage /> },
-      
+
       // Inventarios
       { path: 'inventarios/productos', element: <Inventory /> },
       { path: 'inventarios/compras', element: <InternalPurchasesPage /> },
       { path: 'inventarios/movimientos', element: <MovementsPage /> },
-      
+
       // Cuentas
       { path: 'cuentas/caja', element: <CashPage /> },
       { path: 'cuentas/bancos', element: <BankAccountsPage /> },
       { path: 'cuentas/cobrar', element: <Accounts /> },
       { path: 'cuentas/pagar', element: <AccountsPayablePage /> },
       { path: 'cuentas/reporte', element: <AccountsReportPage /> },
-      
+
       // Gastos
       { path: 'gastos', element: <ExpensesPage /> },
-      
+
       // Gestión de Contactos
       { path: 'contactos/clientes', element: <Customers /> },
       { path: 'contactos/proveedores', element: <SuppliersPage /> },
       { path: 'contactos/proveedores/nuevo', element: <SuppliersPage /> },
-      
+
       // Marketing
       { path: 'marketing', element: <MarketingPage /> },
-      
+
       // Finanzas
       { path: 'finanzas/salud', element: <Finance /> },
       { path: 'finanzas/ganancias-perdidas', element: <ProfitLossPage /> },
-      
+
       // Configuración
       { path: 'configuracion', element: <ConfigPage /> },
-      
-      // Alma
+
+      // Alma Copilot
       { path: 'alma', element: <Alma /> },
 
-      // Backward compatible legacy paths
+      // Rutas de compatibilidad histórica
+      { path: 'pedidos', element: <OrdersPage /> },
       { path: 'ventas', element: <Sales /> },
       { path: 'inventario', element: <Inventory /> },
       { path: 'finanzas', element: <Finance /> },
       { path: 'cuentas', element: <Accounts /> },
-      { path: 'clientes', element: <Customers /> }
+      { path: 'clientes', element: <Customers /> },
     ],
   },
 ]);

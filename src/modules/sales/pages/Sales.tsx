@@ -34,7 +34,8 @@ import {
   fetchCustomersFromSupabase,
   createCustomerInSupabase,
   recordSaleInSupabase,
-  fetchBankAccountsFromSupabase
+  fetchBankAccountsFromSupabase,
+  createProductInSupabase
 } from '../../../lib/supabase/db';
 import { supabase } from '../../../lib/supabase/client';
 import { authenticatedFetch } from '../../../lib/supabase/api';
@@ -447,20 +448,34 @@ export function Sales() {
     if (isNaN(price) || price <= 0) return;
 
     const sku = `LIB-${Date.now().toString().slice(-4)}`;
+    const cleanName = freeItemName.trim() || 'Venta Libre';
     setCart(prev => [
       ...prev,
       {
         id: sku,
         sku,
-        name: freeItemName || 'Venta Libre',
+        name: cleanName,
         priceUSD: price,
         quantity: 1,
-        stock: 9999
+        stock: 5
       }
     ]);
     setIsFreeItemOpen(false);
     setFreeItemPriceUSD('');
     showToast('Ítem de venta libre agregado.');
+
+    // Asegurar que el ítem de venta libre exista en el catálogo de Supabase
+    createProductInSupabase({
+      sku,
+      name: cleanName,
+      category: 'Venta Libre',
+      cost_usd: 0,
+      price_usd: price,
+      stock: 5,
+      min_stock: 0,
+      unit: 'unidad',
+      status: 'Activo'
+    }).catch(() => {});
   };
 
   // Subtotal calculations

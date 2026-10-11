@@ -44,6 +44,7 @@ interface Product {
   name: string;
   barcode: string;
   category: string;
+  brand: string;
   unit: string;
   currency: string;
   cost: number;
@@ -90,7 +91,8 @@ export function Inventory() {
         name: p.name,
         barcode: p.barcode || '',
         category: p.category || 'General',
-        unit: p.unit || 'UND',
+        brand: p.brand || 'Genérica',
+        unit: p.unit || 'Unidad',
         currency: 'Dólar (USD)',
         cost: Number(p.cost_usd) || 0,
         price: Number(p.price_usd) || 0,
@@ -107,6 +109,7 @@ export function Inventory() {
     });
     setProducts(mappedProducts);
     setCategories(Array.from(new Set(mappedProducts.map((product) => product.category).filter(Boolean))));
+    setBrands(Array.from(new Set(['Genérica', 'Monroe', 'Duncan', 'Castrol', 'Sony', 'Samsung', 'Nike', 'Adidas', ...mappedProducts.map(p => p.brand).filter(Boolean)])));
     setIsLoading(false);
   };
 
@@ -221,6 +224,22 @@ export function Inventory() {
   const [categories, setCategories] = useState<string[]>([]);
   const [isAddCategoryOpen, setIsAddCategoryOpen] = useState(false);
   const [newCategoryInput, setNewCategoryInput] = useState('');
+
+  // Dynamic Brands State
+  const [brands, setBrands] = useState<string[]>(['Genérica', 'Monroe', 'Duncan', 'Castrol', 'Sony', 'Samsung', 'Nike', 'Adidas']);
+  const [newBrand, setNewBrand] = useState('Genérica');
+  const [isAddBrandOpen, setIsAddBrandOpen] = useState(false);
+  const [newBrandInput, setNewBrandInput] = useState('');
+
+  // Dynamic Units State
+  const [units, setUnits] = useState<string[]>([
+    'Unidad', 'Pieza', 'Paquete', 'Caja', 'Docena', 'Kilogramo',
+    'Gramo', 'Litro', 'Mililitro', 'Metro', 'Centímetro', 'Rollo',
+    'Set / Juego', 'Bulto', 'Resma'
+  ]);
+  const [newUnit, setNewUnit] = useState('Unidad');
+  const [isAddUnitOpen, setIsAddUnitOpen] = useState(false);
+  const [newUnitInput, setNewUnitInput] = useState('');
   
   // Quick Stock Adjustment Modal
   const [adjustingProduct, setAdjustingProduct] = useState<Product | null>(null);
@@ -231,7 +250,8 @@ export function Inventory() {
   const [newName, setNewName] = useState('');
   const [newBarcode, setNewBarcode] = useState('');
   const [newCategory, setNewCategory] = useState('Sin categoría');
-  const [newUnit, setNewUnit] = useState('UND');
+  const [newBrandState, setNewBrandState] = useState('Genérica'); // alias or use newBrand directly
+
   const [newCurrency, setNewCurrency] = useState('Bolívar (VES)');
   const [newCost, setNewCost] = useState('0');
   const [newPrice, setNewPrice] = useState('0');
@@ -368,7 +388,8 @@ export function Inventory() {
     setNewName('');
     setNewBarcode('');
     setNewCategory('Sin categoría');
-    setNewUnit('UND');
+    setNewBrand('Genérica');
+    setNewUnit('Unidad');
     setNewCurrency('Dólar (USD)');
     setNewCost('0');
     setNewPrice('0');
@@ -390,7 +411,8 @@ export function Inventory() {
     setNewName(p.name);
     setNewBarcode(p.barcode);
     setNewCategory(p.category);
-    setNewUnit(p.unit);
+    setNewBrand(p.brand || 'Genérica');
+    setNewUnit(p.unit || 'Unidad');
     setNewCurrency(p.currency);
     setNewCost(p.cost.toString());
     setNewPrice(p.price.toString());
@@ -436,8 +458,9 @@ export function Inventory() {
       name: newName.trim(),
       barcode: newBarcode.trim() || undefined,
       category: newCategory || 'General',
+      brand: newBrand || 'Genérica',
       branch_id: sanitizedBranchId,
-      unit: newUnit || 'UND',
+      unit: newUnit || 'Unidad',
       cost_usd: parseFloat(newCost) || 0,
       price_usd: parseFloat(newPrice) || 0,
       stock: parseInt(newStock) || 0,
@@ -488,6 +511,40 @@ export function Inventory() {
     showToast('Categoría agregada correctamente.');
   };
 
+  // 5.b Add custom brand
+  const handleAddBrand = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newBrandInput.trim()) return;
+
+    if (brands.some(b => b.toLowerCase() === newBrandInput.trim().toLowerCase())) {
+      showToast('Esta marca ya existe.', 'info');
+      return;
+    }
+
+    setBrands([...brands, newBrandInput.trim()]);
+    setNewBrand(newBrandInput.trim());
+    setNewBrandInput('');
+    setIsAddBrandOpen(false);
+    showToast('Marca agregada correctamente.');
+  };
+
+  // 5.c Add custom unit
+  const handleAddUnit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newUnitInput.trim()) return;
+
+    if (units.some(u => u.toLowerCase() === newUnitInput.trim().toLowerCase())) {
+      showToast('Esta unidad ya existe.', 'info');
+      return;
+    }
+
+    setUnits([...units, newUnitInput.trim()]);
+    setNewUnit(newUnitInput.trim());
+    setNewUnitInput('');
+    setIsAddUnitOpen(false);
+    showToast('Unidad agregada correctamente.');
+  };
+
   // 6. Delete Product
   const handleDeleteProduct = async (sku: string) => {
     const res = await deleteProductFromSupabase(sku);
@@ -511,6 +568,8 @@ export function Inventory() {
     const ok = await updateProductStockInSupabase(adjustingProduct.sku, finalStock);
     if (ok) {
       showToast(`Stock de ${adjustingProduct.sku} actualizado a ${finalStock}.`);
+      // Update local state immediately for responsiveness
+      setProducts(prev => prev.map(p => p.sku === adjustingProduct.sku ? { ...p, stock: finalStock } : p));
       await loadProducts();
       setAdjustingProduct(null);
     } else {
@@ -1300,6 +1359,83 @@ export function Inventory() {
                 </div>
               </div>
 
+              {/* Row 3: Marca & Unidad */}
+              <div className="form-grid" style={{ gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                <div className="field">
+                  <label style={{ fontSize: 12, fontWeight: 600, color: '#334155', marginBottom: 4, display: 'block' }}>
+                    Marca
+                  </label>
+                  <div style={{ display: 'flex', gap: 4 }}>
+                    <select
+                      className="input"
+                      style={{ height: 38, fontSize: 13, flex: 1 }}
+                      value={newBrand}
+                      onChange={(e) => setNewBrand(e.target.value)}
+                    >
+                      {brands.map(b => (
+                        <option key={b} value={b}>{b}</option>
+                      ))}
+                    </select>
+                    <button
+                      type="button"
+                      onClick={() => setIsAddBrandOpen(true)}
+                      title="Añadir Marca"
+                      style={{
+                        height: 38,
+                        width: 38,
+                        background: '#f1f5f9',
+                        border: '1px solid var(--border)',
+                        borderRadius: 6,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        color: '#475569',
+                        cursor: 'pointer'
+                      }}
+                    >
+                      <Plus size={16} />
+                    </button>
+                  </div>
+                </div>
+
+                <div className="field">
+                  <label style={{ fontSize: 12, fontWeight: 600, color: '#334155', marginBottom: 4, display: 'block' }}>
+                    Unidad
+                  </label>
+                  <div style={{ display: 'flex', gap: 4 }}>
+                    <select
+                      className="input"
+                      style={{ height: 38, fontSize: 13, flex: 1 }}
+                      value={newUnit}
+                      onChange={(e) => setNewUnit(e.target.value)}
+                    >
+                      {units.map(u => (
+                        <option key={u} value={u}>{u}</option>
+                      ))}
+                    </select>
+                    <button
+                      type="button"
+                      onClick={() => setIsAddUnitOpen(true)}
+                      title="Registrar Nueva Unidad"
+                      style={{
+                        height: 38,
+                        width: 38,
+                        background: '#f1f5f9',
+                        border: '1px solid var(--border)',
+                        borderRadius: 6,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        color: '#475569',
+                        cursor: 'pointer'
+                      }}
+                    >
+                      <Plus size={16} />
+                    </button>
+                  </div>
+                </div>
+              </div>
+
               {/* Notice banner for USD base pricing */}
               <div
                 style={{
@@ -1315,32 +1451,17 @@ export function Inventory() {
                 💵 <b>Precios grabados en USD ($):</b> Todos los costos y precios se almacenan en dólares. Para ventas en Bolívares (VES), el sistema calcula automáticamente la conversión a la tasa vigente del momento (<b>Bs. {activeExchangeRate.toFixed(2)}</b>).
               </div>
 
-              {/* Row 3: Unidad & Moneda */}
-              <div className="form-grid" style={{ gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-                <div className="field">
-                  <label style={{ fontSize: 12, fontWeight: 600, color: '#334155', marginBottom: 4, display: 'block' }}>
-                    Unidad
-                  </label>
-                  <input
-                    className="input"
-                    style={{ height: 38, fontSize: 13 }}
-                    value={newUnit}
-                    onChange={(e) => setNewUnit(e.target.value)}
-                    placeholder="UND"
-                  />
-                </div>
-
-                <div className="field">
-                  <label style={{ fontSize: 12, fontWeight: 600, color: '#334155', marginBottom: 4, display: 'block' }}>
-                    Moneda Base
-                  </label>
-                  <input
-                    className="input"
-                    style={{ height: 38, fontSize: 13, background: '#f8fafc', fontWeight: 600 }}
-                    value="Dólar (USD - $)"
-                    disabled
-                  />
-                </div>
+              {/* Moneda Base */}
+              <div className="field full">
+                <label style={{ fontSize: 12, fontWeight: 600, color: '#334155', marginBottom: 4, display: 'block' }}>
+                  Moneda Base del Sistema
+                </label>
+                <input
+                  className="input"
+                  style={{ height: 38, fontSize: 13, background: '#f8fafc', fontWeight: 600 }}
+                  value="Dólar de los Estados Unidos (USD - $)"
+                  disabled
+                />
               </div>
 
               {/* Row 4: Costo & Precio venta */}
@@ -1672,6 +1793,94 @@ export function Inventory() {
                 </Button>
                 <Button type="submit" variant="primary" style={{ fontSize: 12 }}>
                   Añadir
+                </Button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: Inline Brand Adder */}
+      {isAddBrandOpen && (
+        <div
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            background: 'rgba(0,0,0,0.5)',
+            display: 'grid',
+            placeItems: 'center',
+            zIndex: 1100,
+            padding: 16
+          }}
+        >
+          <div className="card" style={{ width: '100%', maxWidth: 360, padding: 20 }}>
+            <h3 style={{ margin: '0 0 10px', fontSize: 14, fontWeight: 700 }}>Añadir Nueva Marca</h3>
+            <form onSubmit={handleAddBrand} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              <input
+                className="input"
+                placeholder="Nombre de la marca"
+                value={newBrandInput}
+                onChange={(e) => setNewBrandInput(e.target.value)}
+                required
+                autoFocus
+              />
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 6, marginTop: 4 }}>
+                <Button
+                  type="button"
+                  style={{ background: '#fff', color: '#5f6572', borderColor: '#d1d5db', fontSize: 12 }}
+                  onClick={() => setIsAddBrandOpen(false)}
+                >
+                  Cancelar
+                </Button>
+                <Button type="submit" variant="primary" style={{ fontSize: 12 }}>
+                  Añadir
+                </Button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: Inline Unit Adder */}
+      {isAddUnitOpen && (
+        <div
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            background: 'rgba(0,0,0,0.5)',
+            display: 'grid',
+            placeItems: 'center',
+            zIndex: 1100,
+            padding: 16
+          }}
+        >
+          <div className="card" style={{ width: '100%', maxWidth: 360, padding: 20 }}>
+            <h3 style={{ margin: '0 0 10px', fontSize: 14, fontWeight: 700 }}>Registrar Nueva Unidad</h3>
+            <form onSubmit={handleAddUnit} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              <input
+                className="input"
+                placeholder="Ej. Kilogramo, Botella, Pack..."
+                value={newUnitInput}
+                onChange={(e) => setNewUnitInput(e.target.value)}
+                required
+                autoFocus
+              />
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 6, marginTop: 4 }}>
+                <Button
+                  type="button"
+                  style={{ background: '#fff', color: '#5f6572', borderColor: '#d1d5db', fontSize: 12 }}
+                  onClick={() => setIsAddUnitOpen(false)}
+                >
+                  Cancelar
+                </Button>
+                <Button type="submit" variant="primary" style={{ fontSize: 12 }}>
+                  Registrar
                 </Button>
               </div>
             </form>

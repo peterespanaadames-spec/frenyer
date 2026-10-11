@@ -24,7 +24,8 @@ import {
   Percent,
   Heart,
   Settings,
-  ChevronDown
+  ChevronDown,
+  Store
 } from 'lucide-react';
 
 interface SidebarItem {
@@ -51,7 +52,7 @@ export function Sidebar({ isMobileOpen = false, onNavigate }: SidebarProps) {
     {
       label: 'Dashboard',
       icon: LayoutDashboard,
-      to: '/',
+      to: '/dashboard',
     },
     {
       label: 'Ventas Flash',
@@ -216,6 +217,18 @@ export function Sidebar({ isMobileOpen = false, onNavigate }: SidebarProps) {
       </div>
 
       <div className="sidebar-bottom" style={{ marginTop: 'auto', paddingTop: '16px' }}>
+        <NavLink
+          to="/"
+          onClick={onNavigate}
+          className="sidebar-parent"
+          style={{ marginBottom: 4 }}
+        >
+          <span className="sidebar-parent-label">
+            <Store size={18} />
+            <span>Tienda Online</span>
+          </span>
+        </NavLink>
+
         <NavLink
           to="/configuracion"
           onClick={onNavigate}

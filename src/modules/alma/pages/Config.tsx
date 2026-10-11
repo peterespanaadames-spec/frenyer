@@ -32,6 +32,7 @@ import { getActiveExchangeRate, setActiveExchangeRate, formatUSD, formatVES } fr
 import { authenticatedFetch } from '../../../lib/supabase/api';
 import { isSupabaseConfigured, SUPABASE_URL } from '../../../lib/supabase/client';
 import { SupabaseConnectionModal } from '../../../components/modals/SupabaseConnectionModal';
+import { getBusinessProfile, saveBusinessProfile } from '../../../lib/businessProfile';
 import {
   DbBranch,
   fetchBranchesFromSupabase,
@@ -291,14 +292,52 @@ export function ConfigPage() {
   };
 
   // --- BUSINESS INFO STATE ---
-  const [businessName, setBusinessName] = useState('Frenyer, C.A.');
-  const [rif, setRif] = useState('J-123456789');
-  const [email, setEmail] = useState('contacto@frenyer.com');
-  const [address, setAddress] = useState('Av. Francisco de Miranda, Centro Financiero, Caracas');
-  const [phone, setPhone] = useState('+58 212 555 1212');
-  const [whatsapp, setWhatsapp] = useState('+584120000000');
-  const [logo, setLogo] = useState<string | null>(null);
-  const [favicon, setFavicon] = useState<string | null>(null);
+  const initialProfile = getBusinessProfile();
+  const [businessName, setBusinessName] = useState(initialProfile.businessName);
+  const [rif, setRif] = useState(initialProfile.rif);
+  const [email, setEmail] = useState(initialProfile.email);
+  const [address, setAddress] = useState(initialProfile.address);
+  const [phone, setPhone] = useState(initialProfile.phone);
+  const [whatsapp, setWhatsapp] = useState(initialProfile.whatsapp);
+  const [logo, setLogo] = useState<string | null>(initialProfile.logo);
+  const [favicon, setFavicon] = useState<string | null>(initialProfile.favicon);
+
+  const handleLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        setLogo(event.target?.result as string);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const handleFaviconUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        setFavicon(event.target?.result as string);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const handleSaveBusiness = (e: React.FormEvent) => {
+    e.preventDefault();
+    saveBusinessProfile({
+      businessName,
+      rif,
+      email,
+      address,
+      phone,
+      whatsapp,
+      logo,
+      favicon
+    });
+    showNotification('Identidad y datos fiscales guardados y aplicados en facturas, notas, ecommerce y otros.');
+  };
 
   // --- RATE MANAGEMENT STATE ---
   const [currentRate, setCurrentRate] = useState(() => {
@@ -558,176 +597,173 @@ export function ConfigPage() {
       {activeTab === 'negocio' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
           
-          {/* Section 0: Base de datos Supabase */}
+          {/* Section 1: Identidad y datos fiscales */}
           <Card>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                <div
-                  style={{
-                    width: 38,
-                    height: 38,
-                    borderRadius: 10,
-                    background: isSupabaseConfigured ? '#ecfdf5' : '#fffbeb',
-                    color: isSupabaseConfigured ? '#059669' : '#d97706',
-                    display: 'grid',
-                    placeItems: 'center',
-                    border: `1px solid ${isSupabaseConfigured ? '#a7f3d0' : '#fde68a'}`
-                  }}
-                >
-                  <Database size={18} />
+            <form onSubmit={handleSaveBusiness}>
+              <div style={{ marginBottom: 16 }}>
+                <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700 }}>
+                  Identidad y datos fiscales
+                </h3>
+                <span className="muted small">
+                  Se usan en facturas, tickets y en la tienda pública
+                </span>
+              </div>
+
+              <div className="form-grid">
+                <div className="field full">
+                  <label>Nombre del negocio</label>
+                  <input
+                    className="input"
+                    value={businessName}
+                    onChange={(e) => setBusinessName(e.target.value)}
+                    placeholder="Nombre de la empresa"
+                  />
                 </div>
-                <div>
-                  <h3 style={{ margin: 0, fontSize: 15, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 8 }}>
-                    Base de Datos Supabase (PostgreSQL + RLS)
-                    <Badge tone={isSupabaseConfigured ? 'success' : 'warning'}>
-                      {isSupabaseConfigured ? 'Conectado' : 'Pendiente de conexión'}
-                    </Badge>
-                  </h3>
-                  <span className="muted small" style={{ fontSize: 11 }}>
-                    {isSupabaseConfigured
-                      ? `Conectado a ${SUPABASE_URL}. Todas las operaciones se guardan de forma persistente.`
-                      : 'Configura las credenciales de tu proyecto de Supabase para almacenar y sincronizar tus datos.'}
+
+                <div className="field">
+                  <label>RIF</label>
+                  <input
+                    className="input"
+                    value={rif}
+                    onChange={(e) => setRif(e.target.value)}
+                    placeholder="Ej: J-123456789"
+                  />
+                </div>
+
+                <div className="field">
+                  <label>Correo</label>
+                  <input
+                    className="input"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    placeholder="empresa@correo.com"
+                  />
+                </div>
+
+                <div className="field full">
+                  <label>Dirección fiscal</label>
+                  <textarea
+                    className="input"
+                    style={{ height: 80, padding: 12, resize: 'vertical' }}
+                    value={address}
+                    onChange={(e) => setAddress(e.target.value)}
+                    placeholder="Ubicación comercial"
+                  />
+                </div>
+
+                <div className="field">
+                  <label>Teléfono</label>
+                  <input
+                    className="input"
+                    value={phone}
+                    onChange={(e) => setPhone(e.target.value)}
+                    placeholder="Código de área y número"
+                  />
+                </div>
+
+                <div className="field">
+                  <label>WhatsApp</label>
+                  <input
+                    className="input"
+                    value={whatsapp}
+                    onChange={(e) => setWhatsapp(e.target.value)}
+                    placeholder="Ej: +58412..."
+                  />
+                </div>
+
+                {/* Logo upload slot */}
+                <div className="field">
+                  <label>Logo</label>
+                  <div className="upload-slot" style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                    <div className="preview-box" style={{ width: 60, height: 60, border: '1px solid var(--border)', borderRadius: 8, display: 'grid', placeItems: 'center', overflow: 'hidden', background: '#fafbfc' }}>
+                      {logo ? (
+                        <img src={logo} alt="Logo" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                      ) : (
+                        <span className="muted" style={{ fontSize: 11 }}>Logo</span>
+                      )}
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      <input
+                        type="file"
+                        accept="image/*"
+                        id="logo-upload-input"
+                        style={{ display: 'none' }}
+                        onChange={handleLogoUpload}
+                      />
+                      <Button
+                        type="button"
+                        variant="primary"
+                        style={{ background: '#fff', color: '#5f6572', borderColor: '#d1d5db', height: 34, fontSize: 11 }}
+                        onClick={() => document.getElementById('logo-upload-input')?.click()}
+                      >
+                        <Upload size={12} /> {logo ? 'Cambiar imagen' : 'Subir imagen'}
+                      </Button>
+                      {logo && (
+                        <button
+                          type="button"
+                          onClick={() => setLogo(null)}
+                          style={{ background: 'transparent', border: 'none', color: '#ef4444', fontSize: 11, cursor: 'pointer', textAlign: 'left', padding: 0 }}
+                        >
+                          Quitar imagen
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                  <span className="muted small" style={{ fontSize: 11, marginTop: 4 }}>
+                    Se usa en facturas, tickets y en la tienda. PNG o JPG.
+                  </span>
+                </div>
+
+                {/* Favicon upload slot */}
+                <div className="field">
+                  <label>Favicon</label>
+                  <div className="upload-slot" style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                    <div className="preview-box" style={{ width: 40, height: 40, border: '1px solid var(--border)', borderRadius: 8, display: 'grid', placeItems: 'center', overflow: 'hidden', background: '#fafbfc' }}>
+                      {favicon ? (
+                        <img src={favicon} alt="Favicon" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                      ) : (
+                        <span className="muted" style={{ fontSize: 11 }}>64x64</span>
+                      )}
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      <input
+                        type="file"
+                        accept="image/*"
+                        id="favicon-upload-input"
+                        style={{ display: 'none' }}
+                        onChange={handleFaviconUpload}
+                      />
+                      <Button
+                        type="button"
+                        variant="primary"
+                        style={{ background: '#fff', color: '#5f6572', borderColor: '#d1d5db', height: 34, fontSize: 11 }}
+                        onClick={() => document.getElementById('favicon-upload-input')?.click()}
+                      >
+                        <Upload size={12} /> {favicon ? 'Cambiar ícono' : 'Subir ícono'}
+                      </Button>
+                      {favicon && (
+                        <button
+                          type="button"
+                          onClick={() => setFavicon(null)}
+                          style={{ background: 'transparent', border: 'none', color: '#ef4444', fontSize: 11, cursor: 'pointer', textAlign: 'left', padding: 0 }}
+                        >
+                          Quitar ícono
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                  <span className="muted small" style={{ fontSize: 11, marginTop: 4 }}>
+                    Ícono de la pestaña del navegador. Cuadrado, 64x64 px.
                   </span>
                 </div>
               </div>
 
-              <Button
-                variant={isSupabaseConfigured ? 'secondary' : 'primary'}
-                onClick={() => setIsDbModalOpen(true)}
-                style={{ fontSize: 12, height: 36, display: 'flex', alignItems: 'center', gap: 6 }}
-              >
-                <Database size={14} /> {isSupabaseConfigured ? 'Gestionar Conexión / SQL' : 'Conectar Supabase'}
-              </Button>
-            </div>
-          </Card>
-
-          {/* Section 1: Identidad y datos fiscales (Image 1) */}
-          <Card>
-            <div style={{ marginBottom: 16 }}>
-              <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700 }}>
-                Identidad y datos fiscales
-              </h3>
-              <span className="muted small">
-                Se usan en facturas, tickets y en la tienda pública
-              </span>
-            </div>
-
-            <div className="form-grid">
-              <div className="field full">
-                <label>Nombre del negocio</label>
-                <input
-                  className="input"
-                  value={businessName}
-                  onChange={(e) => setBusinessName(e.target.value)}
-                  placeholder="Nombre de la empresa"
-                />
+              <div style={{ marginTop: 24, display: 'flex', justifyContent: 'flex-end' }}>
+                <Button type="submit" variant="primary" style={{ display: 'flex', alignItems: 'center', gap: 6, height: 40, padding: '0 20px' }}>
+                  <Save size={16} /> Guardar
+                </Button>
               </div>
-
-              <div className="field">
-                <label>RIF</label>
-                <input
-                  className="input"
-                  value={rif}
-                  onChange={(e) => setRif(e.target.value)}
-                  placeholder="Ej: J-123456789"
-                />
-              </div>
-
-              <div className="field">
-                <label>Correo</label>
-                <input
-                  className="input"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  placeholder="empresa@correo.com"
-                />
-              </div>
-
-              <div className="field full">
-                <label>Dirección fiscal</label>
-                <textarea
-                  className="input"
-                  style={{ height: 80, padding: 12, resize: 'vertical' }}
-                  value={address}
-                  onChange={(e) => setAddress(e.target.value)}
-                  placeholder="Ubicación comercial"
-                />
-              </div>
-
-              <div className="field">
-                <label>Teléfono</label>
-                <input
-                  className="input"
-                  value={phone}
-                  onChange={(e) => setPhone(e.target.value)}
-                  placeholder="Código de área y número"
-                />
-              </div>
-
-              <div className="field">
-                <label>WhatsApp</label>
-                <input
-                  className="input"
-                  value={whatsapp}
-                  onChange={(e) => setWhatsapp(e.target.value)}
-                  placeholder="Ej: +58412..."
-                />
-              </div>
-
-              {/* Logo upload slot */}
-              <div className="field">
-                <label>Logo</label>
-                <div className="upload-slot">
-                  <div className="preview-box">
-                    {logo ? (
-                      <img src={logo} alt="Logo" />
-                    ) : (
-                      <span className="muted" style={{ fontSize: 11 }}>Logo</span>
-                    )}
-                  </div>
-                  <Button
-                    variant="primary"
-                    style={{ background: '#fff', color: '#5f6572', borderColor: '#d1d5db', height: 34, fontSize: 11 }}
-                    onClick={() => {
-                      const dummyUrl = 'https://picsum.photos/120/120';
-                      setLogo(logo ? null : dummyUrl);
-                    }}
-                  >
-                    <Upload size={12} /> {logo ? 'Quitar' : 'Subir'}
-                  </Button>
-                </div>
-                <span className="muted small" style={{ fontSize: 11, marginTop: 4 }}>
-                  Se usa en facturas, tickets y en la tienda. PNG o JPG.
-                </span>
-              </div>
-
-              {/* Favicon upload slot */}
-              <div className="field">
-                <label>Favicon</label>
-                <div className="upload-slot">
-                  <div className="preview-box">
-                    {favicon ? (
-                      <img src={favicon} alt="Favicon" />
-                    ) : (
-                      <span className="muted" style={{ fontSize: 11 }}>64x64</span>
-                    )}
-                  </div>
-                  <Button
-                    variant="primary"
-                    style={{ background: '#fff', color: '#5f6572', borderColor: '#d1d5db', height: 34, fontSize: 11 }}
-                    onClick={() => {
-                      const dummyUrl = 'https://picsum.photos/64/64';
-                      setFavicon(favicon ? null : dummyUrl);
-                    }}
-                  >
-                    <Upload size={12} /> {favicon ? 'Quitar' : 'Subir'}
-                  </Button>
-                </div>
-                <span className="muted small" style={{ fontSize: 11, marginTop: 4 }}>
-                  Ícono de la pestaña del navegador. Cuadrado, 64x64 px.
-                </span>
-              </div>
-            </div>
+            </form>
           </Card>
 
           {/* Section 2: Tasa de Cambio Diaria (Image 2) */}
