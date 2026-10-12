@@ -2,8 +2,9 @@
 
 ## Estado actual
 - ERP bimonetario (USD/VES) React 19 + Vite + Express + Supabase.
+- **Reporte de Pagos / Cuentas (`/cuentas/reporte`)**:
+  - Incorporados filtros de fecha **«Desde»** y **«Hasta»** unificados en la misma línea (`flex items-center gap-2 flex-nowrap`) con anchos controlados (`width: 115px`, `font-size: 12px`), evitando saltos de línea y manteniendo alineación profesional.
 - **Reporte de Ventas (`/ventas-flash/reporte`)**:
-  - Encabezado limpio con título «Reporte de Ventas» (subtítulo informativo redundante eliminado para mayor claridad visual).
   - Cuadrícula de KPIs (`grid grid-4`): Total Órdenes, Total Ingresos Facturados, Utilidad Estimada y **Ticket Promedio** (calculado contablemente como `totalIncome / totalOrders`, bimonetario USD/VES).
   - Filtro de Periodo enriquecido con selectores de fecha nativos: **«Desde»** y **«Hasta»** para búsqueda personalizada por rango temporal, además de los accesos rápidos (Hoy, Esta Semana, Este Mes, Histórico).
   - Barra de búsqueda con ancho de 380px (Focus Mode) acompañada de:

@@ -37,6 +37,8 @@ export function AccountsReportPage() {
   const [payments, setPayments] = useState<PaymentReportRow[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [bankFilter, setBankFilter] = useState('TODOS');
+  const [startDate, setStartDate] = useState('');
+  const [endDate, setEndDate] = useState('');
   const [exchangeRate, setExchangeRate] = useState(getActiveExchangeRate());
 
   const loadData = async () => {
@@ -136,7 +138,12 @@ export function AccountsReportPage() {
 
     const matchesBank = bankFilter === 'TODOS' || p.bank_name.toLowerCase().includes(bankFilter.toLowerCase());
 
-    return matchesSearch && matchesBank;
+    let matchesDate = true;
+    const paymentDate = p.created_at ? p.created_at.split('T')[0] : '';
+    if (startDate && paymentDate < startDate) matchesDate = false;
+    if (endDate && paymentDate > endDate) matchesDate = false;
+
+    return matchesSearch && matchesBank && matchesDate;
   });
 
   // KPIs
@@ -217,26 +224,61 @@ export function AccountsReportPage() {
 
       {/* 3. Filtros y Búsqueda */}
       <Card className="mb-6">
-        <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
-          <div className="relative w-full sm:w-80">
+        <div className="flex flex-col xl:flex-row items-center justify-between gap-4">
+          <div className="relative w-full xl:w-72">
             <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
             <input
               type="text"
-              placeholder="Buscar por cliente, documento o banco..."
+              placeholder="Buscar por cliente, documento..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="input pl-9 w-full text-xs"
             />
           </div>
 
-          <div className="flex items-center gap-3 w-full sm:w-auto">
-            <span className="text-xs text-muted font-semibold whitespace-nowrap">Banco / Destino:</span>
+          {/* Rango de Fechas (Desde / Hasta en la misma línea) */}
+          <div className="flex items-end gap-2 flex-nowrap overflow-x-auto w-full xl:w-auto pb-1 xl:pb-0" style={{ display: 'flex', alignItems: 'flex-end', flexWrap: 'nowrap' }}>
+            <div className="flex items-center gap-1.5 flex-nowrap">
+              <span className="text-xs font-bold uppercase tracking-wider text-muted whitespace-nowrap">Desde:</span>
+              <input
+                type="date"
+                value={startDate}
+                onChange={(e) => setStartDate(e.target.value)}
+                className="input text-xs"
+                style={{ fontSize: '12px', width: '115px', height: '36px', padding: '0 8px' }}
+                title="Fecha inicial (Desde)"
+              />
+            </div>
+            <div className="flex items-center gap-1.5 flex-nowrap">
+              <span className="text-xs font-bold uppercase tracking-wider text-muted whitespace-nowrap">Hasta:</span>
+              <input
+                type="date"
+                value={endDate}
+                onChange={(e) => setEndDate(e.target.value)}
+                className="input text-xs"
+                style={{ fontSize: '12px', width: '115px', height: '36px', padding: '0 8px' }}
+                title="Fecha final (Hasta)"
+              />
+            </div>
+            {(startDate || endDate) && (
+              <Button
+                variant="ghost"
+                onClick={() => { setStartDate(''); setEndDate(''); }}
+                style={{ height: '34px', fontSize: '11px', padding: '0 8px', color: 'var(--muted)' }}
+              >
+                Limpiar
+              </Button>
+            )}
+          </div>
+
+          <div className="flex items-center gap-3 w-full xl:w-auto">
+            <span className="text-xs text-muted font-semibold whitespace-nowrap">Banco:</span>
             <select
               value={bankFilter}
               onChange={(e) => setBankFilter(e.target.value)}
               className="input text-xs"
             >
-              <option value="TODOS">Todos los destinos</option>
+              <option value="TODOS">Todos</option>
               <option value="Banesco">Banesco</option>
               <option value="Venezuela">Banco de Venezuela</option>
               <option value="Caja">Caja Efectivo</option>

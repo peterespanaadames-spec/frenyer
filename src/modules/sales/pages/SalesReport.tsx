@@ -711,7 +711,7 @@ export const SalesReportPage = () => {
       </div>
 
       {/* Toolbar / Filtros de Periodo con Búsqueda por Fechas */}
-      <div className="toolbar flex-wrap gap-2 items-center bg-white p-3 rounded-xl border border-border shadow-xs mb-6">
+      <div className="toolbar flex-nowrap gap-2 items-center bg-white p-3 rounded-xl border border-border shadow-xs mb-6 overflow-x-auto">
         <span className="text-xs font-bold uppercase tracking-wider text-muted mr-2">Periodo:</span>
         {[
           { id: 'today', label: 'Hoy' },
@@ -735,7 +735,7 @@ export const SalesReportPage = () => {
         <div className="h-4 w-px bg-border mx-2 hidden sm:block"></div>
 
         {/* Búsqueda por fechas: Estilo unificado ERP (Desde [input] hasta [input]) */}
-        <div className="flex items-center gap-2 flex-nowrap">
+        <div className="flex items-end gap-2 flex-nowrap" style={{ display: 'flex', alignItems: 'flex-end', flexWrap: 'nowrap' }}>
           <div className="flex items-center gap-1.5">
             <span className="text-xs font-bold uppercase tracking-wider text-muted whitespace-nowrap">Desde:</span>
             <input
