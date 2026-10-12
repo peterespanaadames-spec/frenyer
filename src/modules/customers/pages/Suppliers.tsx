@@ -12,6 +12,7 @@ import {
   Trash2,
   Phone,
   Mail,
+  User,
   X,
   Building2,
   Printer,
@@ -79,18 +80,16 @@ export function SuppliersPage() {
     setTimeout(() => setToast(null), 3500);
   };
 
-  // Load Suppliers from Supabase
+  // Load Suppliers from Supabase / Server Proxy
   const loadSuppliers = async () => {
     setIsLoading(true);
     try {
       const organizationId = await getActiveOrgId();
-      const data = organizationId
-        ? await fetchSuppliersFromSupabase(organizationId)
-        : [];
-      setSuppliers(data);
+      const data = await fetchSuppliersFromSupabase(organizationId || undefined);
+      setSuppliers(data || []);
     } catch (err) {
       console.error('Error loading suppliers:', err);
-      showToast('Error cargando proveedores de la organización.');
+      showToast('Error cargando proveedores.');
     } finally {
       setIsLoading(false);
     }
@@ -214,6 +213,18 @@ export function SuppliersPage() {
       showToast('❌ Error al eliminar proveedor de Supabase.');
     }
     setDeletingId(null);
+  };
+
+  // Toggle Supplier Status
+  const handleToggleStatus = async (s: DbSupplier) => {
+    const newStatus = s.status === 'Activo' ? 'Inactivo' : 'Activo';
+    const ok = await updateSupplierInSupabase(s.id, { ...s, status: newStatus });
+    if (ok) {
+      showToast(`✅ Proveedor ${newStatus === 'Activo' ? 'activado' : 'desactivado'}.`);
+      await loadSuppliers();
+    } else {
+      showToast('❌ Error actualizando estado.');
+    }
   };
 
   // Export to Excel
@@ -1057,11 +1068,18 @@ export function SuppliersPage() {
 
                           <Button
                             variant="secondary"
-                            title="Eliminar Proveedor"
-                            style={{ color: '#ef4444', borderColor: 'rgba(239, 68, 68, 0.3)' }}
-                            onClick={() => setDeletingId(s.id)}
+                            title={s.status === 'Activo' ? 'Desactivar' : 'Activar'}
+                            onClick={() => handleToggleStatus(s)}
+                            style={{ 
+                              width: 44, 
+                              height: 40, 
+                              borderRadius: 6, 
+                              border: '1px solid var(--border)', 
+                              padding: 0,
+                              color: s.status === 'Activo' ? '#ef4444' : '#10b981' 
+                            }}
                           >
-                            <Trash2 size={14} />
+                             <User size={18} />
                           </Button>
                         </div>
                       </td>
@@ -1073,35 +1091,8 @@ export function SuppliersPage() {
           </table>
         </div>
       </Card>
-
-      {/* Modal: Delete Confirmation */}
-      {deletingId && (
-        <div className="modal-backdrop">
-          <div className="modal" style={{ maxWidth: 420 }}>
-            <div className="modal-head">
-              <h3>Confirmar Eliminación</h3>
-              <button className="modal-close" onClick={() => setDeletingId(null)}>
-                <X size={18} />
-              </button>
-            </div>
-            <p style={{ margin: '16px 0', color: 'var(--muted)' }}>
-              ¿Estás seguro de que deseas eliminar este proveedor? Esta acción eliminará su registro permanentemente de Supabase.
-            </p>
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
-              <Button variant="secondary" onClick={() => setDeletingId(null)}>
-                Cancelar
-              </Button>
-              <Button
-                variant="primary"
-                style={{ backgroundColor: '#ef4444', borderColor: '#ef4444' }}
-                onClick={handleDeleteSupplier}
-              >
-                Sí, Eliminar
-              </Button>
-            </div>
-          </div>
-        </div>
-      )}
+      
+      {/* (Deleted Delete Modal here if not needed) */}
 
       {/* Modal: Export Report Options */}
       {isExportModalOpen && (

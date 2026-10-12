@@ -296,25 +296,21 @@ export async function fetchSuppliersFromSupabase(organizationId?: string): Promi
     ? JSON.parse(localStorage.getItem('frenyer_local_suppliers') || '[]')
     : [];
 
+  let serverData: DbSupplier[] = [];
   // 1. Try server proxy
   try {
     const res = await authenticatedFetch('/api/suppliers');
     if (res.ok) {
       const json = await res.json();
-      if (json.success && Array.isArray(json.data) && json.data.length > 0) {
-        if (typeof window !== 'undefined') {
-          const dbIds = new Set(json.data.map((s: DbSupplier) => s.id));
-          const merged = [...json.data, ...rawLocal.filter(l => !dbIds.has(l.id))];
-          localStorage.setItem('frenyer_local_suppliers', JSON.stringify(merged));
-          return merged;
-        }
-        return json.data;
+      if (json.success && Array.isArray(json.data)) {
+        serverData = json.data;
       }
     }
   } catch {
     // Fall back to direct client
   }
 
+  let supabaseData: DbSupplier[] = [];
   if (isSupabaseConfigured) {
     try {
       const scopedOrganizationId = organizationId || await getActiveOrgId();
@@ -324,25 +320,42 @@ export async function fetchSuppliersFromSupabase(organizationId?: string): Promi
         .order('created_at', { ascending: false });
 
       if (scopedOrganizationId) {
-        query = query.eq('organization_id', scopedOrganizationId);
+        query = query.or(`organization_id.eq.${scopedOrganizationId},organization_id.is.null`);
       }
 
       const { data, error } = await query;
-      if (!error && Array.isArray(data) && data.length > 0) {
-        if (typeof window !== 'undefined') {
-          const dbIds = new Set(data.map((s: DbSupplier) => s.id));
-          const merged = [...data, ...rawLocal.filter(l => !dbIds.has(l.id))];
-          localStorage.setItem('frenyer_local_suppliers', JSON.stringify(merged));
-          return merged;
-        }
-        return data || [];
+      if (!error && Array.isArray(data)) {
+        supabaseData = data;
       }
     } catch (err) {
       console.warn('Aviso consultando proveedores en Supabase:', err);
     }
   }
 
-  return rawLocal;
+  // Fusionar todas las fuentes (servidor, supabase y local) por id o doc_number
+  const map = new Map<string, DbSupplier>();
+  for (const s of rawLocal) {
+    if (s.id) map.set(s.id, s);
+  }
+  for (const s of serverData) {
+    if (s.id) {
+      const existing = map.get(s.id) || {};
+      map.set(s.id, { ...existing, ...s });
+    }
+  }
+  for (const s of supabaseData) {
+    if (s.id) {
+      const existing = map.get(s.id) || {};
+      map.set(s.id, { ...existing, ...s });
+    }
+  }
+
+  const merged = Array.from(map.values());
+  if (typeof window !== 'undefined' && merged.length > 0) {
+    localStorage.setItem('frenyer_local_suppliers', JSON.stringify(merged));
+  }
+
+  return merged.length > 0 ? merged : rawLocal;
 }
 
 export async function createSupplierInSupabase(
@@ -2305,12 +2318,17 @@ export async function createPurchaseInSupabase(input: {
       const res = await authenticatedFetch('/api/purchases', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(rpcPayload)
+        body: JSON.stringify({
+          ...input,
+          ...rpcPayload,
+          docNumber,
+          exchangeRate: rate
+        })
       });
       if (res.ok) {
         const json = await res.json();
-        if (json.success && json.data) {
-          createdPurchaseId = json.data.purchase_id || json.data.id;
+        if (json.success) {
+          createdPurchaseId = json.purchaseId || json.data?.purchase_id || json.data?.id;
         }
       }
     } catch {
@@ -2374,9 +2392,25 @@ export async function createPurchaseInSupabase(input: {
             total_ves: Math.round(it.quantity * it.unitCostUSD * rate * 100) / 100
           }));
           await supabase.from('purchase_items').insert(pItems);
+
+          // Actualizar inventario (stock)
+          for (const it of input.items) {
+            const { data: prod } = await supabase
+              .from('products')
+              .select('id, stock')
+              .eq('sku', it.sku)
+              .single();
+            
+            if (prod) {
+              await supabase
+                .from('products')
+                .update({ stock: Number(prod.stock || 0) + Number(it.quantity) })
+                .eq('id', prod.id);
+            }
+          }
         }
-      } catch {
-        // ignore
+      } catch (err) {
+        console.error('Error en inserción directa:', err);
       }
     }
 
@@ -2406,30 +2440,74 @@ export async function createPurchaseInSupabase(input: {
             updatePayload.cost_usd = it.unitCostUSD;
           }
           await supabase.from('products').update(updatePayload).eq('sku', it.sku);
+          
+          // Registrar movimiento en el kárdex
+          try {
+            await supabase.from('inventory_movements').insert([{
+              organization_id: orgId,
+              product_id: prod.id,
+              sku: it.sku,
+              product_name: it.name,
+              movement_type: 'COMPRA',
+              doc_type: 'COMPRA_INTERNA',
+              doc_number: docNumber,
+              entity_type: 'PROVEEDOR',
+              entity_name: input.supplierName || 'Proveedor',
+              quantity: Math.abs(it.quantity),
+              unit_cost_usd: it.unitCostUSD,
+              total_usd: Math.round(it.quantity * it.unitCostUSD * 100) / 100,
+              previous_stock: Number(prod.stock) || 0,
+              new_stock: newStock,
+              reason: 'Compra interna de inventario',
+              created_at: new Date().toISOString()
+            }]);
+          } catch (mvErr) {
+            console.warn('Aviso registrando movimiento de compra:', mvErr);
+          }
         }
       } catch (err) {
         console.warn('Aviso actualizando stock de producto:', err);
       }
     }
 
-    // Si es Crédito, registrar en accounts_payable
-    if (input.paymentType === 'CREDITO' && input.supplierId) {
+    // Si es Crédito, registrar y conciliar automáticamente el compromiso en accounts_payable
+    if (input.paymentType === 'CREDITO') {
+      const payablePayload = {
+        organization_id: orgId,
+        supplier_name: (input.supplierName || 'Proveedor').trim(),
+        doc_number: input.invoiceNumber.trim() || docNumber,
+        concept: `Compra de inventario (${docNumber})`,
+        origin: 'Compra Interna',
+        total_usd: totalUsd,
+        balance_usd: totalUsd,
+        status: 'PENDIENTE',
+        due_date: input.dueDate || new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10),
+        description: input.notes?.trim() || `Compra a crédito registrada bajo ${docNumber}`
+      };
+
+      // 1. Guardar en servidor proxy
       try {
-        await supabase.from('accounts_payable').insert([{
-          organization_id: orgId,
-          supplier_id: input.supplierId,
-          supplier_name: input.supplierName || 'Proveedor',
-          doc_number: input.invoiceNumber.trim() || docNumber,
-          concept: `Compra de inventario (${docNumber})`,
-          origin: 'Compra Interna',
-          total_usd: totalUsd,
-          balance_usd: totalUsd,
-          status: 'PENDIENTE',
-          due_date: input.dueDate || new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10),
-          description: input.notes?.trim() || null
-        }]);
+        await authenticatedFetch('/api/accounts-payable', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payablePayload)
+        });
+      } catch (apErr) {
+        console.warn('Aviso registrando cuenta por pagar en servidor:', apErr);
+      }
+
+      // 2. Guardar en Supabase accounts_payable
+      try {
+        await supabase.from('accounts_payable').insert([payablePayload]);
       } catch (err) {
-        console.warn('Aviso registrando cuenta por pagar:', err);
+        console.warn('Aviso registrando cuenta por pagar en Supabase:', err);
+      }
+
+      // 3. Guardar en caché local
+      if (typeof window !== 'undefined') {
+        const localP = JSON.parse(localStorage.getItem('frenyer_local_payables') || '[]');
+        localP.unshift({ id: 'pay-' + Date.now(), ...payablePayload });
+        localStorage.setItem('frenyer_local_payables', JSON.stringify(localP));
       }
     }
 

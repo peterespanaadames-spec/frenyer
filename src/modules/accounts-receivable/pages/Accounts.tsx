@@ -95,26 +95,12 @@ export function Accounts() {
         if (json.success) setBankAccounts(json.data || []);
       }
 
-      // 2. Fetch accounts receivable from Supabase with customer details and payments
-      const { data, error } = await supabase
-        .from('accounts_receivable')
-        .select(`
-          *,
-          customers (
-            name
-          ),
-          receivable_payments (
-            id,
-            amount_usd,
-            payment_date,
-            payment_method,
-            reference
-          )
-        `)
-        .order('created_at', { ascending: false });
-
-      if (error) {
-        throw error;
+      // 2. Fetch accounts receivable via proxy
+      const res = await authenticatedFetch('/api/accounts-receivable');
+      let data: any[] = [];
+      if (res.ok) {
+        const json = await res.json();
+        if (json.success) data = json.data || [];
       }
 
       const mapped: ReceivableRecord[] = (data || []).map((item: any) => {
@@ -192,39 +178,26 @@ export function Accounts() {
     }
 
     try {
-      const organizationId = await getActiveOrgId();
-      if (!organizationId) {
-        throw new Error('Inicia sesión con una membresía válida para registrar la cuenta.');
-      }
-
-      const { data: customer, error: customerError } = await supabase
-        .from('customers')
-        .select('id')
-        .eq('organization_id', organizationId)
-        .eq('name', manualEntity.trim())
-        .maybeSingle();
-      if (customerError) {
-        throw customerError;
-      }
-      if (!customer) {
-        throw new Error('El cliente no existe en esta organización. Regístralo primero en Clientes.');
-      }
-
       const dueDate = manualDueDate || new Date(Date.now() + 15 * 86400000).toISOString().slice(0, 10);
-      const { error: insertError } = await supabase.from('accounts_receivable').insert({
-        organization_id: organizationId,
-        customer_id: customer.id,
-        doc_number: manualDocNumber.trim(),
-        total_usd: total,
-        balance_usd: total,
-        status: 'PENDIENTE',
-        due_date: dueDate
+      const res = await authenticatedFetch('/api/accounts-receivable', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          customer_name: manualEntity.trim(), // Server backend proxy will look up customer id
+          doc_number: manualDocNumber.trim(),
+          total_usd: total,
+          balance_usd: total,
+          status: 'PENDIENTE',
+          due_date: dueDate,
+          concept: 'Cuenta manual'
+        })
       });
-      if (insertError) {
-        throw insertError;
-      }
 
-      showToast('Cuenta por cobrar registrada en Supabase.');
+      if (!res.ok) throw new Error('Error al guardar la cuenta en servidor.');
+      const json = await res.json();
+      if (!json.success) throw new Error(json.error || 'Error al guardar la cuenta.');
+
+      showToast('Cuenta por cobrar registrada.');
       setIsManualModalOpen(false);
       setManualEntity('');
       setManualDocNumber('');
@@ -233,7 +206,7 @@ export function Accounts() {
       await loadData();
     } catch (error) {
       showToast(
-        error instanceof Error ? error.message : 'Error al guardar la cuenta en Supabase.',
+        error instanceof Error ? error.message : 'Error al guardar la cuenta.',
         'info'
       );
     }

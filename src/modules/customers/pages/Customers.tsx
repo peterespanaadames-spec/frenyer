@@ -409,7 +409,7 @@ export function Customers() {
       <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
         
         {/* Toolbar Header */}
-        <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
+        <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12, width: 1000, maxWidth: '100%' }}>
           
           {/* Search Bar */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: '#fff', border: '1px solid var(--border)', borderRadius: 8, padding: '0 12px', minWidth: 320, flex: 1, maxWidth: 440 }}>
@@ -577,13 +577,6 @@ export function Customers() {
                           >
                             {client.status === 'Activo' ? <UserX size={13} /> : <UserCheck size={13} />}
                           </button>
-                          <button
-                            title="Eliminar"
-                            onClick={() => handleDeleteCustomer(client.id)}
-                            style={{ width: 28, height: 28, borderRadius: 6, border: '1px solid var(--border)', background: '#fff', color: '#ef4444', display: 'grid', placeItems: 'center', cursor: 'pointer' }}
-                          >
-                            <Trash2 size={13} />
-                          </button>
                         </div>
                       </td>
                     </tr>
@@ -624,7 +617,7 @@ export function Customers() {
             className="card"
             style={{
               width: '100%',
-              maxWidth: 480,
+              maxWidth: 600,
               padding: 0,
               overflow: 'hidden',
               boxShadow: '0 20px 40px rgba(0,0,0,0.2)',
@@ -636,15 +629,15 @@ export function Customers() {
               style={{
                 background: 'linear-gradient(135deg, #7c3aed 0%, #6d28d9 100%)',
                 color: 'white',
-                padding: '16px 20px',
+                padding: '20px 24px',
                 display: 'flex',
                 justifyContent: 'space-between',
                 alignItems: 'center'
               }}
             >
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <Users size={18} style={{ color: '#ddd6fe' }} />
-                <h3 style={{ margin: 0, fontSize: 15, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                <Users size={22} style={{ color: '#ddd6fe' }} />
+                <h3 style={{ margin: 0, fontSize: 18, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
                   {editingId ? 'EDITAR CLIENTE' : 'NUEVO CLIENTE'}
                 </h3>
               </div>
@@ -652,15 +645,15 @@ export function Customers() {
                 onClick={() => setIsModalOpen(false)}
                 style={{ background: 'transparent', border: 'none', color: '#ddd6fe', cursor: 'pointer' }}
               >
-                <X size={20} />
+                <X size={24} />
               </button>
             </div>
 
             {/* Modal Form Fields */}
-            <form onSubmit={handleSaveCustomer} style={{ padding: 22, display: 'flex', flexDirection: 'column', gap: 14 }}>
+            <form onSubmit={handleSaveCustomer} style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 20 }}>
               
               <div className="field">
-                <label style={{ fontSize: 11, fontWeight: 700, color: '#334155', textTransform: 'uppercase', marginBottom: 4 }}>
+                <label style={{ fontSize: 12, fontWeight: 700, color: '#334155', textTransform: 'uppercase', marginBottom: 8, display: 'block' }}>
                   NOMBRE COMPLETO / RAZÓN SOCIAL *
                 </label>
                 <input
@@ -669,18 +662,20 @@ export function Customers() {
                   onChange={(e) => setNameInput(e.target.value)}
                   placeholder="Ej: Inversiones Pérez C.A., María Gómez"
                   required
+                  style={{ height: 48, fontSize: 14 }}
                 />
               </div>
 
-              <div className="form-grid" style={{ gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
                 <div className="field">
-                  <label style={{ fontSize: 11, fontWeight: 700, color: '#334155', textTransform: 'uppercase', marginBottom: 4 }}>
+                  <label style={{ fontSize: 12, fontWeight: 700, color: '#334155', textTransform: 'uppercase', marginBottom: 8, display: 'block' }}>
                     TIPO IDENTIFICACIÓN *
                   </label>
                   <select
                     className="input"
                     value={docTypeInput}
                     onChange={(e) => setDocTypeInput(e.target.value)}
+                    style={{ height: 48, fontSize: 14 }}
                   >
                     <option value="Natural (V / E)">Natural (V / E)</option>
                     <option value="Jurídico (J)">Jurídico (J)</option>
@@ -690,22 +685,23 @@ export function Customers() {
                 </div>
 
                 <div className="field">
-                  <label style={{ fontSize: 11, fontWeight: 700, color: '#334155', textTransform: 'uppercase', marginBottom: 4 }}>
+                  <label style={{ fontSize: 12, fontWeight: 700, color: '#334155', textTransform: 'uppercase', marginBottom: 8, display: 'block' }}>
                     CÉDULA O RIF *
                   </label>
                   <input
                     className="input"
                     value={docNumberInput}
                     onChange={(e) => setDocNumberInput(e.target.value)}
-                    placeholder="Ej: V-12345678 o J-314569..."
+                    placeholder="Ej: V-12345678"
                     required
+                    style={{ height: 48, fontSize: 14 }}
                   />
                 </div>
               </div>
 
-              <div className="form-grid" style={{ gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
                 <div className="field">
-                  <label style={{ fontSize: 11, fontWeight: 700, color: '#334155', textTransform: 'uppercase', marginBottom: 4 }}>
+                  <label style={{ fontSize: 12, fontWeight: 700, color: '#334155', textTransform: 'uppercase', marginBottom: 8, display: 'block' }}>
                     TELÉFONO / WHATSAPP
                   </label>
                   <input
@@ -713,11 +709,12 @@ export function Customers() {
                     value={phoneInput}
                     onChange={(e) => setPhoneInput(e.target.value)}
                     placeholder="Ej: 0412-5551234"
+                    style={{ height: 48, fontSize: 14 }}
                   />
                 </div>
 
                 <div className="field">
-                  <label style={{ fontSize: 11, fontWeight: 700, color: '#334155', textTransform: 'uppercase', marginBottom: 4 }}>
+                  <label style={{ fontSize: 12, fontWeight: 700, color: '#334155', textTransform: 'uppercase', marginBottom: 8, display: 'block' }}>
                     LÍMITE DE CRÉDITO (USD)
                   </label>
                   <input
@@ -728,12 +725,13 @@ export function Customers() {
                     value={creditLimitInput}
                     onChange={(e) => setCreditLimitInput(e.target.value)}
                     placeholder="0"
+                    style={{ height: 48, fontSize: 14 }}
                   />
                 </div>
               </div>
 
               <div className="field">
-                <label style={{ fontSize: 11, fontWeight: 700, color: '#334155', textTransform: 'uppercase', marginBottom: 4 }}>
+                <label style={{ fontSize: 12, fontWeight: 700, color: '#334155', textTransform: 'uppercase', marginBottom: 8, display: 'block' }}>
                   CORREO ELECTRÓNICO
                 </label>
                 <input
@@ -742,18 +740,20 @@ export function Customers() {
                   value={emailInput}
                   onChange={(e) => setEmailInput(e.target.value)}
                   placeholder="Ej: cliente@ejemplo.com"
+                  style={{ height: 48, fontSize: 14 }}
                 />
               </div>
 
               <div className="field">
-                <label style={{ fontSize: 11, fontWeight: 700, color: '#334155', textTransform: 'uppercase', marginBottom: 4 }}>
+                <label style={{ fontSize: 12, fontWeight: 700, color: '#334155', textTransform: 'uppercase', marginBottom: 8, display: 'block' }}>
                   DIRECCIÓN
                 </label>
                 <input
                   className="input"
                   value={addressInput}
                   onChange={(e) => setAddressInput(e.target.value)}
-                  placeholder="Ej: Av. Bella Vista, Calle 72, Sector Tierra Negra"
+                  placeholder="Ej: Av. Bella Vista, Calle 72..."
+                  style={{ height: 48, fontSize: 14 }}
                 />
               </div>
 
@@ -762,6 +762,7 @@ export function Customers() {
                   type="button"
                   onClick={() => setIsModalOpen(false)}
                   style={{
+                    width: 100,
                     padding: '10px 16px',
                     borderRadius: 8,
                     border: '1px solid var(--border)',
@@ -811,148 +812,140 @@ export function Customers() {
           style={{
             position: 'fixed',
             top: 0,
+            left: 0,
             right: 0,
             bottom: 0,
-            width: 480,
-            background: '#fff',
-            boxShadow: '-4px 0 25px rgba(0,0,0,0.15)',
+            background: 'rgba(0,0,0,0.5)',
+            backdropFilter: 'blur(3px)',
+            display: 'grid',
+            placeItems: 'center',
             zIndex: 1050,
-            padding: 24,
-            display: 'flex',
-            flexDirection: 'column',
-            gap: 16,
-            overflowY: 'auto'
+            padding: 16
           }}
         >
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', borderBottom: '1px solid var(--border)', paddingBottom: 14 }}>
-            <div>
-              <span className="muted small" style={{ fontWeight: 800 }}>{selectedClient.code || selectedClient.id}</span>
-              <h2 style={{ margin: 0, fontSize: 18, fontWeight: 800, color: '#0f172a' }}>{selectedClient.name}</h2>
-              <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--brand-700)' }}>{selectedClient.doc_number}</span>
-            </div>
-            <button
-              onClick={() => setSelectedClient(null)}
-              style={{ background: 'transparent', border: 'none', color: '#94a3b8', cursor: 'pointer' }}
-            >
-              <X size={20} />
-            </button>
-          </div>
-
-          {/* Quick Metrics */}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-            <div style={{ border: '1px solid var(--border)', borderRadius: 8, padding: 12, background: '#fafbfc' }}>
-              <span className="muted small" style={{ fontSize: 10, fontWeight: 700 }}>TOTAL GASTADO</span>
-              <div style={{ fontSize: 18, fontWeight: 800, color: '#0f172a', marginTop: 2 }}>
-                ${(Number(selectedClient.total_spent_usd) || 0).toFixed(2)}
+          <div
+            style={{
+              width: 980,
+              height: 600,
+              background: '#fff',
+              boxShadow: '0 20px 40px rgba(0,0,0,0.2)',
+              borderRadius: 16,
+              padding: 24,
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 16,
+              overflowY: 'auto'
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', borderBottom: '1px solid var(--border)', paddingBottom: 14 }}>
+              <div>
+                <span className="muted small" style={{ fontWeight: 800 }}>{selectedClient.code || selectedClient.id}</span>
+                <h2 style={{ margin: 0, fontSize: 18, fontWeight: 800, color: '#0f172a' }}>{selectedClient.name}</h2>
+                <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--brand-700)' }}>{selectedClient.doc_number}</span>
               </div>
-              <span className="muted small" style={{ fontSize: 10, color: '#059669' }}>
-                ≈ {formatVES(convertUSDtoVES(Number(selectedClient.total_spent_usd) || 0, activeRate))}
-              </span>
-            </div>
-
-            <div style={{ border: '1px solid var(--border)', borderRadius: 8, padding: 12, background: '#fafbfc' }}>
-              <span className="muted small" style={{ fontSize: 10, fontWeight: 700 }}>LÍMITE DE CRÉDITO</span>
-              <div style={{ fontSize: 18, fontWeight: 800, color: 'var(--brand-700)', marginTop: 2 }}>
-                ${(Number(selectedClient.credit_limit) || 0).toFixed(2)}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <Button
+                  variant="primary"
+                  onClick={() => {
+                    const c = selectedClient;
+                    setSelectedClient(null);
+                    handleOpenEditModal(c);
+                  }}
+                  style={{ fontSize: 12 }}
+                >
+                  <Edit2 size={14} /> Editar Cliente
+                </Button>
+                <button
+                  onClick={() => setSelectedClient(null)}
+                  style={{ background: 'transparent', border: 'none', color: '#94a3b8', cursor: 'pointer' }}
+                >
+                  <X size={20} />
+                </button>
               </div>
-              <span className="muted small" style={{ fontSize: 10 }}>
-                {Number(selectedClient.credit_limit) > 0 ? 'Habilitado para CxC' : 'Solo Contado'}
-              </span>
             </div>
-          </div>
 
-          {/* Details List */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, fontSize: 12, background: '#f8fafc', padding: 12, borderRadius: 8, border: '1px solid var(--border)' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <Phone size={14} style={{ color: '#64748b' }} />
-              <span><b>Teléfono:</b> {selectedClient.phone || 'No registrado'}</span>
+            {/* Details List */}
+            <div style={{ display: 'flex', gap: 16, fontSize: 12, background: '#f8fafc', padding: 12, borderRadius: 8, border: '1px solid var(--border)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <Phone size={14} style={{ color: '#64748b' }} />
+                <span><b>Teléfono:</b> {selectedClient.phone || 'No registrado'}</span>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <Mail size={14} style={{ color: '#64748b' }} />
+                <span><b>Correo:</b> {selectedClient.email || 'No registrado'}</span>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <MapPin size={14} style={{ color: '#64748b' }} />
+                <span><b>Dirección:</b> {selectedClient.address || 'No registrada'}</span>
+              </div>
             </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <Mail size={14} style={{ color: '#64748b' }} />
-              <span><b>Correo:</b> {selectedClient.email || 'No registrado'}</span>
-            </div>
-            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
-              <MapPin size={14} style={{ color: '#64748b', marginTop: 2 }} />
-              <span><b>Dirección:</b> {selectedClient.address || 'No registrada'}</span>
-            </div>
-          </div>
 
-          {/* REAL-TIME: TOP PRODUCT PURCHASED */}
-          <div style={{ border: '1px solid var(--border)', borderRadius: 8, padding: 14, background: '#fff' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8, color: '#0f172a', fontWeight: 800, fontSize: 12 }}>
-              <Package size={15} style={{ color: 'var(--brand-500)' }} />
-              <span>PRODUCTO MÁS COMPRADO</span>
-            </div>
-            {isLoadingDetails ? (
-              <div style={{ fontSize: 12, color: '#64748b', textAlign: 'center', padding: 8 }}>Calculando...</div>
-            ) : topProducts.length > 0 ? (
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#f8fafc', padding: '8px 12px', borderRadius: 6, border: '1px solid #e2e8f0' }}>
-                <div>
-                  <div style={{ fontWeight: 700, fontSize: 12, color: '#1e293b' }}>{topProducts[0].name}</div>
-                  <span className="muted small" style={{ fontSize: 10 }}>SKU: {topProducts[0].sku}</span>
+            {/* Metrics */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 16 }}>
+              {/* Row 1: Total Gastado, Producto más Comprado, Ticket Promedio */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 16 }}>
+                <div style={{ border: '1px solid var(--border)', borderRadius: 8, padding: 12, background: '#fafbfc' }}>
+                  <span className="muted small" style={{ fontSize: 10, fontWeight: 700 }}>TOTAL GASTADO</span>
+                  <div style={{ fontSize: 18, fontWeight: 800, color: '#0f172a', marginTop: 2 }}>
+                    ${clientOrders.reduce((sum, ord) => sum + (Number(ord.total_usd) || 0), 0).toFixed(2)}
+                  </div>
                 </div>
-                <div style={{ textAlign: 'right' }}>
-                  <div style={{ fontWeight: 800, fontSize: 12, color: '#059669' }}>{topProducts[0].total_qty} unids</div>
-                  <span className="muted small" style={{ fontSize: 10 }}>${topProducts[0].total_spent.toFixed(2)}</span>
-                </div>
-              </div>
-            ) : (
-              <div style={{ fontSize: 12, color: '#94a3b8', fontStyle: 'italic' }}>Sin compras registradas aún.</div>
-            )}
-          </div>
-
-          {/* REAL-TIME: LAST ORDERS */}
-          <div style={{ border: '1px solid var(--border)', borderRadius: 8, padding: 14, background: '#fff', flex: 1, display: 'flex', flexDirection: 'column' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 10, color: '#0f172a', fontWeight: 800, fontSize: 12 }}>
-              <ShoppingBag size={15} style={{ color: 'var(--brand-500)' }} />
-              <span>ÚLTIMAS ÓRDENES Y FACTURAS ({clientOrders.length})</span>
-            </div>
-
-            {isLoadingDetails ? (
-              <div style={{ fontSize: 12, color: '#64748b', textAlign: 'center', padding: 20 }}>Cargando órdenes desde Supabase...</div>
-            ) : clientOrders.length > 0 ? (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 220, overflowY: 'auto' }}>
-                {clientOrders.map(ord => (
-                  <div key={ord.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 10px', background: '#f8fafc', borderRadius: 6, border: '1px solid #e2e8f0', fontSize: 11 }}>
+                <div style={{ border: '1px solid var(--border)', borderRadius: 8, padding: 12, background: '#fff' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8, color: '#0f172a', fontWeight: 800, fontSize: 10 }}>
+                    <Package size={14} style={{ color: 'var(--brand-500)' }} />
+                    <span>PRODUCTO MÁS COMPRADO</span>
+                  </div>
+                  {isLoadingDetails ? (
+                    <div style={{ fontSize: 12, color: '#64748b' }}>Calculando...</div>
+                  ) : topProducts.length > 0 ? (
                     <div>
-                      <div style={{ fontWeight: 700, color: '#0f172a', display: 'flex', alignItems: 'center', gap: 6 }}>
-                        <span>{ord.doc_number}</span>
-                        <span style={{ fontSize: 9, background: '#e0e7ff', color: '#3730a3', padding: '2px 6px', borderRadius: 4 }}>{ord.doc_type}</span>
-                      </div>
-                      <span className="muted small" style={{ fontSize: 10 }}>{new Date(ord.created_at).toLocaleDateString()}</span>
+                      <div style={{ fontWeight: 700, fontSize: 12, color: '#1e293b' }}>{topProducts[0].name}</div>
+                      <div style={{ fontWeight: 800, fontSize: 12, color: '#059669' }}>{topProducts[0].total_qty} unids</div>
                     </div>
-                    <div style={{ textAlign: 'right' }}>
-                      <div style={{ fontWeight: 800, color: '#059669' }}>${(Number(ord.total_usd) || 0).toFixed(2)}</div>
-                      <span style={{ fontSize: 9, color: ord.status === 'COMPLETADA' ? '#059669' : '#d97706', fontWeight: 700 }}>{ord.status}</span>
-                    </div>
+                  ) : (
+                    <div style={{ fontSize: 12, color: '#94a3b8' }}>Sin compras.</div>
+                  )}
+                </div>
+                <div style={{ border: '1px solid var(--border)', borderRadius: 8, padding: 12, background: '#fafbfc' }}>
+                  <span className="muted small" style={{ fontSize: 10, fontWeight: 700 }}>TICKET PROMEDIO</span>
+                  <div style={{ fontSize: 16, fontWeight: 800, color: '#0f172a', marginTop: 2 }}>
+                    ${(clientOrders.length > 0 ? (clientOrders.reduce((sum, ord) => sum + (Number(ord.total_usd) || 0), 0) / clientOrders.length) : 0).toFixed(2)}
+                  </div>
+                </div>
+              </div>
+
+              {/* Row 2: Fecha de Ultima Compra & Cuenta por Cobrar */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+                <div style={{ border: '1px solid var(--border)', borderRadius: 8, padding: 12, background: '#fafbfc' }}>
+                  <span className="muted small" style={{ fontSize: 10, fontWeight: 700 }}>FECHA DE ÚLTIMA COMPRA</span>
+                  <div style={{ fontSize: 16, fontWeight: 800, color: '#0f172a', marginTop: 2 }}>
+                    {clientOrders.length > 0 ? new Date(clientOrders[0].created_at).toLocaleDateString() : '—'}
+                  </div>
+                </div>
+                <div style={{ border: '1px solid var(--border)', borderRadius: 8, padding: 12, background: '#fafbfc' }}>
+                  <span className="muted small" style={{ fontSize: 10, fontWeight: 700 }}>CUENTA POR COBRAR</span>
+                  <div style={{ fontSize: 16, fontWeight: 800, color: '#ef4444', marginTop: 2 }}>
+                    ${clientOrders.filter(o => o.status === 'Pendiente' || o.status === 'Crédito').reduce((sum, ord) => sum + (Number(ord.total_usd) || 0), 0).toFixed(2)}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Last Orders */}
+            <div style={{ border: '1px solid var(--border)', borderRadius: 8, padding: 14, background: '#fff', flex: 1, display: 'flex', flexDirection: 'column' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 10, color: '#0f172a', fontWeight: 800, fontSize: 12 }}>
+                <ShoppingBag size={15} style={{ color: 'var(--brand-500)' }} />
+                <span>ÚLTIMAS ÓRDENES ({clientOrders.length})</span>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8, overflowY: 'auto' }}>
+                {clientOrders.map(ord => (
+                  <div key={ord.id} style={{ padding: '8px 10px', background: '#f8fafc', borderRadius: 6, border: '1px solid #e2e8f0', fontSize: 11 }}>
+                    <div style={{ fontWeight: 700, color: '#0f172a' }}>{ord.doc_number}</div>
+                    <div style={{ fontWeight: 800, color: '#059669' }}>${(Number(ord.total_usd) || 0).toFixed(2)}</div>
                   </div>
                 ))}
               </div>
-            ) : (
-              <div style={{ fontSize: 12, color: '#94a3b8', fontStyle: 'italic', padding: '16px 0', textAlign: 'center' }}>
-                No hay órdenes emitidas para este cliente.
-              </div>
-            )}
-          </div>
-
-          <div style={{ borderTop: '1px solid var(--border)', paddingTop: 14, display: 'flex', gap: 8 }}>
-            <Button
-              variant="primary"
-              onClick={() => {
-                const c = selectedClient;
-                setSelectedClient(null);
-                handleOpenEditModal(c);
-              }}
-              style={{ flex: 1, fontSize: 12 }}
-            >
-              <Edit2 size={14} /> Editar Cliente
-            </Button>
-            <Button
-              style={{ background: '#fff', color: '#ef4444', borderColor: '#ef4444', fontSize: 12 }}
-              onClick={() => handleDeleteCustomer(selectedClient.id)}
-            >
-              <Trash2 size={14} /> Eliminar
-            </Button>
+            </div>
           </div>
         </div>
       )}
