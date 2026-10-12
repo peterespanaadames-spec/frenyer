@@ -1,0 +1,6 @@
+{
+  "summary":  "Plan to fix product deletion, fix stock adjustments, remove +/- stock buttons, and add a movement history modal for products in the Inventory module.",
+  "updatedAt":  "2026-10-12T06:02:34.946286594Z",
+  "requestFeedback":  true,
+  "userFacing":  true
+}

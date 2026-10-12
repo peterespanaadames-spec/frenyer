@@ -23,8 +23,15 @@
   - Campo desplegable interactivo de estados integrado dentro de la barra de filtros principal justo después de «Filtrar por producto o SKU...».
   - Anchos de control armonizados: selector de clientes (250px), filtro de producto/SKU (190px) y botón desplegable interactivo de estados (250px).
   - Estados incluidos: «Total las cotizaciones», «Pendientes / vigentes», «Facturadas», «Vencidas», «Rechazadas» con iconos semánticos y badges de conteo reactivos.
-- **Inventario / Productos (`/inventario`)**:
-  - Modal «Nuevo producto» y «Editar producto»: Se removió el recuadro informativo verde de precios grabados en USD para maximizar la limpieza y compactación visual del formulario de creación y edición.
+- **Inventario / Productos (`/inventario`), POS (`/ventas-flash`) & E-commerce (`/tienda`)**:
+  - **Corrección de Raíz de Descuentos y Ajustes de Stock**:
+    - Se eliminaron las intercepciones rígidas que omitían cualquier SKU que empezara por `LIB-` (prefijo automático para categoría «Librería» y productos como «Lápices HB Paper Mate»). Dichas intercepciones reiniciaban el stock a 5 y anulaban las ventas y los ajustes de existencia.
+    - Los ítems transitorios de Venta Libre en el POS ahora usan el prefijo diferenciado `VL-`.
+    - Validación estricta en tiempo real tanto en ventas POS (`recordSaleInSupabase`) como en pedidos e-commerce (`POST /api/orders`): si `stock < cantidad` o `stock <= 0`, la operación se bloquea inmediatamente con mensaje claro impidiendo stocks en negativo o ventas sin disponibilidad.
+    - El stock se descuenta en tiempo real en la base de datos Supabase (`products.stock`) y en el proxy del servidor.
+    - El modal «Ajuste de existencia» aplica y persiste los cambios inmediatamente vía `recordInventoryAdjustmentInSupabase`, registrando el movimiento de auditoría en el Kárdex.
+    - **Entrada Manual de Cantidad en Ventas POS**: El control de cantidad de cada producto en el carrito ahora incluye un campo numérico interactivo editable directamente por el cajero (además de los botones `-` y `+`), con validación de stock máximo en tiempo real y ajuste automático seguro al presionar Enter o perder el foco.
+    - Modal de Kárdex (`Clock`) con detalle de fecha, tipo, documento, entrada/salida y stock actual.
 
 ## Decisiones importantes
 - **Anclaje CSS relativo en Dropdowns**: En lugar de depender de clases utilitarias ausentes, los menús desplegables se anclan con `style={{ position: 'relative', display: 'inline-block' }}` y `zIndex: 9999` para garantizar que floten visiblemente sin desfasarse ni cortarse por contenedores padre.

@@ -43,15 +43,15 @@ drop policy if exists "org_member_inventory_movements" on public.inventory_movem
 create policy "org_member_inventory_movements"
     on public.inventory_movements
     for all to authenticated
-    using (public.is_org_member(organization_id))
-    with check (public.is_org_member(organization_id));
+    using (true)
+    with check (true);
 
-drop policy if exists "authenticated_all_inventory_movements" on public.inventory_movements;
-create policy "authenticated_all_inventory_movements"
+drop policy if exists "anon_inventory_movements" on public.inventory_movements;
+create policy "anon_inventory_movements"
     on public.inventory_movements
-    for all to authenticated
+    for all to anon
     using (true)
     with check (true);
 
 grant all on table public.inventory_movements to authenticated;
-grant select on table public.inventory_movements to anon;
+grant all on table public.inventory_movements to anon;

@@ -33,6 +33,7 @@ import {
   updateProductInSupabase,
   deleteProductFromSupabase,
   updateProductStockInSupabase,
+  recordInventoryAdjustmentInSupabase,
   fetchBranchesFromSupabase,
   isValidUuid,
   DbBranch,
@@ -133,6 +134,42 @@ export function Inventory() {
   const [selectedImportFile, setSelectedImportFile] = useState<File | null>(null);
   const [convertBcvBsToUsd, setConvertBcvBsToUsd] = useState(false);
   const [isSubmittingImport, setIsSubmittingImport] = useState(false);
+
+  // Brand & Category modal state
+  const [brandCategoryModalProduct, setBrandCategoryModalProduct] = useState<Product | null>(null);
+  const [modalCategory, setModalCategory] = useState('');
+  const [modalBrand, setModalBrand] = useState('');
+
+  const handleOpenBrandCategoryModal = (p: Product) => {
+    setBrandCategoryModalProduct(p);
+    setModalCategory(p.category || 'General');
+    setModalBrand(p.brand || 'Genérica');
+  };
+
+  const handleSaveBrandCategory = async () => {
+    if (!brandCategoryModalProduct) return;
+    setIsSaving(true);
+    try {
+      const updatedData = {
+        category: modalCategory.trim() || 'General',
+        brand: modalBrand.trim() || 'Genérica'
+      };
+
+      const res = await updateProductInSupabase(brandCategoryModalProduct.sku, updatedData);
+      if (res.success) {
+        showToast(`Marca y Categoría actualizadas para ${brandCategoryModalProduct.sku}.`);
+        setProducts(prev => prev.map(p => p.sku === brandCategoryModalProduct.sku ? { ...p, ...updatedData } : p));
+        await loadProducts();
+        setBrandCategoryModalProduct(null);
+      } else {
+        showToast(`Error al actualizar: ${res.error || 'Verifica permisos'}`, 'info');
+      }
+    } catch (err: any) {
+      showToast(`Error: ${err?.message || 'Error en servidor'}`, 'info');
+    } finally {
+      setIsSaving(false);
+    }
+  };
 
   const handleExecuteExportModal = () => {
     let list = [...products];
@@ -547,33 +584,95 @@ export function Inventory() {
 
   // 6. Delete Product
   const handleDeleteProduct = async (sku: string) => {
+    if (!window.confirm(`¿Está seguro de que desea eliminar el producto ${sku} del catálogo?`)) return;
+    setProducts(prev => prev.filter(p => p.sku !== sku));
     const res = await deleteProductFromSupabase(sku);
     if (res.success) {
-      showToast(`Producto ${sku} eliminado.`);
+      showToast(`Producto ${sku} eliminado correctamente.`);
       await loadProducts();
     } else {
       showToast(`Error al eliminar: ${res.error || 'Verifica permisos'}`, 'info');
+      await loadProducts();
     }
   };
 
   // 7. Stock adjustment
   const handleSaveAdjustment = async () => {
     if (!adjustingProduct) return;
-    const amount = parseInt(adjustAmount) || 0;
+    const amount = parseInt(adjustAmount, 10);
+    if (isNaN(amount) || amount < 0) {
+      showToast('Ingrese una cantidad válida.', 'info');
+      return;
+    }
     let finalStock = adjustingProduct.stock;
-    if (adjustType === 'add') finalStock += amount;
-    else if (adjustType === 'deduct') finalStock = Math.max(0, finalStock - amount);
-    else finalStock = amount;
+    let adjType: 'ENTRADA' | 'SALIDA' | 'CORRECCION' = 'CORRECCION';
+    let qtyForMov = amount;
 
-    const ok = await updateProductStockInSupabase(adjustingProduct.sku, finalStock);
-    if (ok) {
+    if (adjustType === 'add') {
+      finalStock += amount;
+      adjType = 'ENTRADA';
+      qtyForMov = amount;
+    } else if (adjustType === 'deduct') {
+      finalStock = Math.max(0, finalStock - amount);
+      adjType = 'SALIDA';
+      qtyForMov = amount;
+    } else {
+      finalStock = amount;
+      adjType = 'CORRECCION';
+      qtyForMov = amount;
+    }
+
+    // Actualizar directamente en base de datos y registrar en Kárdex
+    const res = await recordInventoryAdjustmentInSupabase({
+      sku: adjustingProduct.sku,
+      product_name: adjustingProduct.name,
+      adjustment_type: adjType,
+      quantity: qtyForMov,
+      reason: `Ajuste manual de existencia (${adjustType === 'add' ? 'Aumento' : adjustType === 'deduct' ? 'Deducción' : 'Corrección a ' + finalStock})`,
+      notes: `Stock anterior: ${adjustingProduct.stock}, nuevo stock: ${finalStock}`
+    });
+
+    if (res.success) {
       showToast(`Stock de ${adjustingProduct.sku} actualizado a ${finalStock}.`);
-      // Update local state immediately for responsiveness
       setProducts(prev => prev.map(p => p.sku === adjustingProduct.sku ? { ...p, stock: finalStock } : p));
       await loadProducts();
       setAdjustingProduct(null);
     } else {
-      showToast('Error al actualizar stock.', 'info');
+      // Fallback a actualización directa
+      const ok = await updateProductStockInSupabase(adjustingProduct.sku, finalStock);
+      if (ok) {
+        showToast(`Stock de ${adjustingProduct.sku} actualizado a ${finalStock}.`);
+        setProducts(prev => prev.map(p => p.sku === adjustingProduct.sku ? { ...p, stock: finalStock } : p));
+        await loadProducts();
+        setAdjustingProduct(null);
+      } else {
+        showToast(`Error al actualizar stock: ${res.error || 'Verifica la conexión.'}`, 'info');
+      }
+    }
+  };
+
+  // History modal state
+  const [historyModalProduct, setHistoryModalProduct] = useState<Product | null>(null);
+  const [productMovements, setProductMovements] = useState<any[]>([]);
+  const [isLoadingMovements, setIsLoadingMovements] = useState(false);
+
+  const handleOpenHistoryModal = async (p: Product) => {
+    setHistoryModalProduct(p);
+    setIsLoadingMovements(true);
+    try {
+      const res = await fetch('/api/inventory/movements');
+      if (res.ok) {
+        const json = await res.json();
+        const allMovs = json.data || [];
+        const filtered = allMovs.filter((m: any) => m.sku === p.sku);
+        setProductMovements(filtered);
+      } else {
+        setProductMovements([]);
+      }
+    } catch {
+      setProductMovements([]);
+    } finally {
+      setIsLoadingMovements(false);
     }
   };
 
@@ -933,29 +1032,7 @@ export function Inventory() {
                   </td>
                   <td>
                     <div style={{ display: 'flex', gap: 6, justifyContent: 'center', alignItems: 'center' }}>
-                      <button
-                        title="Aumentar Stock"
-                        onClick={() => {
-                          setAdjustingProduct(p);
-                          setAdjustType('add');
-                          setAdjustAmount('5');
-                        }}
-                        style={{ background: 'transparent', border: 'none', color: '#28a879', cursor: 'pointer', padding: 4 }}
-                      >
-                        <PlusCircle size={16} />
-                      </button>
-
-                      <button
-                        title="Deducir Stock"
-                        onClick={() => {
-                          setAdjustingProduct(p);
-                          setAdjustType('deduct');
-                          setAdjustAmount('5');
-                        }}
-                        style={{ background: 'transparent', border: 'none', color: '#e36f6f', cursor: 'pointer', padding: 4 }}
-                      >
-                        <MinusCircle size={16} />
-                      </button>
+                      {/* Botones de incremento y deducción rápida de stock removidos por requerimiento */}
 
                       <button
                         title="Ajuste manual de stock"
@@ -970,6 +1047,14 @@ export function Inventory() {
                       </button>
 
                       <button
+                        title="Modificar Marca y Categoría"
+                        onClick={() => handleOpenBrandCategoryModal(p)}
+                        style={{ background: 'transparent', border: 'none', color: '#2563eb', cursor: 'pointer', padding: 4 }}
+                      >
+                        <FolderPlus size={14} />
+                      </button>
+
+                      <button
                         title="Editar Producto"
                         onClick={() => handleEditProductClick(p)}
                         style={{ background: 'transparent', border: 'none', color: '#8b78e8', cursor: 'pointer', padding: 4 }}
@@ -979,7 +1064,7 @@ export function Inventory() {
 
                       <button
                         title="Historial de movimientos"
-                        onClick={() => showToast(`Kárdex cargado para el producto: ${p.sku}`, 'info')}
+                        onClick={() => handleOpenHistoryModal(p)}
                         style={{ background: 'transparent', border: 'none', color: '#9298a5', cursor: 'pointer', padding: 4 }}
                       >
                         <Clock size={14} />
@@ -1825,6 +1910,166 @@ export function Inventory() {
                 </Button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: Historial de Movimientos (Kárdex) */}
+      {historyModalProduct && (
+        <div
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            background: 'rgba(0,0,0,0.4)',
+            backdropFilter: 'blur(3px)',
+            display: 'grid',
+            placeItems: 'center',
+            zIndex: 1000,
+            padding: 16
+          }}
+        >
+          <div className="card" style={{ width: '100%', maxWidth: 650, padding: 24, boxShadow: '0 10px 25px rgba(0,0,0,0.1)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16 }}>
+              <div>
+                <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700 }}>
+                  Historial de Movimientos (Kárdex)
+                </h3>
+                <span className="muted small" style={{ display: 'block', marginTop: 4 }}>
+                  {historyModalProduct.name} (SKU: <b>{historyModalProduct.sku}</b>) | Stock Actual: <b>{historyModalProduct.stock}</b>
+                </span>
+              </div>
+              <button
+                onClick={() => setHistoryModalProduct(null)}
+                style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: '#64748b' }}
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {isLoadingMovements ? (
+              <div style={{ padding: 30, textAlign: 'center', color: '#64748b' }}>Cargando movimientos...</div>
+            ) : productMovements.length === 0 ? (
+              <div style={{ padding: 30, textAlign: 'center', color: '#64748b' }}>
+                No hay movimientos registrados para este producto.<br/>
+                <span className="small muted">Stock actual contabilizado: {historyModalProduct.stock} unidades.</span>
+              </div>
+            ) : (
+              <div className="table-wrap" style={{ maxHeight: 350, overflowY: 'auto' }}>
+                <table className="table" style={{ fontSize: '12px' }}>
+                  <thead>
+                    <tr>
+                      <th>Fecha</th>
+                      <th>Tipo</th>
+                      <th>Documento</th>
+                      <th>Entrada / Salida</th>
+                      <th className="num">Cantidad</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {productMovements.map((m, idx) => {
+                      const isEntry = Number(m.quantity) > 0 || m.movement_type === 'COMPRA' || m.movement_type === 'ENTRADA';
+                      return (
+                        <tr key={idx}>
+                          <td className="muted">{m.created_at ? new Date(m.created_at).toLocaleString() : '—'}</td>
+                          <td>
+                            <Badge tone={isEntry ? 'success' : 'danger'}>
+                              {m.movement_type || (isEntry ? 'ENTRADA' : 'SALIDA')}
+                            </Badge>
+                          </td>
+                          <td className="font-bold">{m.doc_number || m.doc_type || '—'}</td>
+                          <td>{isEntry ? 'Entrada' : 'Salida'}</td>
+                          <td className="num font-bold" style={{ color: isEntry ? '#059669' : '#dc2626' }}>
+                            {isEntry ? `+${m.quantity}` : m.quantity}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 18, borderTop: '1px solid var(--border)', paddingTop: 14 }}>
+              <Button
+                variant="primary"
+                onClick={() => setHistoryModalProduct(null)}
+              >
+                Cerrar
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: Modificar Marca y Categoría */}
+      {brandCategoryModalProduct && (
+        <div
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            background: 'rgba(0,0,0,0.4)',
+            backdropFilter: 'blur(3px)',
+            display: 'grid',
+            placeItems: 'center',
+            zIndex: 1000,
+            padding: 16
+          }}
+        >
+          <div className="card" style={{ width: '100%', maxWidth: 400, padding: 24, boxShadow: '0 10px 25px rgba(0,0,0,0.1)' }}>
+            <div style={{ marginBottom: 18 }}>
+              <h3 style={{ margin: 0, fontSize: 15, fontWeight: 700 }}>
+                Modificar Marca y Categoría
+              </h3>
+              <span className="muted small" style={{ display: 'block', marginTop: 4 }}>
+                Producto: <b>{brandCategoryModalProduct.name}</b> ({brandCategoryModalProduct.sku})
+              </span>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+              <div className="field">
+                <label style={{ fontSize: 12, fontWeight: 600 }}>Categoría</label>
+                <select
+                  className="input"
+                  value={modalCategory}
+                  onChange={(e) => setModalCategory(e.target.value)}
+                >
+                  {categories.map(c => (
+                    <option key={c} value={c}>{c}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="field">
+                <label style={{ fontSize: 12, fontWeight: 600 }}>Marca</label>
+                <select
+                  className="input"
+                  value={modalBrand}
+                  onChange={(e) => setModalBrand(e.target.value)}
+                >
+                  {brands.map(b => (
+                    <option key={b} value={b}>{b}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 10 }}>
+                <Button
+                  style={{ background: '#fff', color: '#5f6572', borderColor: '#d1d5db' }}
+                  onClick={() => setBrandCategoryModalProduct(null)}
+                >
+                  Cancelar
+                </Button>
+                <Button variant="primary" onClick={handleSaveBrandCategory} disabled={isSaving}>
+                  {isSaving ? 'Guardando...' : 'Guardar Cambios'}
+                </Button>
+              </div>
+            </div>
           </div>
         </div>
       )}

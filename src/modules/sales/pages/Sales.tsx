@@ -413,7 +413,8 @@ export function Sales() {
       prev
         .map(item => {
           if (item.sku === sku) {
-            const newQty = item.quantity + delta;
+            const currentQty = Number(item.quantity) || 1;
+            const newQty = currentQty + delta;
             if (newQty > item.stock) {
               setStockAlertModal({
                 isOpen: true,
@@ -429,7 +430,57 @@ export function Sales() {
           }
           return item;
         })
-        .filter(item => item.quantity > 0)
+        .filter(item => (Number(item.quantity) || 0) > 0)
+    );
+  };
+
+  const setManualQuantity = (sku: string, rawVal: string) => {
+    setCart(prev =>
+      prev.map(item => {
+        if (item.sku === sku) {
+          if (rawVal === '') {
+            return { ...item, quantity: '' as any };
+          }
+          const parsed = parseInt(rawVal, 10);
+          if (isNaN(parsed)) {
+            return item;
+          }
+          if (parsed <= 0) {
+            return { ...item, quantity: 1 };
+          }
+          if (parsed > item.stock) {
+            setStockAlertModal({
+              isOpen: true,
+              productName: item.name,
+              sku: item.sku,
+              availableStock: item.stock,
+              message: `No se pueden colocar ${parsed} unidades de "${item.name}". El stock máximo disponible en inventario es de ${item.stock} unidades.`
+            });
+            showToast(`⚠️ Stock máximo alcanzado (${item.stock}) para ${item.name}`, 'info');
+            return { ...item, quantity: item.stock };
+          }
+          return { ...item, quantity: parsed };
+        }
+        return item;
+      })
+    );
+  };
+
+  const handleQuantityBlur = (sku: string) => {
+    setCart(prev =>
+      prev.map(item => {
+        if (item.sku === sku) {
+          const qty = Number(item.quantity);
+          if (!qty || isNaN(qty) || qty < 1) {
+            return { ...item, quantity: 1 };
+          }
+          if (qty > item.stock) {
+            return { ...item, quantity: item.stock };
+          }
+          return { ...item, quantity: Math.floor(qty) };
+        }
+        return item;
+      })
     );
   };
 
@@ -447,7 +498,7 @@ export function Sales() {
     const price = parseFloat(freeItemPriceUSD);
     if (isNaN(price) || price <= 0) return;
 
-    const sku = `LIB-${Date.now().toString().slice(-4)}`;
+    const sku = `VL-${Date.now().toString().slice(-4)}`;
     const cleanName = freeItemName.trim() || 'Venta Libre';
     setCart(prev => [
       ...prev,
@@ -457,21 +508,21 @@ export function Sales() {
         name: cleanName,
         priceUSD: price,
         quantity: 1,
-        stock: 5
+        stock: 9999
       }
     ]);
     setIsFreeItemOpen(false);
     setFreeItemPriceUSD('');
     showToast('Ítem de venta libre agregado.');
 
-    // Asegurar que el ítem de venta libre exista en el catálogo de Supabase
+    // Asegurar que el ítem de venta libre exista en el catálogo de Supabase si se factura
     createProductInSupabase({
       sku,
       name: cleanName,
       category: 'Venta Libre',
       cost_usd: 0,
       price_usd: price,
-      stock: 5,
+      stock: 9999,
       min_stock: 0,
       unit: 'unidad',
       status: 'Activo'
@@ -479,7 +530,7 @@ export function Sales() {
   };
 
   // Subtotal calculations
-  const rawSubtotalUSD = cart.reduce((sum, item) => sum + item.priceUSD * item.quantity, 0);
+  const rawSubtotalUSD = cart.reduce((sum, item) => sum + item.priceUSD * (Number(item.quantity) || 0), 0);
   const discountAmountUSD = rawSubtotalUSD * (discountPercent / 100);
   const taxableBaseUSD = Math.max(0, rawSubtotalUSD - discountAmountUSD);
   const taxAmountUSD = isTaxSubject ? taxableBaseUSD * 0.16 : 0;
@@ -494,15 +545,16 @@ export function Sales() {
       return;
     }
 
-    // Validate that no item in cart exceeds available stock or is out of stock
+    // Normalize and validate that no item in cart exceeds available stock or is out of stock
     for (const item of cart) {
-      if (item.stock <= 0 || item.quantity > item.stock) {
+      const q = Math.max(1, Number(item.quantity) || 1);
+      if (item.stock <= 0 || q > item.stock) {
         setStockAlertModal({
           isOpen: true,
           productName: item.name,
           sku: item.sku,
           availableStock: item.stock,
-          message: `El producto "${item.name}" no cuenta con stock suficiente disponible (Solicitados: ${item.quantity}, Disponibles en inventario: ${item.stock}). Por favor ajusta el carrito antes de continuar.`
+          message: `El producto "${item.name}" no cuenta con stock suficiente disponible (Solicitados: ${q}, Disponibles en inventario: ${item.stock}). Por favor ajusta el carrito antes de continuar.`
         });
         showToast(`⚠️ Producto sin stock suficiente: ${item.name}`, 'info');
         return;
@@ -764,15 +816,18 @@ export function Sales() {
     const customerId = matchedCustomer?.id || undefined;
 
     // 1. Record Sale in Supabase live database
-    const saleItemsPayload = cart.map(item => ({
-      sku: item.sku,
-      name: item.name,
-      quantity: item.quantity,
-      unit_price_usd: item.priceUSD,
-      total_usd: item.priceUSD * item.quantity,
-      total_ves: convertUSDtoVES(item.priceUSD * item.quantity, activeRate),
-      sale_id: ''
-    }));
+    const saleItemsPayload = cart.map(item => {
+      const q = Math.max(1, Number(item.quantity) || 1);
+      return {
+        sku: item.sku,
+        name: item.name,
+        quantity: q,
+        unit_price_usd: item.priceUSD,
+        total_usd: item.priceUSD * q,
+        total_ves: convertUSDtoVES(item.priceUSD * q, activeRate),
+        sale_id: ''
+      };
+    });
 
     const paymentsPayload = payments.map(p => ({
       method: p.method,
@@ -1216,7 +1271,8 @@ export function Sales() {
                   </div>
                 ) : (
                   cart.map(item => {
-                    const itemTotalVES = convertUSDtoVES(item.priceUSD * item.quantity, activeRate);
+                    const itemQty = Number(item.quantity) || 0;
+                    const itemTotalVES = convertUSDtoVES(item.priceUSD * itemQty, activeRate);
                     return (
                       <div
                         key={item.sku}
@@ -1241,19 +1297,48 @@ export function Sales() {
 
                         {/* Stepper & Price */}
                         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                          <div style={{ display: 'flex', alignItems: 'center', border: '1px solid var(--border)', borderRadius: 6, background: '#fff' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', border: '1px solid var(--border)', borderRadius: 6, background: '#fff', overflow: 'hidden' }}>
                             <button
+                              type="button"
+                              title="Disminuir cantidad (-1)"
                               onClick={() => updateQuantity(item.sku, -1)}
-                              style={{ width: 24, height: 24, background: 'transparent', border: 'none', cursor: 'pointer', fontWeight: 700, color: '#64748b' }}
+                              style={{ width: 24, height: 26, background: 'transparent', border: 'none', cursor: 'pointer', fontWeight: 700, color: '#64748b', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
                             >
                               -
                             </button>
-                            <span style={{ fontSize: 12, fontWeight: 700, minWidth: 20, textAlign: 'center' }}>
-                              {item.quantity}
-                            </span>
+                            <input
+                              type="number"
+                              min="1"
+                              max={item.stock}
+                              value={item.quantity === ('' as any) ? '' : item.quantity}
+                              onChange={(e) => setManualQuantity(item.sku, e.target.value)}
+                              onBlur={() => handleQuantityBlur(item.sku)}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') {
+                                  (e.target as HTMLInputElement).blur();
+                                }
+                              }}
+                              style={{
+                                width: 44,
+                                height: 26,
+                                textAlign: 'center',
+                                border: 'none',
+                                borderLeft: '1px solid var(--border)',
+                                borderRight: '1px solid var(--border)',
+                                fontSize: 12,
+                                fontWeight: 700,
+                                color: '#0f172a',
+                                background: '#fff',
+                                outline: 'none',
+                                padding: 0
+                              }}
+                              title={`Stock disponible: ${item.stock}. Puedes escribir la cantidad deseada.`}
+                            />
                             <button
+                              type="button"
+                              title="Aumentar cantidad (+1)"
                               onClick={() => updateQuantity(item.sku, 1)}
-                              style={{ width: 24, height: 24, background: 'transparent', border: 'none', cursor: 'pointer', fontWeight: 700, color: '#64748b' }}
+                              style={{ width: 24, height: 26, background: 'transparent', border: 'none', cursor: 'pointer', fontWeight: 700, color: '#64748b', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
                             >
                               +
                             </button>
@@ -1264,7 +1349,7 @@ export function Sales() {
                               Bs. {itemTotalVES.toLocaleString('es-VE', { minimumFractionDigits: 2 })}
                             </b>
                             <span className="muted small" style={{ fontSize: 10 }}>
-                              ${(item.priceUSD * item.quantity).toFixed(2)}
+                              ${(item.priceUSD * itemQty).toFixed(2)}
                             </span>
                           </div>
 

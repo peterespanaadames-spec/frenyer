@@ -672,22 +672,6 @@ export async function fetchProductsFromSupabase(): Promise<DbProduct[]> {
 export async function fetchProductBySkuFromSupabase(sku: string): Promise<DbProduct | null> {
   if (!sku) return null;
 
-  // Free item synthetic product
-  if (sku.startsWith('LIB-')) {
-    return {
-      sku,
-      name: 'Venta Libre',
-      category: 'Venta Libre',
-      brand: 'Venta Libre',
-      cost_usd: 0,
-      price_usd: 0,
-      stock: 5,
-      min_stock: 0,
-      unit: 'unidad',
-      status: 'Activo'
-    };
-  }
-
   // 1. Try local server proxy
   try {
     const res = await fetch(`/api/products/${encodeURIComponent(sku)}`);
@@ -719,8 +703,8 @@ export async function fetchProductBySkuFromSupabase(sku: string): Promise<DbProd
 }
 
 export async function fetchProductStockFromSupabase(sku: string): Promise<number> {
-  if (!sku || sku.startsWith('LIB-')) {
-    return 5;
+  if (!sku) {
+    return 0;
   }
 
   // 1. Try server proxy
@@ -747,10 +731,9 @@ export async function fetchProductStockFromSupabase(sku: string): Promise<number
     if (!error && Array.isArray(data) && data.length > 0) {
       return Number(data[0].stock) || 0;
     }
-    return 0;
-  } catch {
-    return 0;
-  }
+  } catch {}
+
+  return 0;
 }
 
 export function isValidUuid(val?: string | null): boolean {
@@ -961,10 +944,7 @@ export async function deleteProductFromSupabase(sku: string): Promise<{ success:
 }
 
 export async function updateProductStockInSupabase(sku: string, newStock: number): Promise<boolean> {
-  // Free items do not track physical stock
-  if (sku && sku.startsWith('LIB-')) {
-    return true;
-  }
+  if (!sku) return false;
 
   // 1. Try server proxy
   try {
@@ -1012,6 +992,31 @@ export async function recordSaleInSupabase(
     const organizationId = sale.organization_id || await getActiveOrgId();
     if (!organizationId) {
       return { success: false, error: 'No hay una organización activa autorizada para registrar la venta.' };
+    }
+
+    // 0. Validate available stock for each item in real-time (blocking insufficient or negative stock)
+    for (const it of items) {
+      const sku = it.sku;
+      const qty = Number(it.quantity) || 1;
+      if (!sku) continue;
+
+      const { data: prodRows, error: prodErr } = await supabase
+        .from('products')
+        .select('id, sku, name, stock')
+        .eq('sku', sku)
+        .limit(1);
+
+      if (!prodErr && Array.isArray(prodRows) && prodRows.length > 0) {
+        const product = prodRows[0];
+        const currentStock = Number(product.stock) || 0;
+
+        if (currentStock < qty) {
+          return {
+            success: false,
+            error: `Stock insuficiente para "${product.name}" (SKU: ${sku}). Disponible: ${currentStock}, Cantidad solicitada: ${qty}. El sistema no permite ventas sin stock o en negativo.`
+          };
+        }
+      }
     }
 
     // Sanitize sale object to strictly match sales table schema in database
@@ -1122,23 +1127,7 @@ export async function recordSaleInSupabase(
 
     // 4. Deduct Stocks & Register Inventory Movements in real-time
     for (const item of items) {
-      // Free items (venta libre: LIB-XXXX) do not track catalog stock but ensure catalog existence
-      if (!item.sku || item.sku.startsWith('LIB-')) {
-        if (item.sku && item.sku.startsWith('LIB-')) {
-          createProductInSupabase({
-            sku: item.sku,
-            name: item.name || 'Venta Libre',
-            category: 'Venta Libre',
-            cost_usd: 0,
-            price_usd: Number(item.unit_price_usd) || 0,
-            stock: 5,
-            min_stock: 0,
-            unit: 'unidad',
-            status: 'Activo'
-          }).catch(() => {});
-        }
-        continue;
-      }
+      if (!item.sku) continue;
 
       const { data: prodList, error: productError } = await supabase
         .from('products')
@@ -1156,6 +1145,7 @@ export async function recordSaleInSupabase(
         const qtySold = Number(item.quantity) || 1;
         const nextStock = Math.max(0, prevStock - qtySold);
 
+        // Actualizar stock directamente en Supabase
         const { error: stockError } = await supabase
           .from('products')
           .update({ stock: nextStock })
@@ -1163,6 +1153,17 @@ export async function recordSaleInSupabase(
 
         if (stockError) {
           console.warn(`Aviso actualizando stock para ${item.sku}:`, stockError.message);
+        }
+
+        // Actualizar también en el servidor proxy para consistencia inmediata
+        try {
+          await authenticatedFetch(`/api/products/${encodeURIComponent(item.sku)}/stock`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ stock: nextStock })
+          });
+        } catch {
+          // ignore
         }
 
         // Registrar trazabilidad en el kárdex de inventory_movements
@@ -1636,7 +1637,7 @@ export async function convertQuoteToInvoiceInSupabase(
       const unitPrice = Number(it.unit_price_usd) || 0;
       const itemSku = it.sku;
 
-      if (!itemSku || itemSku.startsWith('LIB-')) {
+      if (!itemSku) {
         keptItems.push(it);
         runningTotalUsd += Number(it.total_usd) || (qty * unitPrice);
         continue;
@@ -2386,7 +2387,7 @@ export async function createPurchaseInSupabase(input: {
 
     // Actualizar stock de productos en Supabase e inventario
     for (const it of input.items) {
-      if (!it.sku || it.sku.startsWith('LIB-')) {
+      if (!it.sku) {
         continue;
       }
       try {
@@ -3434,6 +3435,7 @@ export async function fetchInventoryMovementsFromSupabase(): Promise<DbInventory
 
 export async function recordInventoryAdjustmentInSupabase(adjustment: {
   sku: string;
+  product_name?: string;
   adjustment_type: 'ENTRADA' | 'SALIDA' | 'CORRECCION';
   quantity: number;
   reason: string;
@@ -3482,11 +3484,7 @@ export async function recordInventoryAdjustmentInSupabase(adjustment: {
     try {
       const orgId = (await getActiveOrgId()) || '00000000-0000-0000-0000-000000000001';
       
-      // Obtener producto (omitir para ítems libres)
-      if (adjustment.sku && adjustment.sku.startsWith('LIB-')) {
-        return { success: true };
-      }
-
+      // Obtener producto
       const { data: prodList, error: prodErr } = await supabase
         .from('products')
         .select('*')
