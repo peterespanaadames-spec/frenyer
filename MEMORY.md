@@ -1,57 +1,36 @@
 # MEMORY.md — FRENYER
-Memoria breve de estado y decisiones. No guardar secretos ni datos personales.
 
-## Correcciones Recientes
-- [x] Ajuste de stock en Inventario: Se mejoró la persistencia y la capacidad de respuesta de la interfaz al actualizar el stock de productos, forzando la actualización local inmediata.
-- [x] Menu: Se ajustó el comportamiento de los submenús para que se cierren automáticamente al abrir un nuevo ítem.
-- [x] Salud de Empresa (KPIs): Recreación de la sección de KPIs utilizando la jerarquía de clases `grid-4`, `kpi-label`, `kpi-value`, `muted small` y lógica de carga siguiendo estrictamente el diseño de referencia.
-- [x] Refactorización de `CompanyHealth.tsx`: Aplicación de estructura y estilos coherentes con el sistema de diseño y reordenamiento de los elementos (filtros y diagnóstico por encima de los KPIs).
-- [x] Implementación de Índice de Salud Empresarial dinámico: Cálculo basado en rentabilidad, liquidez, etc., visualización con iconos de corazón (Saludable: verde, Atención: ámbar, Crítica: rojo) y manejo de estados parciales.
-- [x] **Integración de Datos Reales en CompanyHealth**: Sustitución de datos ficticios por consultas directas a Supabase (tablas `sales`, `expenses`, `bank_accounts`) para el cálculo dinámico de ingresos, gastos y utilidad, cumpliendo con las normas contables requeridas.
-- [x] Corrección de Sintaxis: Restauración de `grid-cols-4` por `grid-4` (que sí existe en `globals.css`) tras intento manual del usuario.
-- [x] `src/lib/businessProfile.ts`: Cambios manuales del usuario guardados y verificados (actualización de nombre de empresa a 'CompuRepuestos, C.A.' y dirección a 'Altamira de Caceres').
-- [x] Shoppage: Se actualizó el eslogan por defecto a "Todo a tu mano".
-- [x] Refactorización y Limpieza de Código: Se eliminaron datos mock y valores hardcodeados en `db.ts` (proveedores iniciales) e `Inventory.tsx` (marcas de ejemplo). Se consolidó la lógica de persistencia y se arreglaron dependencias en el perfil de negocio (`ShopPage`).
-- [x] MovementsPage: Se corrigió el error de "unique key prop" en la renderización de la lista de movimientos de inventario.
-
-## Estado
-- ERP React 19/Vite + Express + Supabase. `.env` es local e ignorado.
-- Tienda Virtual Pública (`/`):
-  - Encabezado comercial con identidad configurable ("Frenyer, C.A.", lema, sucursal activa).
-  - Buscador global reactivo (nombre, código de barras, SKU, categoría, marca, descripción).
-  - Sub-barra horizontal de navegación dinámica por categorías.
-  - Tasa BCV oficial visible con fecha valor y selector bimonetario (USD / VES).
-  - Carrito de compras flotante (drawer) con validación de inventario y cantidades.
-  - Flujo de checkout integrado en pasos (invitado/registrado, despacho en sucursal/domicilio, métodos de pago venezolanos: Pago Móvil, Transferencia, Efectivo USD, Zelle).
-  - Modal de consulta y seguimiento "Mis Pedidos" para clientes en vivo.
-  - Atajo global `Ctrl + A + S` en secuencia no simultánea que redirige al panel administrativo sin interrupciones ni textos expuestos; enlace táctil accesible en el pie de página.
-- Panel Administrativo: Control de Pedidos (`/ventas-flash/pedidos`):
-  - Encabezado: "CONTROL DE PEDIDOS" con accesos a POS, pedidos facturados, actualizar en tiempo real, exportar Excel (XLSX) y crear nuevo pedido.
-  - 4 tarjetas KPI en tiempo real: Total pedidos, Pendientes, Completados y Facturación activa bimonetaria.
-  - Barra de filtros coordinada: estado de entrega, estado de pago, método de entrega, filtro por fecha/rango, toggle de sonido para alertas y conmutador Tabla / Kanban.
-  - Vista de tabla con columnas canónicas y selectores interactivos de transiciones de entrega y pago auditadas.
-  - Vista Kanban con 6 columnas logísticas (Recibido, Preparado, Listo para entregar, En camino, Entregado, Cancelado) y avance rápido de estado.
-  - Modal de detalle del pedido con historial de auditoría cronológico, desglose bimonetario histórico y comprobante.
-  - Sincronización en tiempo real y persistencia resiliente bidireccional (`/data/orders.json` y Supabase `orders`/`order_items` con migración `0018_orders_module.sql`).
-- Productos e Inventario (`/inventario` y `/api/products`):
-  - `GET /api/products` abierto para consulta pública en catálogo sin requerir sesión administrativa; mutaciones (POST, PUT, DELETE, stock) protegidas con autenticación estricta.
-  - **Gestión de Marca y Unidades**: Se incorporó el campo **Marca** (con selector y modal inline para registrar nuevas marcas) ubicado justo debajo de Categoría, y el selector de **Unidades** con las 15 opciones estándar y modal para unidades personalizadas.
-  - **Ajuste de Existencia**: Se corrigió el endpoint PATCH `/api/products/:sku/stock` añadiendo autenticación. Se mejoró la persistencia y la capacidad de respuesta de la interfaz al actualizar el stock, forzando la actualización local inmediata.
-  - **Venta Libre (Ítems Abiertos)**: Al crear o registrar un producto de "Venta Libre", el stock asignado predeterminado es **5**.
-  - **Deduplicación y Upsert por SKU**: Se implementó lógica robusta de prevención de duplicados (tanto en servidor como en cliente) para que al registrar ventas libres o productos, si el SKU ya existe se actualice en lugar de insertar registros repetidos, y las consultas limpien cualquier duplicado histórico.
-- **Configuración de Negocio (Identidad y Datos Fiscales)**:
-  - Se añadió el botón **Guardar** en la sección de identidad y datos fiscales (`/configuracion`), aplicando los cambios de forma reactiva e instantánea en todo el sistema (facturas, notas, e-commerce, tienda y cabeceras).
-  - **E-commerce / Tienda Virtual (`ShopPage`)**: Se actualizó el encabezado, subtítulos y datos de pago (Pago Móvil y Transferencia) para que utilicen estrictamente el valor ingresado en el campo **"Nombre del Negocio"** y **"RIF"** de Configuración / Negocio en lugar de valores genéricos o fijos como "Frenyer".
-  - Se eliminó la tarjeta de conexión a Supabase y el botón "Gestionar Conexión / SQL".
-  - Se implementó la subida real de imágenes para **Logo** y **Favicon** mediante selectores de archivos, persistidas localmente y aplicadas automáticamente al iniciar o recargar la aplicación.
-- **Validación de Compilación**: Todos los errores de tipos TypeScript y ESLint han sido resueltos satisfactoriamente (`compile_applet` y `lint_applet` limpios).
+## Estado actual
+- ERP bimonetario (USD/VES) React 19 + Vite + Express + Supabase.
+- **Reporte de Ventas (`/ventas-flash/reporte`)**:
+  - Encabezado limpio con título «Reporte de Ventas» (subtítulo informativo redundante eliminado para mayor claridad visual).
+  - Cuadrícula de KPIs (`grid grid-4`): Total Órdenes, Total Ingresos Facturados, Utilidad Estimada y **Ticket Promedio** (calculado contablemente como `totalIncome / totalOrders`, bimonetario USD/VES).
+  - Filtro de Periodo enriquecido con selectores de fecha nativos: **«Desde»** y **«Hasta»** para búsqueda personalizada por rango temporal, además de los accesos rápidos (Hoy, Esta Semana, Este Mes, Histórico).
+  - Barra de búsqueda con ancho de 380px (Focus Mode) acompañada de:
+    - Etiqueta de texto **«Filtra por:»** situada antes del campo desplegable interactivo de vistas (**«Detalle de Ventas»**, **«Productos + Vendidos»** y **«Metodos de Pagos»**).
+    - Campo desplegable de comprobantes contiguo (Facturas, Notas de Entrega, Pedidos Web).
+  - Selector de fechas del Periodo reorganizado bajo el estándar unificado ERP: **«Desde»** [input] **«Hasta»** [input] con `flex-nowrap`, asegurando alineación limpia e intuitiva.
+  - Vistas especializadas:
+    - *Productos + Vendidos*: Ranking posicional (#1, #2...), SKU, unidades vendidas, precio promedio USD, total USD/VES y barra visual de porcentaje de participación.
+    - *Metodos de Pagos*: Desglose por método de pago/banco, número de operaciones, total recaudado USD/VES, ticket promedio y porcentaje de recaudación.
+  - Exportación dinámica a Excel y CSV que adapta automáticamente las columnas y datos exportados a la vista seleccionada.
+  - Encabezado con botón «Sincronizar» (`RefreshCw`) y botón «Exportar» con dropdown flotante anclado (`relative` en CSS, `zIndex: 9999`) con 3 opciones: Excel (.xlsx), CSV (.csv) e Imprimir/PDF.
+  - Tabla de transacciones con columna «Acciones»: botón directo a la ficha completa `/ventas-flash/reporte/:id`.
+- **SaleDetailModal & SaleDetailPage**: Desglose con bimonetariedad, métodos de pago reales, productos de la venta e impresión directa.
+- **Cotizaciones (`/ventas-flash/cotizaciones`)**:
+  - Subtítulo informativo eliminado del encabezado para mayor limpieza visual.
+  - Campo desplegable interactivo de estados integrado dentro de la barra de filtros principal justo después de «Filtrar por producto o SKU...».
+  - Anchos de control armonizados: selector de clientes (250px), filtro de producto/SKU (190px) y botón desplegable interactivo de estados (250px).
+  - Estados incluidos: «Total las cotizaciones», «Pendientes / vigentes», «Facturadas», «Vencidas», «Rechazadas» con iconos semánticos y badges de conteo reactivos.
+- **Inventario / Productos (`/inventario`)**:
+  - Modal «Nuevo producto» y «Editar producto»: Se removió el recuadro informativo verde de precios grabados en USD para maximizar la limpieza y compactación visual del formulario de creación y edición.
 
 ## Decisiones importantes
-- **Persistencia Híbrida**: Al igual que con ajustes de stock y proveedores, los pedidos se respaldan en `/data/orders.json` y en PostgreSQL para tolerar entornos donde Supabase aún no ejecute la migración `0018_orders_module.sql`.
-- **Bimonetariedad & Redondeo**: Todos los precios y conversiones se calculan con `convertUSDtoVES` y redondeo a 2 decimales exactos.
+- **Anclaje CSS relativo en Dropdowns**: En lugar de depender de clases utilitarias ausentes, los menús desplegables se anclan con `style={{ position: 'relative', display: 'inline-block' }}` y `zIndex: 9999` para garantizar que floten visiblemente sin desfasarse ni cortarse por contenedores padre.
+- **Doble acceso en Acciones de Tabla**: El botón «Detalle» ejecuta exclusivamente `setSelectedMovementDetail(mov)` para no interrumpir el flujo visual con redirecciones abruptas, mientras que el botón de acceso externo abre la pantalla dedicada `/ventas-flash/reporte/:id`.
+- **Bimonetariedad estricta**: Todos los cálculos de USD y VES se sincronizan con la tasa oficial BCV y redondeo a 2 decimales.
 
 ## Errores a evitar
-- Nunca enviar valores no-UUID a columnas `uuid` de PostgreSQL como `branch_id`.
-- Nunca bloquear el catálogo de la tienda pública con requerimiento de Bearer token.
-- No permitir reactivación directa de pedidos cancelados o retrocesos desde pedidos entregados.
-- Respetar el Design System unificado sin introducir colores o clases huérfanas.
+- No asumir existencia de clases utilitarias de Tailwind como `.relative` sin verificar `globals.css`.
+- No mezclar `navigate()` inmediato con `setSelectedMovementDetail(mov)` en un solo clic si se espera abrir un modal en la misma pantalla.
+- No concatenar SQL arbitrario para el asistente Alma ni omitir RLS en Supabase.

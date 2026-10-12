@@ -13,6 +13,7 @@ import { Alma } from '../../modules/alma/pages/Alma';
 import { OrdersPage } from '../../modules/sales/pages/Orders';
 import { QuotesPage } from '../../modules/sales/pages/Quotes';
 import { SalesReportPage } from '../../modules/sales/pages/SalesReport';
+import { SaleDetailPage } from '../../modules/sales/pages/SaleDetailPage';
 import { InternalPurchasesPage } from '../../modules/inventory/pages/InternalPurchases';
 import { MovementsPage } from '../../modules/inventory/pages/Movements';
 import { CashPage } from '../../modules/finance/pages/Cash';
@@ -45,6 +46,7 @@ export const router = createBrowserRouter([
       { path: 'ventas-flash/pedidos', element: <OrdersPage /> },
       { path: 'ventas-flash/cotizaciones', element: <QuotesPage /> },
       { path: 'ventas-flash/reporte', element: <SalesReportPage /> },
+      { path: 'ventas-flash/reporte/:id', element: <SaleDetailPage /> },
 
       // Inventarios
       { path: 'inventarios/productos', element: <Inventory /> },

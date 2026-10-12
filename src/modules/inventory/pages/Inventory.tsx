@@ -1436,21 +1436,6 @@ export function Inventory() {
                 </div>
               </div>
 
-              {/* Notice banner for USD base pricing */}
-              <div
-                style={{
-                  background: '#f0fdf4',
-                  border: '1px solid #bbf7d0',
-                  borderRadius: 8,
-                  padding: '10px 12px',
-                  fontSize: 11,
-                  color: '#166534',
-                  lineHeight: 1.4
-                }}
-              >
-                💵 <b>Precios grabados en USD ($):</b> Todos los costos y precios se almacenan en dólares. Para ventas en Bolívares (VES), el sistema calcula automáticamente la conversión a la tasa vigente del momento (<b>Bs. {activeExchangeRate.toFixed(2)}</b>).
-              </div>
-
               {/* Moneda Base */}
               <div className="field full">
                 <label style={{ fontSize: 12, fontWeight: 600, color: '#334155', marginBottom: 4, display: 'block' }}>

@@ -47,7 +47,7 @@ export const CompanyHealthPage = () => {
           
           const gastos = expensesData?.reduce((sum, item) => sum + Number(item.amount), 0) || 0;
 
-          // 3. Liquidez
+          // 3. Liquidez (en tiempo real desde bank_accounts)
           const { data: bankData, error: bankError } = await supabase
               .from('bank_accounts')
               .select('balance, currency');
@@ -81,6 +81,18 @@ export const CompanyHealthPage = () => {
 
   useEffect(() => {
       fetchData();
+
+      // Suscripción en tiempo real a bank_accounts para verificar saldos bancarios en tiempo real
+      const subscription = supabase
+          .channel('public:bank_accounts')
+          .on('postgres_changes', { event: '*', schema: 'public', table: 'bank_accounts' }, () => {
+              fetchData();
+          })
+          .subscribe();
+
+      return () => {
+          supabase.removeChannel(subscription);
+      };
   }, [period]);
 
   const health = useMemo(() => calculateCompanyHealth(healthData), [healthData]);
@@ -95,6 +107,10 @@ export const CompanyHealthPage = () => {
   };
 
   const config = getStatusConfig(health.status);
+
+  const formatMoney = (amount: number) => {
+      return `$${amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  };
  
   return (
     <div className="p-6 space-y-6 bg-canvas min-h-screen text-text">
@@ -155,25 +171,26 @@ export const CompanyHealthPage = () => {
       <div className="grid grid-4">
             <Card>
                 <div className="kpi-label">Ingresos</div>
-                <div className="kpi-value">{isLoading ? '—' : `$${healthData.ingresos.toLocaleString()}`}</div>
+                <div className="kpi-value">{isLoading ? '—' : formatMoney(healthData.ingresos)}</div>
                 <div className="muted small">{isLoading ? 'Cargando datos...' : '+12.8% vs. anterior'}</div>
             </Card>
             <Card>
                 <div className="kpi-label">Gastos</div>
-                <div className="kpi-value">{isLoading ? '—' : `$${healthData.gastos.toLocaleString()}`}</div>
+                <div className="kpi-value">{isLoading ? '—' : formatMoney(healthData.gastos)}</div>
                 <div className="muted small">{isLoading ? 'Cargando datos...' : 'Gastos operativos'}</div>
             </Card>
             <Card>
                 <div className="kpi-label">Utilidad</div>
-                <div className="kpi-value">{isLoading ? '—' : `$${healthData.utilidad.toLocaleString()}`}</div>
+                <div className="kpi-value">{isLoading ? '—' : formatMoney(healthData.utilidad)}</div>
                 <div className="muted small">{isLoading ? 'Cargando datos...' : 'Neto ajustado'}</div>
             </Card>
             <Card>
                 <div className="kpi-label">Liquidez</div>
-                <div className="kpi-value">{isLoading ? '—' : `$${healthData.liquidez.toLocaleString()}`}</div>
-                <div className="muted small">{isLoading ? 'Cargando datos...' : 'Saldo en caja'}</div>
+                <div className="kpi-value">{isLoading ? '—' : formatMoney(healthData.liquidez)}</div>
+                <div className="muted small">{isLoading ? 'Cargando datos...' : 'Saldos bancarios en tiempo real'}</div>
             </Card>
       </div>
     </div>
   );
 };
+

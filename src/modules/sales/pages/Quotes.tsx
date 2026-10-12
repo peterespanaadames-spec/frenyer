@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import {
   Search,
   FileText,
@@ -32,7 +32,8 @@ import {
   Building2,
   DollarSign,
   CheckCircle2,
-  Users
+  Users,
+  ChevronDown
 } from 'lucide-react';
 import { Card } from '../../../components/ui/Card';
 import { Button } from '../../../components/ui/Button';
@@ -96,6 +97,22 @@ export function QuotesPage() {
   const [customerFilter, setCustomerFilter] = useState('Todos');
   const [productFilter, setProductFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('Todas');
+  const [isStatusDropdownOpen, setIsStatusDropdownOpen] = useState(false);
+  const statusDropdownRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (statusDropdownRef.current && !statusDropdownRef.current.contains(e.target as Node)) {
+        setIsStatusDropdownOpen(false);
+      }
+    };
+    if (isStatusDropdownOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+      return () => {
+        document.removeEventListener('mousedown', handleClickOutside);
+      };
+    }
+  }, [isStatusDropdownOpen]);
 
   // Create modal (full-screen overlay)
   const [isCreateOpen, setIsCreateOpen] = useState(false);
@@ -902,9 +919,6 @@ _Válida por ${docData.validityDays || 7} días. Cotizado con Frenyer ERP._`;
             </div>
             <div>
               <h1 style={{ margin: 0, fontSize: 24, fontWeight: 800, color: '#0f172a', letterSpacing: '-0.4px' }}>Cotizaciones</h1>
-              <p style={{ margin: 0, fontSize: 13, color: '#64748b' }}>
-                Histórico general de presupuestos, vigencias comerciales y facturación directa.
-              </p>
             </div>
           </div>
         </div>
@@ -1018,58 +1032,9 @@ _Válida por ${docData.validityDays || 7} días. Cotizado con Frenyer ERP._`;
         </Card>
       </div>
 
-      {/* Status Segmented Tabs */}
-      <div style={{ display: 'flex', gap: 8, overflowX: 'auto', paddingBottom: 4, marginBottom: 16 }}>
-        {[
-          { id: 'Todas', label: 'Todas las cotizaciones', count: metrics.total },
-          { id: 'Creada', label: 'Pendientes / Vigentes', count: metrics.pendientesCount },
-          { id: 'Facturada', label: 'Facturadas', count: metrics.facturadasCount },
-          { id: 'Expirada', label: 'Vencidas', count: metrics.expiradasCount },
-          { id: 'Rechazada', label: 'Rechazadas', count: metrics.rechazadasCount },
-        ].map(tab => {
-          const isActive = statusFilter === tab.id;
-          return (
-            <button
-              key={tab.id}
-              type="button"
-              onClick={() => setStatusFilter(tab.id as StatusFilter)}
-              style={{
-                padding: '7px 14px',
-                borderRadius: 10,
-                border: isActive ? '1px solid var(--brand-500)' : '1px solid var(--border)',
-                background: isActive ? 'var(--brand-50)' : '#fff',
-                color: isActive ? 'var(--brand-700)' : '#475569',
-                fontWeight: isActive ? 700 : 500,
-                fontSize: 13,
-                cursor: 'pointer',
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: 8,
-                whiteSpace: 'nowrap',
-                transition: 'all 0.15s ease'
-              }}
-            >
-              <span>{tab.label}</span>
-              <span
-                style={{
-                  fontSize: 11,
-                  fontWeight: 700,
-                  padding: '2px 7px',
-                  borderRadius: 999,
-                  background: isActive ? 'var(--brand-500)' : '#f1f5f9',
-                  color: isActive ? '#fff' : '#64748b'
-                }}
-              >
-                {tab.count}
-              </span>
-            </button>
-          );
-        })}
-      </div>
-
       {/* Filter Controls Bar */}
       <div className="card" style={{ padding: '12px 16px', marginBottom: 18, display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
-        <div style={{ flex: 1, minWidth: 240, display: 'flex', alignItems: 'center', gap: 8, background: '#f8fafc', padding: '6px 12px', borderRadius: 10, border: '1px solid var(--border)' }}>
+        <div style={{ width: 300, minWidth: 240, display: 'flex', alignItems: 'center', gap: 8, background: '#f8fafc', padding: '6px 12px', borderRadius: 10, border: '1px solid var(--border)' }}>
           <Search size={16} style={{ color: '#94a3b8' }} />
           <input
             className="input"
@@ -1089,14 +1054,14 @@ _Válida por ${docData.validityDays || 7} días. Cotizado con Frenyer ERP._`;
           value={customerFilter}
           onChange={(e) => setCustomerFilter(e.target.value)}
           className="input"
-          style={{ height: 38, fontSize: 13, fontWeight: 600, cursor: 'pointer', minWidth: 180 }}
+          style={{ width: 250, height: 38, fontSize: 13, fontWeight: 600, cursor: 'pointer' }}
         >
           <option value="Todos">Todos los clientes</option>
           {uniqueCustomerNames.map(name => <option key={name} value={name}>{name}</option>)}
         </select>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: '#f8fafc', padding: '0 12px', borderRadius: 10, border: '1px solid var(--border)', minWidth: 200 }}>
-          <ShoppingCart size={15} style={{ color: '#94a3b8' }} />
+        <div style={{ width: 190, display: 'flex', alignItems: 'center', gap: 8, background: '#f8fafc', padding: '0 12px', borderRadius: 10, border: '1px solid var(--border)' }}>
+          <ShoppingCart size={15} style={{ color: '#94a3b8', flexShrink: 0 }} />
           <input
             className="input"
             style={{ border: 'none', boxShadow: 'none', padding: 0, height: 38, fontSize: 13, background: 'transparent', width: '100%' }}
@@ -1108,6 +1073,152 @@ _Válida por ${docData.validityDays || 7} días. Cotizado con Frenyer ERP._`;
             <button onClick={() => setProductFilter('')} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#94a3b8', padding: 0 }}>
               <X size={14} />
             </button>
+          )}
+        </div>
+
+        {/* Campo desplegable interactivo de estados de cotización */}
+        <div style={{ position: 'relative', display: 'inline-block' }} ref={statusDropdownRef}>
+          <button
+            type="button"
+            onClick={() => setIsStatusDropdownOpen(!isStatusDropdownOpen)}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: 8,
+              height: 38,
+              padding: '0 12px',
+              borderRadius: 10,
+              border: '1px solid var(--border)',
+              background: '#fff',
+              color: '#0f172a',
+              fontSize: 13,
+              fontWeight: 600,
+              cursor: 'pointer',
+              width: 250,
+              boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
+              transition: 'all 0.15s ease'
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, overflow: 'hidden' }}>
+              {statusFilter === 'Creada' ? <Clock size={15} style={{ color: '#b45309', flexShrink: 0 }} /> :
+               statusFilter === 'Facturada' ? <Receipt size={15} style={{ color: '#047857', flexShrink: 0 }} /> :
+               statusFilter === 'Expirada' ? <AlertTriangle size={15} style={{ color: '#b91c1c', flexShrink: 0 }} /> :
+               statusFilter === 'Rechazada' ? <Ban size={15} style={{ color: '#64748b', flexShrink: 0 }} /> :
+               <FileText size={15} style={{ color: '#6d28d9', flexShrink: 0 }} />}
+              <span style={{ whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden' }}>
+                {statusFilter === 'Creada' ? 'Pendientes / vigentes' :
+                 statusFilter === 'Facturada' ? 'Facturadas' :
+                 statusFilter === 'Expirada' ? 'Vencidas' :
+                 statusFilter === 'Rechazada' ? 'Rechazadas' :
+                 'Total las cotizaciones'}
+              </span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+              <span
+                style={{
+                  fontSize: 11,
+                  fontWeight: 700,
+                  padding: '2px 7px',
+                  borderRadius: 999,
+                  background: 'var(--brand-50, #f5f3ff)',
+                  color: 'var(--brand-700, #6d28d9)'
+                }}
+              >
+                {statusFilter === 'Creada' ? metrics.pendientesCount :
+                 statusFilter === 'Facturada' ? metrics.facturadasCount :
+                 statusFilter === 'Expirada' ? metrics.expiradasCount :
+                 statusFilter === 'Rechazada' ? metrics.rechazadasCount :
+                 metrics.total}
+              </span>
+              <ChevronDown
+                size={14}
+                style={{
+                  color: '#64748b',
+                  transform: isStatusDropdownOpen ? 'rotate(180deg)' : 'none',
+                  transition: 'transform 0.2s ease'
+                }}
+              />
+            </div>
+          </button>
+
+          {isStatusDropdownOpen && (
+            <div
+              style={{
+                position: 'absolute',
+                top: 'calc(100% + 6px)',
+                left: 0,
+                zIndex: 50,
+                width: 250,
+                background: '#ffffff',
+                border: '1px solid var(--border)',
+                borderRadius: 12,
+                boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.12)',
+                padding: 6,
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 3
+              }}
+            >
+              {[
+                { id: 'Todas' as StatusFilter, label: 'Total las cotizaciones', count: metrics.total, icon: <FileText size={15} style={{ color: '#6d28d9' }} /> },
+                { id: 'Creada' as StatusFilter, label: 'Pendientes / vigentes', count: metrics.pendientesCount, icon: <Clock size={15} style={{ color: '#b45309' }} /> },
+                { id: 'Facturada' as StatusFilter, label: 'Facturadas', count: metrics.facturadasCount, icon: <Receipt size={15} style={{ color: '#047857' }} /> },
+                { id: 'Expirada' as StatusFilter, label: 'Vencidas', count: metrics.expiradasCount, icon: <AlertTriangle size={15} style={{ color: '#b91c1c' }} /> },
+                { id: 'Rechazada' as StatusFilter, label: 'Rechazadas', count: metrics.rechazadasCount, icon: <Ban size={15} style={{ color: '#64748b' }} /> },
+              ].map(opt => {
+                const isSelected = statusFilter === opt.id;
+                return (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    onClick={() => {
+                      setStatusFilter(opt.id);
+                      setIsStatusDropdownOpen(false);
+                    }}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      width: '100%',
+                      padding: '8px 12px',
+                      borderRadius: 8,
+                      border: 'none',
+                      background: isSelected ? 'var(--brand-50, #f5f3ff)' : 'transparent',
+                      color: isSelected ? 'var(--brand-700, #6d28d9)' : '#334155',
+                      fontSize: 13,
+                      fontWeight: isSelected ? 700 : 500,
+                      textAlign: 'left',
+                      cursor: 'pointer',
+                      transition: 'background 0.15s ease'
+                    }}
+                    onMouseEnter={e => {
+                      if (!isSelected) e.currentTarget.style.background = '#f8fafc';
+                    }}
+                    onMouseLeave={e => {
+                      if (!isSelected) e.currentTarget.style.background = 'transparent';
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      {opt.icon}
+                      <span>{opt.label}</span>
+                    </div>
+                    <span
+                      style={{
+                        fontSize: 11,
+                        fontWeight: 700,
+                        padding: '2px 7px',
+                        borderRadius: 999,
+                        background: isSelected ? 'var(--brand-500, #8b78e8)' : '#f1f5f9',
+                        color: isSelected ? '#ffffff' : '#64748b'
+                      }}
+                    >
+                      {opt.count}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
           )}
         </div>
 
