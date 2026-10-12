@@ -2521,57 +2521,25 @@ export async function createPurchaseInSupabase(input: {
 // 12. SEDES Y ALMACENES (BRANCHES)
 // ---------------------------------------------------------------------------
 
-export const DEFAULT_INITIAL_BRANCHES: DbBranch[] = [
-  {
-    id: 'a1b2c3d4-1111-4000-8000-000000000001',
-    code: 'SP-01',
-    name: 'Tienda Bella Vista',
-    address: 'Carrera 6 entre calle 19 y 20 Barinitas',
-    phone: '+58 412-5043857',
-    status: 'Habilitada',
-    is_active: true,
-    cash_registers: 0,
-    created_at: new Date().toISOString()
-  },
-  {
-    id: 'a1b2c3d4-2222-4000-8000-000000000002',
-    code: 'SUC-02',
-    name: 'Almacén Agua Dulce',
-    address: 'carrera 7',
-    phone: '+584125043857',
-    status: 'Habilitada',
-    is_active: true,
-    cash_registers: 0,
-    created_at: new Date().toISOString()
-  },
-  {
-    id: 'a1b2c3d4-3333-4000-8000-000000000003',
-    code: 'SUC-03',
-    name: 'Tienda Online - Almacén',
-    address: 'carrera 7',
-    phone: '+584125043857',
-    status: 'Habilitada',
-    is_active: true,
-    cash_registers: 0,
-    created_at: new Date().toISOString()
-  },
-  {
-    id: 'a1b2c3d4-4444-4000-8000-000000000004',
-    code: 'SUC-04',
-    name: 'luis bella vista',
-    address: 'calle 20',
-    phone: '+584127894541',
-    status: 'Habilitada',
-    is_active: true,
-    cash_registers: 0,
-    created_at: new Date().toISOString()
-  }
-];
+export const DEFAULT_INITIAL_BRANCHES: DbBranch[] = [];
+
+const LEGACY_MOCK_BRANCH_CODES = new Set(['SP-01', 'SUC-02', 'SUC-03', 'SUC-04']);
+const LEGACY_MOCK_BRANCH_NAMES = new Set(['Tienda Bella Vista', 'Almacén Agua Dulce', 'Tienda Online - Almacén', 'luis bella vista']);
+
+function filterOutLegacyMockBranches(branches: DbBranch[]): DbBranch[] {
+  if (!Array.isArray(branches)) return [];
+  return branches.filter(b => {
+    if (!b) return false;
+    const isMock = LEGACY_MOCK_BRANCH_CODES.has(b.code) && LEGACY_MOCK_BRANCH_NAMES.has(b.name);
+    return !isMock;
+  });
+}
 
 function syncBranchToLocalStorage(branch: DbBranch) {
   if (typeof window === 'undefined') return;
-  const list: DbBranch[] = JSON.parse(localStorage.getItem('frenyer_local_branches') || 'null') || [...DEFAULT_INITIAL_BRANCHES];
-  const idx = list.findIndex(b => b.id === branch.id || b.code === branch.code);
+  const rawList: DbBranch[] = JSON.parse(localStorage.getItem('frenyer_local_branches') || 'null') || [];
+  const list = filterOutLegacyMockBranches(rawList);
+  const idx = list.findIndex(b => b.id === branch.id || (b.code && b.code === branch.code));
   if (idx >= 0) {
     list[idx] = { ...list[idx], ...branch };
   } else {
@@ -2582,87 +2550,105 @@ function syncBranchToLocalStorage(branch: DbBranch) {
 
 function updateBranchInLocalStorage(id: string, updates: Partial<DbBranch>) {
   if (typeof window === 'undefined') return;
-  const list: DbBranch[] = JSON.parse(localStorage.getItem('frenyer_local_branches') || 'null') || [...DEFAULT_INITIAL_BRANCHES];
+  const rawList: DbBranch[] = JSON.parse(localStorage.getItem('frenyer_local_branches') || 'null') || [];
+  const list = filterOutLegacyMockBranches(rawList);
   const updated = list.map(b => b.id === id ? { ...b, ...updates } : b);
   localStorage.setItem('frenyer_local_branches', JSON.stringify(updated));
 }
 
 function deleteBranchFromLocalStorage(id: string) {
   if (typeof window === 'undefined') return;
-  const list: DbBranch[] = JSON.parse(localStorage.getItem('frenyer_local_branches') || 'null') || [...DEFAULT_INITIAL_BRANCHES];
+  const rawList: DbBranch[] = JSON.parse(localStorage.getItem('frenyer_local_branches') || 'null') || [];
+  const list = filterOutLegacyMockBranches(rawList);
   const updated = list.filter(b => b.id !== id);
   localStorage.setItem('frenyer_local_branches', JSON.stringify(updated));
 }
 
 export async function fetchBranchesFromSupabase(): Promise<DbBranch[]> {
-  const rawLocal: DbBranch[] = typeof window !== 'undefined'
-    ? JSON.parse(localStorage.getItem('frenyer_local_branches') || 'null') || DEFAULT_INITIAL_BRANCHES
-    : DEFAULT_INITIAL_BRANCHES;
-
-  // Sanitizar cualquier ID heredado que no sea UUID
-  const localBranches = rawLocal.map((b, idx) => {
-    if (!isValidUuid(b.id)) {
-      const fallbackId = DEFAULT_INITIAL_BRANCHES[idx]?.id || 'a1b2c3d4-9999-4000-8000-00000000000' + (idx + 1);
-      return { ...b, id: fallbackId };
+  // 1. Limpiar sedes mock heredadas de localStorage si existían
+  if (typeof window !== 'undefined') {
+    const rawLocal = localStorage.getItem('frenyer_local_branches');
+    if (rawLocal) {
+      try {
+        const parsed = JSON.parse(rawLocal);
+        const filtered = filterOutLegacyMockBranches(parsed);
+        if (filtered.length !== parsed.length) {
+          localStorage.setItem('frenyer_local_branches', JSON.stringify(filtered));
+        }
+      } catch {
+        localStorage.removeItem('frenyer_local_branches');
+      }
     }
-    return b;
-  });
-
-  if (typeof window !== 'undefined' && JSON.stringify(localBranches) !== JSON.stringify(rawLocal)) {
-    localStorage.setItem('frenyer_local_branches', JSON.stringify(localBranches));
   }
 
+  // 2. Intentar consultar endpoint API del servidor (consulta Supabase en tiempo real)
   try {
     const res = await authenticatedFetch('/api/branches');
     if (res.ok) {
       const json = await res.json();
-      if (json.success && Array.isArray(json.data) && json.data.length > 0) {
+      if (json.success && Array.isArray(json.data)) {
+        const cleanData = filterOutLegacyMockBranches(json.data);
         if (typeof window !== 'undefined') {
-          localStorage.setItem('frenyer_local_branches', JSON.stringify(json.data));
+          localStorage.setItem('frenyer_local_branches', JSON.stringify(cleanData));
         }
-        return json.data;
+        return cleanData;
       }
     }
   } catch {
     // Fall back to direct client
   }
 
+  // 3. Consultar cliente directo Supabase si está configurado
   if (isSupabaseConfigured) {
     try {
-      const orgId = await getActiveOrgId();
-      if (orgId) {
-        const { data, error } = await supabase
-          .from('branches')
-          .select('*')
-          .eq('organization_id', orgId)
-          .order('created_at', { ascending: true });
-        if (!error && data && data.length > 0) {
-          if (typeof window !== 'undefined') {
-            localStorage.setItem('frenyer_local_branches', JSON.stringify(data));
-          }
-          return data;
+      const { data, error } = await supabase
+        .from('branches')
+        .select('*')
+        .order('created_at', { ascending: true });
+      if (!error && Array.isArray(data)) {
+        const cleanData = filterOutLegacyMockBranches(data);
+        if (typeof window !== 'undefined') {
+          localStorage.setItem('frenyer_local_branches', JSON.stringify(cleanData));
         }
+        return cleanData;
       }
     } catch {
       // ignore
     }
   }
 
-  return localBranches;
+  // 4. Si la red no responde, retornar únicamente sedes creadas localmente por el usuario (cero mocks predeterminados)
+  if (typeof window !== 'undefined') {
+    const stored = localStorage.getItem('frenyer_local_branches');
+    if (stored) {
+      try {
+        return filterOutLegacyMockBranches(JSON.parse(stored));
+      } catch {
+        return [];
+      }
+    }
+  }
+
+  return [];
 }
 
 export async function createBranchInSupabase(branch: Partial<DbBranch>): Promise<{ success: boolean; data?: DbBranch; error?: string }> {
   const orgId = await getActiveOrgId();
+  const validId = (branch.id && isValidUuid(branch.id))
+    ? branch.id
+    : (typeof crypto !== 'undefined' && crypto.randomUUID)
+      ? crypto.randomUUID()
+      : 'a1b2c3d4-5555-4000-8000-' + Date.now().toString().slice(-12).padStart(12, '0');
+
   const payload: any = {
     ...branch,
-    organization_id: orgId || branch.organization_id,
+    id: validId,
+    organization_id: orgId || branch.organization_id || '00000000-0000-0000-0000-000000000001',
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString()
   };
-  if (payload.id && !isValidUuid(payload.id)) {
-    delete payload.id;
-  }
 
+  // 1. Intentar creación vía API backend (proxy a Supabase)
   try {
     const res = await authenticatedFetch('/api/branches', {
       method: 'POST',
@@ -2680,7 +2666,8 @@ export async function createBranchInSupabase(branch: Partial<DbBranch>): Promise
     // ignore
   }
 
-  if (isSupabaseConfigured && orgId) {
+  // 2. Intentar cliente directo Supabase
+  if (isSupabaseConfigured) {
     try {
       const { data, error } = await supabase
         .from('branches')
@@ -2690,29 +2677,17 @@ export async function createBranchInSupabase(branch: Partial<DbBranch>): Promise
       if (!error && data) {
         syncBranchToLocalStorage(data);
         return { success: true, data };
+      } else if (error) {
+        console.warn('Aviso insertando sede en Supabase:', error);
       }
     } catch {
       // ignore
     }
   }
 
-  // Fallback local con UUID válido
-  const fallbackRecord: DbBranch = {
-    id: (typeof crypto !== 'undefined' && crypto.randomUUID)
-      ? crypto.randomUUID()
-      : 'a1b2c3d4-5555-4000-8000-' + Date.now().toString().slice(-12).padStart(12, '0'),
-    code: branch.code || 'SUC-01',
-    name: branch.name || 'Nueva Sede',
-    address: branch.address || '',
-    phone: branch.phone || '',
-    status: branch.status || 'Habilitada',
-    is_active: branch.is_active !== undefined ? branch.is_active : true,
-    cash_registers: branch.cash_registers || 0,
-    created_at: new Date().toISOString(),
-    organization_id: orgId || undefined
-  };
-  syncBranchToLocalStorage(fallbackRecord);
-  return { success: true, data: fallbackRecord };
+  // Persistir registro para disponibilidad inmediata
+  syncBranchToLocalStorage(payload);
+  return { success: true, data: payload };
 }
 
 export async function updateBranchInSupabase(id: string, updates: Partial<DbBranch>): Promise<{ success: boolean; error?: string }> {

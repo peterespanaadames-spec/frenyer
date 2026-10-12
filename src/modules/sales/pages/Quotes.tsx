@@ -386,7 +386,8 @@ export function QuotesPage() {
     setDraftItems(prev =>
       prev.map(it => {
         if (it.sku !== sku) return it;
-        const next = it.quantity + delta;
+        const current = Number(it.quantity) || 1;
+        const next = current + delta;
         if (next < 0) return it;
         if (next > it.stock) {
           showToast(`Stock máximo disponible para "${it.name}": ${it.stock} unidades.`, 'info');
@@ -394,6 +395,41 @@ export function QuotesPage() {
         }
         return { ...it, quantity: next };
       }).filter(it => it.quantity > 0)
+    );
+  };
+
+  const updateDraftQuantityManual = (sku: string, rawVal: string) => {
+    setDraftItems(prev =>
+      prev.map(it => {
+        if (it.sku !== sku) return it;
+        if (rawVal === '') {
+          return { ...it, quantity: '' as any };
+        }
+        const parsed = parseInt(rawVal, 10);
+        if (isNaN(parsed)) return it;
+        if (parsed <= 0) return { ...it, quantity: 1 };
+        if (parsed > it.stock) {
+          showToast(`Stock máximo disponible para "${it.name}": ${it.stock} unidades.`, 'info');
+          return { ...it, quantity: it.stock };
+        }
+        return { ...it, quantity: parsed };
+      })
+    );
+  };
+
+  const handleDraftQuantityBlur = (sku: string) => {
+    setDraftItems(prev =>
+      prev.map(it => {
+        if (it.sku !== sku) return it;
+        const q = Number(it.quantity);
+        if (!q || isNaN(q) || q < 1) {
+          return { ...it, quantity: 1 };
+        }
+        if (q > it.stock) {
+          return { ...it, quantity: it.stock };
+        }
+        return { ...it, quantity: Math.floor(q) };
+      })
     );
   };
 
@@ -1758,10 +1794,38 @@ _Válida por ${docData.validityDays || 7} días. Cotizado con Frenyer ERP._`;
                             </button>
                           </div>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                            <div style={{ display: 'flex', alignItems: 'center', border: '1px solid var(--border)', borderRadius: 7, background: '#fff' }}>
-                              <button onClick={() => updateDraftQuantity(it.sku, -1)} style={{ width: 26, height: 26, background: 'transparent', border: 'none', cursor: 'pointer', fontWeight: 700, color: '#64748b' }}>-</button>
-                              <span style={{ fontSize: 12, fontWeight: 700, minWidth: 22, textAlign: 'center' }}>{it.quantity}</span>
-                              <button onClick={() => updateDraftQuantity(it.sku, 1)} style={{ width: 26, height: 26, background: 'transparent', border: 'none', cursor: 'pointer', fontWeight: 700, color: '#64748b' }}>+</button>
+                            <div style={{ display: 'flex', alignItems: 'center', border: '1px solid var(--border)', borderRadius: 7, background: '#fff', overflow: 'hidden' }}>
+                              <button type="button" onClick={() => updateDraftQuantity(it.sku, -1)} style={{ width: 26, height: 26, background: 'transparent', border: 'none', cursor: 'pointer', fontWeight: 700, color: '#64748b' }}>-</button>
+                              <input
+                                type="number"
+                                min={1}
+                                max={it.stock}
+                                value={it.quantity === ('' as any) ? '' : it.quantity}
+                                onChange={(e) => updateDraftQuantityManual(it.sku, e.target.value)}
+                                onFocus={(e) => e.target.select()}
+                                onBlur={() => handleDraftQuantityBlur(it.sku)}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') {
+                                    (e.target as HTMLInputElement).blur();
+                                  }
+                                }}
+                                style={{
+                                  width: 44,
+                                  height: 26,
+                                  textAlign: 'center',
+                                  border: 'none',
+                                  borderLeft: '1px solid var(--border)',
+                                  borderRight: '1px solid var(--border)',
+                                  fontSize: 12,
+                                  fontWeight: 700,
+                                  color: '#0f172a',
+                                  background: '#fff',
+                                  outline: 'none',
+                                  padding: 0
+                                }}
+                                title={`Stock disponible: ${it.stock}. Puedes escribir la cantidad deseada.`}
+                              />
+                              <button type="button" onClick={() => updateDraftQuantity(it.sku, 1)} style={{ width: 26, height: 26, background: 'transparent', border: 'none', cursor: 'pointer', fontWeight: 700, color: '#64748b' }}>+</button>
                             </div>
                             <div style={{ display: 'flex', alignItems: 'center', gap: 4, flex: 1 }}>
                               <span style={{ fontSize: 11, color: '#64748b' }}>$</span>

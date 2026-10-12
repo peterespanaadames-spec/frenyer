@@ -23,7 +23,8 @@ import {
   Database,
   MapPin,
   Phone,
-  Monitor
+  Monitor,
+  Copy
 } from 'lucide-react';
 import { Card } from '../../../components/ui/Card';
 import { Button } from '../../../components/ui/Button';
@@ -79,13 +80,15 @@ export function ConfigPage() {
   const [isBranchModalOpen, setIsBranchModalOpen] = useState(false);
   const [editingBranch, setEditingBranch] = useState<DbBranch | null>(null);
 
-  // Form state matching Image 1
-  const [branchCode, setBranchCode] = useState('SUC-05');
+  // Form state
+  const [branchCode, setBranchCode] = useState('SUC-01');
   const [branchName, setBranchName] = useState('');
   const [branchAddress, setBranchAddress] = useState('');
   const [branchPhone, setBranchPhone] = useState('+58 412-5043857');
   const [branchStatus, setBranchStatus] = useState<'Habilitada' | 'Deshabilitada'>('Habilitada');
   const [isSavingBranch, setIsSavingBranch] = useState(false);
+  const [isBranchSqlModalOpen, setIsBranchSqlModalOpen] = useState(false);
+  const [isCopiedBranchSql, setIsCopiedBranchSql] = useState(false);
 
   // Delete branch modal
   const [branchToDelete, setBranchToDelete] = useState<DbBranch | null>(null);
@@ -990,33 +993,97 @@ export function ConfigPage() {
                 <MapPin size={22} />
               </div>
               <div>
-                <h2 style={{ margin: 0, fontSize: 16, fontWeight: 800, color: '#0f172a', letterSpacing: '-0.01em' }}>
-                  SEDES Y TERMINALES (PUNTOS DE VENTA)
-                </h2>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <h2 style={{ margin: 0, fontSize: 16, fontWeight: 800, color: '#0f172a', letterSpacing: '-0.01em' }}>
+                    SEDES Y TERMINALES (PUNTOS DE VENTA)
+                  </h2>
+                  <span
+                    style={{
+                      background: '#ecfdf5',
+                      color: '#059669',
+                      fontSize: 11,
+                      fontWeight: 700,
+                      padding: '2px 8px',
+                      borderRadius: 6,
+                      border: '1px solid #a7f3d0',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 4
+                    }}
+                  >
+                    <Database size={11} /> Supabase Real-Time
+                  </span>
+                </div>
                 <p style={{ margin: '3px 0 0 0', color: '#64748b', fontSize: 13 }}>
+                  Gestión y persistencia de sucursales físicas y almacenes en tiempo real en la tabla <code>branches</code>
                 </p>
               </div>
             </div>
 
-            <button
-              onClick={handleOpenNewBranch}
-              style={{
-                background: 'var(--brand-500)',
-                color: '#fff',
-                border: 'none',
-                borderRadius: 8,
-                padding: '9px 18px',
-                fontSize: 13,
-                fontWeight: 700,
-                display: 'flex',
-                alignItems: 'center',
-                gap: 6,
-                cursor: 'pointer',
-                boxShadow: '0 1px 2px rgba(0,0,0,0.05)'
-              }}
-            >
-              <Plus size={16} strokeWidth={2.5} /> Agregar Sede
-            </button>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+              <button
+                type="button"
+                onClick={loadBranches}
+                disabled={isBranchesLoading}
+                style={{
+                  background: '#f8fafc',
+                  color: '#475569',
+                  border: '1px solid #cbd5e1',
+                  borderRadius: 8,
+                  padding: '8px 14px',
+                  fontSize: 12,
+                  fontWeight: 600,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  cursor: 'pointer'
+                }}
+                title="Sincronizar sedes en tiempo real desde Supabase"
+              >
+                <RefreshCw size={14} className={isBranchesLoading ? 'animate-spin' : ''} /> Sincronizar
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setIsBranchSqlModalOpen(true)}
+                style={{
+                  background: '#f8fafc',
+                  color: '#0284c7',
+                  border: '1px solid #bae6fd',
+                  borderRadius: 8,
+                  padding: '8px 14px',
+                  fontSize: 12,
+                  fontWeight: 600,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  cursor: 'pointer'
+                }}
+                title="Ver script SQL de permisos RLS para la tabla branches en Supabase"
+              >
+                <Database size={14} /> Permisos SQL
+              </button>
+
+              <button
+                onClick={handleOpenNewBranch}
+                style={{
+                  background: 'var(--brand-500)',
+                  color: '#fff',
+                  border: 'none',
+                  borderRadius: 8,
+                  padding: '8px 18px',
+                  fontSize: 13,
+                  fontWeight: 700,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  cursor: 'pointer',
+                  boxShadow: '0 1px 2px rgba(0,0,0,0.05)'
+                }}
+              >
+                <Plus size={16} strokeWidth={2.5} /> Agregar Sede
+              </button>
+            </div>
           </div>
 
           {/* Cards Grid matching Image 2 */}
@@ -1557,6 +1624,244 @@ export function ConfigPage() {
                       Guardar Terminales
                     </button>
                   </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Modal Permisos SQL Supabase (RLS para Sedes y Almacenes) */}
+          {isBranchSqlModalOpen && (
+            <div
+              style={{
+                position: 'fixed',
+                top: 0,
+                left: 0,
+                right: 0,
+                bottom: 0,
+                background: 'rgba(15,23,42,0.6)',
+                backdropFilter: 'blur(4px)',
+                display: 'grid',
+                placeItems: 'center',
+                zIndex: 1200,
+                padding: 16
+              }}
+            >
+              <div
+                className="card"
+                style={{
+                  width: '100%',
+                  maxWidth: 680,
+                  maxHeight: '90vh',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  padding: 0,
+                  background: '#fff',
+                  borderRadius: 14,
+                  overflow: 'hidden',
+                  boxShadow: '0 25px 50px -12px rgba(0,0,0,0.25)',
+                  border: '1px solid #e2e8f0'
+                }}
+              >
+                <div
+                  style={{
+                    padding: '18px 24px',
+                    borderBottom: '1px solid #e2e8f0',
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    background: '#f8fafc'
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <div
+                      style={{
+                        width: 36,
+                        height: 36,
+                        borderRadius: 8,
+                        background: '#eff6ff',
+                        color: '#0066f5',
+                        display: 'grid',
+                        placeItems: 'center'
+                      }}
+                    >
+                      <Database size={18} />
+                    </div>
+                    <div>
+                      <h3 style={{ margin: 0, fontSize: 16, fontWeight: 800, color: '#0f172a' }}>
+                        Permisos SQL de Sedes y Almacenes (Supabase RLS)
+                      </h3>
+                      <span style={{ fontSize: 12, color: '#64748b' }}>
+                        Script de base de datos para habilitar lectura y escritura en la tabla <code>public.branches</code>
+                      </span>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => setIsBranchSqlModalOpen(false)}
+                    style={{ background: 'transparent', border: 'none', color: '#64748b', cursor: 'pointer', padding: 4 }}
+                  >
+                    <X size={20} />
+                  </button>
+                </div>
+
+                <div style={{ padding: 20, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 14 }}>
+                  <div style={{ background: '#f8fafc', padding: 12, borderRadius: 8, border: '1px solid var(--border)', fontSize: 12, color: '#475569', lineHeight: 1.5 }}>
+                    <b>Instrucciones:</b> Copia el siguiente código y ejecútalo en el <b>SQL Editor</b> de tu consola de Supabase. Este script asegura la tabla <code>branches</code>, hace opcional el <code>organization_id</code> y otorga permisos de lectura/escritura en tiempo real.
+                  </div>
+
+                  <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const sqlScript = `-- ==============================================================================
+-- FRENYER ERP — HABILITAR PERSISTENCIA DE SEDES EN SUPABASE (public.branches)
+-- ==============================================================================
+-- Ejecuta este script en el SQL Editor de tu consola de Supabase:
+-- https://knyqrwpaksawuxoqcayu.supabase.co
+
+-- 1. Asegurar tabla y columnas de sedes y almacenes
+CREATE TABLE IF NOT EXISTS public.branches (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    organization_id UUID DEFAULT '00000000-0000-0000-0000-000000000001',
+    code TEXT NOT NULL DEFAULT 'SUC-01',
+    name TEXT NOT NULL,
+    address TEXT,
+    phone TEXT,
+    status TEXT NOT NULL DEFAULT 'Habilitada',
+    is_active BOOLEAN NOT NULL DEFAULT true,
+    cash_registers INTEGER NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+ALTER TABLE public.branches ADD COLUMN IF NOT EXISTS code TEXT;
+ALTER TABLE public.branches ADD COLUMN IF NOT EXISTS phone TEXT;
+ALTER TABLE public.branches ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'Habilitada';
+ALTER TABLE public.branches ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT true;
+ALTER TABLE public.branches ADD COLUMN IF NOT EXISTS cash_registers INTEGER DEFAULT 0;
+ALTER TABLE public.branches ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT now();
+
+ALTER TABLE public.branches ALTER COLUMN organization_id DROP NOT NULL;
+ALTER TABLE public.branches ALTER COLUMN organization_id SET DEFAULT '00000000-0000-0000-0000-000000000001';
+
+-- 2. Habilitar y actualizar políticas de Row Level Security (RLS)
+ALTER TABLE public.branches ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "org_member_branches" ON public.branches;
+DROP POLICY IF EXISTS "members read branches" ON public.branches;
+DROP POLICY IF EXISTS "allow_all_branches" ON public.branches;
+DROP POLICY IF EXISTS "authenticated_manage_branches" ON public.branches;
+DROP POLICY IF EXISTS "authenticated_read_branches" ON public.branches;
+
+CREATE POLICY "allow_all_branches"
+    ON public.branches FOR ALL TO anon, authenticated
+    USING (true)
+    WITH CHECK (true);
+
+GRANT ALL ON TABLE public.branches TO authenticated;
+GRANT ALL ON TABLE public.branches TO anon;`;
+
+                        navigator.clipboard.writeText(sqlScript);
+                        setIsCopiedBranchSql(true);
+                        setTimeout(() => setIsCopiedBranchSql(false), 2500);
+                        showNotification('Script SQL copiado al portapapeles.');
+                      }}
+                      style={{
+                        background: isCopiedBranchSql ? '#10b981' : 'var(--brand-500)',
+                        color: '#fff',
+                        border: 'none',
+                        borderRadius: 8,
+                        padding: '8px 16px',
+                        fontSize: 12,
+                        fontWeight: 700,
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 6,
+                        cursor: 'pointer'
+                      }}
+                    >
+                      {isCopiedBranchSql ? <Check size={14} /> : <Copy size={14} />}
+                      {isCopiedBranchSql ? '¡Copiado!' : 'Copiar Código SQL'}
+                    </button>
+                  </div>
+
+                  <pre
+                    style={{
+                      background: '#0f172a',
+                      color: '#e2e8f0',
+                      padding: 16,
+                      borderRadius: 10,
+                      fontSize: 11,
+                      fontFamily: 'monospace',
+                      lineHeight: 1.5,
+                      overflowX: 'auto',
+                      maxHeight: 260,
+                      margin: 0
+                    }}
+                  >{`-- 1. Asegurar tabla y columnas de sedes y almacenes
+CREATE TABLE IF NOT EXISTS public.branches (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    organization_id UUID DEFAULT '00000000-0000-0000-0000-000000000001',
+    code TEXT NOT NULL DEFAULT 'SUC-01',
+    name TEXT NOT NULL,
+    address TEXT,
+    phone TEXT,
+    status TEXT NOT NULL DEFAULT 'Habilitada',
+    is_active BOOLEAN NOT NULL DEFAULT true,
+    cash_registers INTEGER NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+ALTER TABLE public.branches ALTER COLUMN organization_id DROP NOT NULL;
+ALTER TABLE public.branches ALTER COLUMN organization_id SET DEFAULT '00000000-0000-0000-0000-000000000001';
+
+-- 2. Habilitar y actualizar políticas de Row Level Security (RLS)
+ALTER TABLE public.branches ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "org_member_branches" ON public.branches;
+DROP POLICY IF EXISTS "members read branches" ON public.branches;
+DROP POLICY IF EXISTS "allow_all_branches" ON public.branches;
+DROP POLICY IF EXISTS "authenticated_manage_branches" ON public.branches;
+DROP POLICY IF EXISTS "authenticated_read_branches" ON public.branches;
+
+CREATE POLICY "allow_all_branches"
+    ON public.branches FOR ALL TO anon, authenticated
+    USING (true)
+    WITH CHECK (true);
+
+GRANT ALL ON TABLE public.branches TO authenticated;
+GRANT ALL ON TABLE public.branches TO anon;`}</pre>
+                </div>
+
+                <div
+                  style={{
+                    padding: '12px 20px',
+                    borderTop: '1px solid #e2e8f0',
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    background: '#f8fafc'
+                  }}
+                >
+                  <span style={{ fontSize: 11, color: '#64748b' }}>
+                    Tras ejecutar el script, haz clic en "Sincronizar" en la pestaña de Almacén.
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setIsBranchSqlModalOpen(false)}
+                    style={{
+                      height: 34,
+                      padding: '0 16px',
+                      borderRadius: 6,
+                      border: '1px solid #cbd5e1',
+                      background: '#fff',
+                      fontSize: 12,
+                      fontWeight: 600,
+                      cursor: 'pointer'
+                    }}
+                  >
+                    Cerrar
+                  </button>
                 </div>
               </div>
             </div>

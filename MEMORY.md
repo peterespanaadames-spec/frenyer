@@ -2,43 +2,27 @@
 
 ## Estado actual
 - ERP bimonetario (USD/VES) React 19 + Vite + Express + Supabase.
-- **Reporte de Pagos / Cuentas (`/cuentas/reporte`)**:
-  - Incorporados filtros de fecha **«Desde»** y **«Hasta»** unificados en la misma línea (`flex items-center gap-2 flex-nowrap`) con anchos controlados (`width: 115px`, `font-size: 12px`), evitando saltos de línea y manteniendo alineación profesional.
-- **Reporte de Ventas (`/ventas-flash/reporte`)**:
-  - Cuadrícula de KPIs (`grid grid-4`): Total Órdenes, Total Ingresos Facturados, Utilidad Estimada y **Ticket Promedio** (calculado contablemente como `totalIncome / totalOrders`, bimonetario USD/VES).
-  - Filtro de Periodo enriquecido con selectores de fecha nativos: **«Desde»** y **«Hasta»** para búsqueda personalizada por rango temporal, además de los accesos rápidos (Hoy, Esta Semana, Este Mes, Histórico).
-  - Barra de búsqueda con ancho de 380px (Focus Mode) acompañada de:
-    - Etiqueta de texto **«Filtra por:»** situada antes del campo desplegable interactivo de vistas (**«Detalle de Ventas»**, **«Productos + Vendidos»** y **«Metodos de Pagos»**).
-    - Campo desplegable de comprobantes contiguo (Facturas, Notas de Entrega, Pedidos Web).
-  - Selector de fechas del Periodo reorganizado bajo el estándar unificado ERP: **«Desde»** [input] **«Hasta»** [input] con `flex-nowrap`, asegurando alineación limpia e intuitiva.
-  - Vistas especializadas:
-    - *Productos + Vendidos*: Ranking posicional (#1, #2...), SKU, unidades vendidas, precio promedio USD, total USD/VES y barra visual de porcentaje de participación.
-    - *Metodos de Pagos*: Desglose por método de pago/banco, número de operaciones, total recaudado USD/VES, ticket promedio y porcentaje de recaudación.
-  - Exportación dinámica a Excel y CSV que adapta automáticamente las columnas y datos exportados a la vista seleccionada.
-  - Encabezado con botón «Sincronizar» (`RefreshCw`) y botón «Exportar» con dropdown flotante anclado (`relative` en CSS, `zIndex: 9999`) con 3 opciones: Excel (.xlsx), CSV (.csv) e Imprimir/PDF.
-  - Tabla de transacciones con columna «Acciones»: botón directo a la ficha completa `/ventas-flash/reporte/:id`.
-- **SaleDetailModal & SaleDetailPage**: Desglose con bimonetariedad, métodos de pago reales, productos de la venta e impresión directa.
-- **Cotizaciones (`/ventas-flash/cotizaciones`)**:
-  - Subtítulo informativo eliminado del encabezado para mayor limpieza visual.
-  - Campo desplegable interactivo de estados integrado dentro de la barra de filtros principal justo después de «Filtrar por producto o SKU...».
-  - Anchos de control armonizados: selector de clientes (250px), filtro de producto/SKU (190px) y botón desplegable interactivo de estados (250px).
-  - Estados incluidos: «Total las cotizaciones», «Pendientes / vigentes», «Facturadas», «Vencidas», «Rechazadas» con iconos semánticos y badges de conteo reactivos.
-- **Inventario / Productos (`/inventario`), POS (`/ventas-flash`) & E-commerce (`/tienda`)**:
-  - **Corrección de Raíz de Descuentos y Ajustes de Stock**:
-    - Se eliminaron las intercepciones rígidas que omitían cualquier SKU que empezara por `LIB-` (prefijo automático para categoría «Librería» y productos como «Lápices HB Paper Mate»). Dichas intercepciones reiniciaban el stock a 5 y anulaban las ventas y los ajustes de existencia.
-    - Los ítems transitorios de Venta Libre en el POS ahora usan el prefijo diferenciado `VL-`.
-    - Validación estricta en tiempo real tanto en ventas POS (`recordSaleInSupabase`) como en pedidos e-commerce (`POST /api/orders`): si `stock < cantidad` o `stock <= 0`, la operación se bloquea inmediatamente con mensaje claro impidiendo stocks en negativo o ventas sin disponibilidad.
-    - El stock se descuenta en tiempo real en la base de datos Supabase (`products.stock`) y en el proxy del servidor.
-    - El modal «Ajuste de existencia» aplica y persiste los cambios inmediatamente vía `recordInventoryAdjustmentInSupabase`, registrando el movimiento de auditoría en el Kárdex.
-    - **Entrada Manual de Cantidad en Ventas POS**: El control de cantidad de cada producto en el carrito ahora incluye un campo numérico interactivo editable directamente por el cajero (además de los botones `-` y `+`), con validación de stock máximo en tiempo real y ajuste automático seguro al presionar Enter o perder el foco.
-    - Modal de Kárdex (`Clock`) con detalle de fecha, tipo, documento, entrada/salida y stock actual.
+- **Configuración > Almacén (`/configuracion` tab 'almacen')**:
+  - **Cero datos estáticos o predeterminados**: Se erradicaron los mocks fijos (`DEFAULT_INITIAL_BRANCHES = []`). Ya no se muestran sedes ficticias heredadas.
+  - **Sincronización en tiempo real con Supabase**: `/api/branches` y `fetchBranchesFromSupabase` consultan directamente la tabla `branches` de Supabase en tiempo real.
+  - **Persistencia en base de datos**: Altas, ediciones y bajas guardan en tiempo real en `public.branches` con UUIDs válidos y campos auditables.
+  - **Herramientas de auditoría y RLS**: Botón «Sincronizar» reactivo y modal «Permisos SQL» para copiar y ejecutar en Supabase el script de políticas RLS de la tabla `branches`.
+- **Ventas Flash (`/ventas-flash/ventas`), Cotizaciones (`/ventas-flash/cotizaciones`) & Pedidos**:
+  - **Formulario de Productos en Ventas POS**: El modal de producto no catalogado / Venta Libre (`isFreeItemOpen`) ahora incluye campo de cantidad con botones steppers `-` / `+` e input numérico editable de forma manual (con auto-selección en foco).
+  - **Carrito POS**: Campo de cantidad con edición manual inmediata, selección al clic y validación de stock máximo.
+  - **Cotizaciones**: Tablero de productos cotizados (`draftItems`) con campo de cantidad numérico editable manualmente en lugar de span estático.
+  - **Pedidos**: Selección de cantidad manual ágil con `select()` al foco.
+- **Inventario / Productos (`/inventarios/productos`)**:
+  - Descuentos de stock en tiempo real en ventas y e-commerce.
+  - Corrección de prefijo `LIB-` para productos reales de categoría Librería y prefijo `VL-` para ventas libres.
+- **Reportes de Ventas y Pagos**: Vistas especializadas, filtros de fecha unificados en una sola línea y exportación dinámica.
 
 ## Decisiones importantes
-- **Anclaje CSS relativo en Dropdowns**: En lugar de depender de clases utilitarias ausentes, los menús desplegables se anclan con `style={{ position: 'relative', display: 'inline-block' }}` y `zIndex: 9999` para garantizar que floten visiblemente sin desfasarse ni cortarse por contenedores padre.
-- **Doble acceso en Acciones de Tabla**: El botón «Detalle» ejecuta exclusivamente `setSelectedMovementDetail(mov)` para no interrumpir el flujo visual con redirecciones abruptas, mientras que el botón de acceso externo abre la pantalla dedicada `/ventas-flash/reporte/:id`.
-- **Bimonetariedad estricta**: Todos los cálculos de USD y VES se sincronizan con la tasa oficial BCV y redondeo a 2 decimales.
+- **Cero sedes mock**: La pestaña de almacén refleja la verdad absoluta de la base de datos Supabase; si la tabla tiene 0 registros, muestra la vista vacía limpia para registrar sedes reales.
+- **UUIDs válidos en PostgreSQL**: Todo ID de sede creado en cliente o servidor utiliza el estándar RFC 4122 para evitar errores de sintaxis UUID en Supabase.
+- **Bimonetariedad estricta**: Cálculos con redondeo a 2 decimales y conversión con tasa BCV vigente.
 
 ## Errores a evitar
-- No asumir existencia de clases utilitarias de Tailwind como `.relative` sin verificar `globals.css`.
-- No mezclar `navigate()` inmediato con `setSelectedMovementDetail(mov)` en un solo clic si se espera abrir un modal en la misma pantalla.
-- No concatenar SQL arbitrario para el asistente Alma ni omitir RLS en Supabase.
+- No volver a inyectar arrays estáticos como `DEFAULT_INITIAL_BRANCHES` en `db.ts` o en endpoints.
+- No omitir `onFocus={(e) => e.target.select()}` en inputs numéricos donde los usuarios requieran sobreescritura rápida.
+- No asumir que `data.length === 0` en Supabase significa fallo; un array vacío es un estado válido de la base de datos.

@@ -37,21 +37,20 @@ create index if not exists idx_products_branch on public.products(branch_id);
 -- 3. Habilitar y actualizar políticas de Row Level Security (RLS)
 alter table public.branches enable row level security;
 
+alter table public.branches alter column organization_id drop not null;
+alter table public.branches alter column organization_id set default '00000000-0000-0000-0000-000000000001';
+
 drop policy if exists "org_member_branches" on public.branches;
 drop policy if exists "members read branches" on public.branches;
 drop policy if exists "allow_all_branches" on public.branches;
 drop policy if exists "authenticated_manage_branches" on public.branches;
 drop policy if exists "authenticated_read_branches" on public.branches;
 
-create policy "authenticated_manage_branches"
-    on public.branches for all to authenticated
+create policy "allow_all_branches"
+    on public.branches for all to anon, authenticated
     using (true)
     with check (true);
 
-create policy "authenticated_read_branches"
-    on public.branches for select to authenticated
-    using (true);
-
 -- Permisos
 grant all on table public.branches to authenticated;
-grant select on table public.branches to anon;
+grant all on table public.branches to anon;

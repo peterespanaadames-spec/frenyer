@@ -143,6 +143,7 @@ export function Sales() {
   const [isFreeItemOpen, setIsFreeItemOpen] = useState(false);
   const [freeItemName, setFreeItemName] = useState('Venta Libre / Ítem Abierto');
   const [freeItemPriceUSD, setFreeItemPriceUSD] = useState('');
+  const [freeItemQuantity, setFreeItemQuantity] = useState('1');
 
   // Checkout Stepper State (null if in POS grid, 1 | 2 | 3 when checking out)
   const [checkoutStep, setCheckoutStep] = useState<number | null>(null);
@@ -497,6 +498,7 @@ export function Sales() {
     e.preventDefault();
     const price = parseFloat(freeItemPriceUSD);
     if (isNaN(price) || price <= 0) return;
+    const qty = Math.max(1, parseInt(freeItemQuantity) || 1);
 
     const sku = `VL-${Date.now().toString().slice(-4)}`;
     const cleanName = freeItemName.trim() || 'Venta Libre';
@@ -507,13 +509,14 @@ export function Sales() {
         sku,
         name: cleanName,
         priceUSD: price,
-        quantity: 1,
+        quantity: qty,
         stock: 9999
       }
     ]);
     setIsFreeItemOpen(false);
     setFreeItemPriceUSD('');
-    showToast('Ítem de venta libre agregado.');
+    setFreeItemQuantity('1');
+    showToast(`Ítem de venta libre agregado (${qty}x ${cleanName}).`);
 
     // Asegurar que el ítem de venta libre exista en el catálogo de Supabase si se factura
     createProductInSupabase({
@@ -1312,6 +1315,7 @@ export function Sales() {
                               max={item.stock}
                               value={item.quantity === ('' as any) ? '' : item.quantity}
                               onChange={(e) => setManualQuantity(item.sku, e.target.value)}
+                              onFocus={(e) => e.target.select()}
                               onBlur={() => handleQuantityBlur(item.sku)}
                               onKeyDown={(e) => {
                                 if (e.key === 'Enter') {
@@ -2534,6 +2538,74 @@ export function Sales() {
                 />
                 <span className="muted small" style={{ color: '#059669', fontSize: 11, marginTop: 4, display: 'block' }}>
                   ≈ {formatVES(convertUSDtoVES(parseFloat(freeItemPriceUSD) || 0, activeRate))}
+                </span>
+              </div>
+
+              <div className="field">
+                <label>Cantidad *</label>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <button
+                    type="button"
+                    onClick={() => setFreeItemQuantity(prev => Math.max(1, (parseInt(prev) || 1) - 1).toString())}
+                    style={{
+                      width: 38,
+                      height: 38,
+                      borderRadius: 8,
+                      border: '1px solid #cbd5e1',
+                      background: '#f8fafc',
+                      fontSize: 18,
+                      fontWeight: 700,
+                      cursor: 'pointer',
+                      display: 'grid',
+                      placeItems: 'center',
+                      color: '#475569'
+                    }}
+                    title="Disminuir cantidad (-1)"
+                  >
+                    -
+                  </button>
+                  <input
+                    className="input"
+                    type="number"
+                    min="1"
+                    step="1"
+                    value={freeItemQuantity}
+                    onChange={(e) => setFreeItemQuantity(e.target.value)}
+                    onFocus={(e) => e.target.select()}
+                    placeholder="1"
+                    required
+                    style={{
+                      flex: 1,
+                      textAlign: 'center',
+                      fontWeight: 700,
+                      fontSize: 15,
+                      height: 38
+                    }}
+                    title="Ingresa la cantidad manualmente"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setFreeItemQuantity(prev => ((parseInt(prev) || 0) + 1).toString())}
+                    style={{
+                      width: 38,
+                      height: 38,
+                      borderRadius: 8,
+                      border: '1px solid #cbd5e1',
+                      background: '#f8fafc',
+                      fontSize: 18,
+                      fontWeight: 700,
+                      cursor: 'pointer',
+                      display: 'grid',
+                      placeItems: 'center',
+                      color: '#475569'
+                    }}
+                    title="Aumentar cantidad (+1)"
+                  >
+                    +
+                  </button>
+                </div>
+                <span className="muted small" style={{ fontSize: 11, marginTop: 4, display: 'block' }}>
+                  Puedes escribir la cantidad directamente o usar los botones - / +.
                 </span>
               </div>
 

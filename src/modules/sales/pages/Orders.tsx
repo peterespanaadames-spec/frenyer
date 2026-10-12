@@ -1402,7 +1402,9 @@ export function OrdersPage() {
                       min={1}
                       value={selectedQty}
                       onChange={e => setSelectedQty(Math.max(1, parseInt(e.target.value) || 1))}
-                      style={{ width: 70 }}
+                      onFocus={e => e.target.select()}
+                      style={{ width: 70, textAlign: 'center', fontWeight: 700 }}
+                      title="Cantidad manual"
                     />
                     <button type="button" className="btn" onClick={handleAddItemToNewOrder}>
                       <Plus size={16} />
