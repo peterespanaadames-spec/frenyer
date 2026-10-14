@@ -1,6 +1,6 @@
 // Bimonetary currency management for Frenyer ERP
 
-export const DEFAULT_EXCHANGE_RATE = 871.37;
+export const DEFAULT_EXCHANGE_RATE = 877.90;
 const RATE_STORAGE_KEY = 'frenyer_bcv_rate';
 const ALT_RATE_STORAGE_KEY = 'frenyer_active_exchange_rate';
 

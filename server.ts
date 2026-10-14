@@ -226,7 +226,20 @@ let lastCertifiedRate: {
   checkedAt: string;
   sourceDetails?: string;
   isManual?: boolean;
-} | null = null;
+} | null = {
+  usdRate: 877.90,
+  currentRate: 877.90,
+  futureRate: null,
+  appliedRate: 877.90,
+  eurRate: Math.round((877.90 * 1.08) * 10000) / 10000,
+  valueDate: new Date().toLocaleDateString('es-VE'),
+  isFutureRate: false,
+  isFutureApplied: false,
+  futureRateHigher: false,
+  source: 'MANUAL',
+  checkedAt: new Date().toISOString(),
+  sourceDetails: 'Tasa inicial por defecto (877.90)'
+};
 
 // Helper to get Caracas date and hour (UTC-4)
 function getCaracasTimeInfo() {
@@ -1571,7 +1584,7 @@ app.post('/api/orders', async (req, res) => {
       return res.status(400).json({ success: false, error: 'El pedido debe contener al menos un producto.' });
     }
 
-    const effectiveRate = Number(exchange_rate) || lastCertifiedRate?.appliedRate || 871.37;
+    const effectiveRate = Number(exchange_rate) || lastCertifiedRate?.appliedRate || 877.90;
 
     // 0. Validación previa de existencia en inventario (bloquear stock insuficiente o negativo)
     for (const rawItem of items) {
@@ -1895,7 +1908,7 @@ app.patch('/api/orders/:id/payment-status', async (req, res) => {
 });
 
 app.get('/api/public/config', async (_req, res) => {
-  const effectiveRate = lastCertifiedRate?.appliedRate || 871.37;
+  const effectiveRate = lastCertifiedRate?.appliedRate || 877.90;
   const rateDate = lastCertifiedRate?.valueDate || 'Hoy';
 
   return res.json({
@@ -2675,6 +2688,43 @@ app.post('/api/bank-transfers', async (req, res: AuthenticatedResponse) => {
         source_new_balance: newSrcBal,
         target_new_balance: newTgtBal
       };
+    }
+
+    if (effectiveCommission > 0) {
+      try {
+        const orgId = res.locals.supabaseContext?.organizationId || '00000000-0000-0000-0000-000000000001';
+        let sourceCurrency = 'USD';
+        let srcBankName = 'Cuenta Origen';
+        try {
+          const accRes = await authenticatedSupabaseRestRequest(res, `bank_accounts?id=eq.${sourceAccountId}&select=currency,bank_name`);
+          if (!accRes.error && Array.isArray(accRes.data) && accRes.data.length > 0) {
+            sourceCurrency = accRes.data[0].currency || 'USD';
+            srcBankName = accRes.data[0].bank_name || 'Cuenta Origen';
+          }
+        } catch {}
+
+        const expensePayload = {
+          organization_id: orgId,
+          name: `Comisión bancaria - Transferencia (${reference})`,
+          category: 'Gastos Bancarios',
+          type: 'VARIABLE',
+          amount: effectiveCommission,
+          currency: sourceCurrency,
+          exchange_rate: numRate,
+          due_date: new Date().toISOString().slice(0, 10),
+          status: 'PAGADO',
+          payment_account_id: sourceAccountId,
+          notes: `Comisión registrada automáticamente por transferencia bancaria desde ${srcBankName} (Ref: ${reference})`
+        };
+
+        await authenticatedSupabaseRestRequest(res, 'expenses', {
+          method: 'POST',
+          headers: { 'Prefer': 'return=representation' },
+          body: expensePayload
+        });
+      } catch (commErr) {
+        console.warn('Aviso registrando gasto de comisión bancaria en transferencia:', commErr);
+      }
     }
 
     return res.json({ success: true, data: transferData });

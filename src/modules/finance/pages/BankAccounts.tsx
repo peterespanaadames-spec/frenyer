@@ -89,6 +89,11 @@ export function BankAccountsPage() {
   const [accountSearch, setAccountSearch] = useState<string>('');
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'info' } | null>(null);
 
+  // Submission locks for anti-double-click & concurrency
+  const [isSubmittingDeposit, setIsSubmittingDeposit] = useState(false);
+  const [isSubmittingWithdraw, setIsSubmittingWithdraw] = useState(false);
+  const [isSubmittingTransfer, setIsSubmittingTransfer] = useState(false);
+
   // Modals state
   const [isNewAccountModalOpen, setIsNewAccountModalOpen] = useState(false);
   const [isPaymentMethodsModalOpen, setIsPaymentMethodsModalOpen] = useState(false);
@@ -630,6 +635,7 @@ export function BankAccountsPage() {
   // Save Transfer between accounts
   const handleSaveTransfer = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSubmittingTransfer) return;
     if (!tfSourceId || !tfTargetId || tfSourceId === tfTargetId) {
       showToast('Selecciona cuentas de origen y destino diferentes.', 'info');
       return;
@@ -657,6 +663,7 @@ export function BankAccountsPage() {
       }
     }
 
+    setIsSubmittingTransfer(true);
     try {
       const response = await authenticatedFetch('/api/bank-transfers', {
         method: 'POST',
@@ -677,10 +684,14 @@ export function BankAccountsPage() {
       if (response.ok && result.success) {
         showToast('Transferencia realizada con éxito.');
         setIsTransferModalOpen(false);
+        setTfSourceId('');
+        setTfTargetId('');
         setTfAmount('');
+        setTfRate(activeRate.toString());
+        setTfCommission('0');
+        setTfCommissionType('Fija');
         setTfReference('');
         setTfNotes('');
-        setTfCommission('0');
         loadAllData();
       } else {
         showToast(result.error || 'No se pudo completar la transferencia.', 'info');
@@ -690,6 +701,8 @@ export function BankAccountsPage() {
         error instanceof Error ? error.message : 'Error de red al procesar transferencia.',
         'info'
       );
+    } finally {
+      setIsSubmittingTransfer(false);
     }
   };
 
@@ -1524,7 +1537,10 @@ export function BankAccountsPage() {
 
               <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 10, borderTop: '1px solid var(--border)', paddingTop: 14 }}>
                 <button type="button" onClick={() => setIsTransferModalOpen(false)} style={{ height: 36, padding: '0 14px', borderRadius: 6, border: '1px solid #cbd5e1', background: '#fff', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>Cancelar</button>
-                <button type="submit" style={{ height: 36, padding: '0 16px', borderRadius: 6, background: '#7c3aed', color: '#fff', border: 'none', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>Confirmar transferencia</button>
+                <button type="submit" disabled={isSubmittingTransfer} style={{ height: 36, padding: '0 16px', borderRadius: 6, background: isSubmittingTransfer ? '#a78bfa' : '#7c3aed', color: '#fff', border: 'none', fontSize: 12, fontWeight: 700, cursor: isSubmittingTransfer ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}>
+                  {isSubmittingTransfer && <RefreshCw size={14} className="animate-spin" />}
+                  {isSubmittingTransfer ? 'PROCESANDO...' : 'Confirmar transferencia'}
+                </button>
               </div>
             </form>
           </div>
@@ -1545,12 +1561,19 @@ export function BankAccountsPage() {
 
             <form onSubmit={async (e) => {
               e.preventDefault();
-              const ok = await handleSaveMovement('SALIDA', wdSourceId, wdAmount, wdReference, wdNotes);
-              if (ok) {
-                setIsWithdrawModalOpen(false);
-                setWdAmount('');
-                setWdReference('');
-                setWdNotes('');
+              if (isSubmittingWithdraw) return;
+              setIsSubmittingWithdraw(true);
+              try {
+                const ok = await handleSaveMovement('SALIDA', wdSourceId, wdAmount, wdReference, wdNotes);
+                if (ok) {
+                  setIsWithdrawModalOpen(false);
+                  setWdSourceId('');
+                  setWdAmount('');
+                  setWdReference('');
+                  setWdNotes('');
+                }
+              } finally {
+                setIsSubmittingWithdraw(false);
               }
             }} style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 12 }}>
               
@@ -1581,7 +1604,10 @@ export function BankAccountsPage() {
 
               <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 10, borderTop: '1px solid var(--border)', paddingTop: 14 }}>
                 <button type="button" onClick={() => setIsWithdrawModalOpen(false)} style={{ height: 36, padding: '0 14px', borderRadius: 6, border: '1px solid #cbd5e1', background: '#fff', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>Cancelar</button>
-                <button type="submit" style={{ height: 36, padding: '0 18px', borderRadius: 6, background: '#7c3aed', color: '#fff', border: 'none', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>Confirmar retiro</button>
+                <button type="submit" disabled={isSubmittingWithdraw} style={{ height: 36, padding: '0 18px', borderRadius: 6, background: isSubmittingWithdraw ? '#a78bfa' : '#7c3aed', color: '#fff', border: 'none', fontSize: 12, fontWeight: 700, cursor: isSubmittingWithdraw ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}>
+                  {isSubmittingWithdraw && <RefreshCw size={14} className="animate-spin" />}
+                  {isSubmittingWithdraw ? 'PROCESANDO...' : 'Confirmar retiro'}
+                </button>
               </div>
             </form>
           </div>
@@ -1602,12 +1628,19 @@ export function BankAccountsPage() {
 
             <form onSubmit={async (e) => {
               e.preventDefault();
-              const ok = await handleSaveMovement('ENTRADA', dpTargetId, dpAmount, dpReference, dpNotes);
-              if (ok) {
-                setIsDepositModalOpen(false);
-                setDpAmount('');
-                setDpReference('');
-                setDpNotes('');
+              if (isSubmittingDeposit) return;
+              setIsSubmittingDeposit(true);
+              try {
+                const ok = await handleSaveMovement('ENTRADA', dpTargetId, dpAmount, dpReference, dpNotes);
+                if (ok) {
+                  setIsDepositModalOpen(false);
+                  setDpTargetId('');
+                  setDpAmount('');
+                  setDpReference('');
+                  setDpNotes('');
+                }
+              } finally {
+                setIsSubmittingDeposit(false);
               }
             }} style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 12 }}>
               
@@ -1638,7 +1671,10 @@ export function BankAccountsPage() {
 
               <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 10, borderTop: '1px solid var(--border)', paddingTop: 14 }}>
                 <button type="button" onClick={() => setIsDepositModalOpen(false)} style={{ height: 36, padding: '0 14px', borderRadius: 6, border: '1px solid #cbd5e1', background: '#fff', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>Cancelar</button>
-                <button type="submit" style={{ height: 36, padding: '0 18px', borderRadius: 6, background: '#7c3aed', color: '#fff', border: 'none', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>Confirmar ingreso</button>
+                <button type="submit" disabled={isSubmittingDeposit} style={{ height: 36, padding: '0 18px', borderRadius: 6, background: isSubmittingDeposit ? '#a78bfa' : '#7c3aed', color: '#fff', border: 'none', fontSize: 12, fontWeight: 700, cursor: isSubmittingDeposit ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}>
+                  {isSubmittingDeposit && <RefreshCw size={14} className="animate-spin" />}
+                  {isSubmittingDeposit ? 'PROCESANDO...' : 'Confirmar ingreso'}
+                </button>
               </div>
             </form>
           </div>

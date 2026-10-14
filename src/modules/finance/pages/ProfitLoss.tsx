@@ -184,10 +184,7 @@ export function ProfitLossPage() {
             {p.label}
           </Button>
         ))}
-        <div className="ml-auto text-xs text-muted flex items-center gap-1.5">
-          <span className="w-2 h-2 rounded-full bg-success"></span>
-          Tasa BCV: <strong>{data.exchangeRate.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} VES/$</strong>
-        </div>
+
       </div>
 
       {/* KPI Grid (Resumen Comercial) */}

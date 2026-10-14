@@ -242,7 +242,7 @@ export function ManualBcvRateModal({
                 min="0.0001"
                 value={rateInput}
                 onChange={(e) => setRateInput(e.target.value)}
-                placeholder="Ej: 871.37"
+                placeholder="Ej: 877.90"
                 required
               />
             </div>
