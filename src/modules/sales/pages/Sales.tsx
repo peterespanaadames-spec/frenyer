@@ -147,6 +147,7 @@ export function Sales() {
 
   // Checkout Stepper State (null if in POS grid, 1 | 2 | 3 when checking out)
   const [checkoutStep, setCheckoutStep] = useState<number | null>(null);
+  const [isSubmittingSale, setIsSubmittingSale] = useState(false);
 
   // Step 1: Customer Data
   const [customers, setCustomers] = useState<Customer[]>([]);
@@ -762,194 +763,236 @@ export function Sales() {
 
   // Finalize Sale & Emit to Supabase
   const handleFinalizeSale = async () => {
-    if (documentType === 'ESPERA') {
-      handleParkInvoice();
-      return;
-    }
+    if (isSubmittingSale) return;
+    setIsSubmittingSale(true);
+    try {
+      if (documentType === 'ESPERA') {
+        handleParkInvoice();
+        return;
+      }
 
-    // Double check stock for all cart items before proceeding
-    for (const item of cart) {
-      if (item.stock <= 0 || item.quantity > item.stock) {
-        setStockAlertModal({
-          isOpen: true,
-          productName: item.name,
+      // Double check stock for all cart items before proceeding
+      for (const item of cart) {
+        if (item.stock <= 0 || item.quantity > item.stock) {
+          setStockAlertModal({
+            isOpen: true,
+            productName: item.name,
+            sku: item.sku,
+            availableStock: item.stock,
+            message: `Atención: El producto "${item.name}" no tiene suficiente stock disponible (${item.quantity} solicitados, ${item.stock} disponibles). No se puede procesar la venta sin inventario.`
+          });
+          showToast(`⚠️ Venta cancelada: Producto sin stock (${item.name})`, 'info');
+          setCheckoutStep(null);
+          return;
+        }
+      }
+
+      // Validation for credit sales (Accounts Receivable CxC)
+      if (paymentType === 'CREDITO') {
+        if (!clientName.trim() || clientName === 'Consumidor final') {
+          showToast('Para ventas a crédito, debe ingresar un nombre de cliente real (no Consumidor Final).', 'info');
+          setCheckoutStep(1); // Go back to Step 1 (Paso 1)
+          return;
+        }
+        const cleanRif = clientRif.trim();
+        if (!cleanRif) {
+          showToast('Para ventas a crédito, se requiere una Cédula o RIF válido.', 'info');
+          setCheckoutStep(1);
+          return;
+        }
+        if (!clientPhone.trim()) {
+          showToast('Se requiere un número de teléfono de contacto para registrar el crédito.', 'info');
+          setCheckoutStep(1);
+          return;
+        }
+        if (!clientAddress.trim()) {
+          showToast('Se requiere una dirección física para respaldar el crédito.', 'info');
+          setCheckoutStep(1);
+          return;
+        }
+      }
+
+      const docCorrelative = invoiceNumber.trim();
+      if (!docCorrelative) {
+        showToast('No se pudo obtener el correlativo de la venta desde Supabase.', 'info');
+        return;
+      }
+
+      // Get the customer ID matching the clientRif
+      const matchedCustomer = customers.find(c => c.rif === clientRif);
+      const customerId = matchedCustomer?.id || undefined;
+
+      // 1. Record Sale in Supabase live database
+      const saleItemsPayload = cart.map(item => {
+        const q = Math.max(1, Number(item.quantity) || 1);
+        return {
           sku: item.sku,
-          availableStock: item.stock,
-          message: `Atención: El producto "${item.name}" no tiene suficiente stock disponible (${item.quantity} solicitados, ${item.stock} disponibles). No se puede procesar la venta sin inventario.`
-        });
-        showToast(`⚠️ Venta cancelada: Producto sin stock (${item.name})`, 'info');
-        setCheckoutStep(null);
-        return;
-      }
-    }
+          name: item.name,
+          quantity: q,
+          unit_price_usd: item.priceUSD,
+          total_usd: item.priceUSD * q,
+          total_ves: convertUSDtoVES(item.priceUSD * q, activeRate),
+          sale_id: ''
+        };
+      });
 
-    // Validation for credit sales (Accounts Receivable CxC)
-    if (paymentType === 'CREDITO') {
-      if (!clientName.trim() || clientName === 'Consumidor final') {
-        showToast('Para ventas a crédito, debe ingresar un nombre de cliente real (no Consumidor Final).', 'info');
-        setCheckoutStep(1); // Go back to Step 1 (Paso 1)
-        return;
-      }
-      const cleanRif = clientRif.trim();
-      if (!cleanRif) {
-        showToast('Para ventas a crédito, se requiere una Cédula o RIF válido.', 'info');
-        setCheckoutStep(1);
-        return;
-      }
-      if (!clientPhone.trim()) {
-        showToast('Se requiere un número de teléfono de contacto para registrar el crédito.', 'info');
-        setCheckoutStep(1);
-        return;
-      }
-      if (!clientAddress.trim()) {
-        showToast('Se requiere una dirección física para respaldar el crédito.', 'info');
-        setCheckoutStep(1);
-        return;
-      }
-    }
-
-    const docCorrelative = invoiceNumber.trim();
-    if (!docCorrelative) {
-      showToast('No se pudo obtener el correlativo de la venta desde Supabase.', 'info');
-      return;
-    }
-
-    // Get the customer ID matching the clientRif
-    const matchedCustomer = customers.find(c => c.rif === clientRif);
-    const customerId = matchedCustomer?.id || undefined;
-
-    // 1. Record Sale in Supabase live database
-    const saleItemsPayload = cart.map(item => {
-      const q = Math.max(1, Number(item.quantity) || 1);
-      return {
-        sku: item.sku,
-        name: item.name,
-        quantity: q,
-        unit_price_usd: item.priceUSD,
-        total_usd: item.priceUSD * q,
-        total_ves: convertUSDtoVES(item.priceUSD * q, activeRate),
-        sale_id: ''
-      };
-    });
-
-    const paymentsPayload = payments.map(p => ({
-      method: p.method,
-      amount_usd: p.amountUSD,
-      amount_ves: p.amountVES,
-      exchange_rate: activeRate,
-      bank_account_id: p.bank_account_id || null
-    }));
-
-    const currentRateSource = localStorage.getItem('frenyer_bcv_rate_source') || 'BCV_DIRECT';
-    const isFutureRateActive = localStorage.getItem('frenyer_bcv_is_future') === 'true';
-    const rateValueDate = localStorage.getItem('frenyer_bcv_rate_date') || new Date().toISOString().split('T')[0];
-
-    const saleResult = await recordSaleInSupabase(
-      {
-        customer_id: customerId,
-        doc_type: documentType,
-        doc_number: docCorrelative,
-        status: 'COMPLETADA',
-        payment_type: paymentType,
+      const paymentsPayload = payments.map(p => ({
+        method: p.method,
+        amount_usd: p.amountUSD,
+        amount_ves: p.amountVES,
         exchange_rate: activeRate,
-        is_future_rate: isFutureRateActive,
-        rate_source: currentRateSource,
-        rate_value_date: rateValueDate,
-        subtotal_usd: rawSubtotalUSD,
-        discount_usd: discountAmountUSD,
-        tax_usd: taxAmountUSD,
-        igtf_usd: igtfAmountUSD,
-        total_usd: grandTotalUSD,
-        total_ves: grandTotalVES,
-        notes: observations
-      },
-      saleItemsPayload,
-      paymentsPayload
-    );
+        bank_account_id: p.bank_account_id || null
+      }));
 
-    if (!saleResult.success) {
-      showToast(saleResult.error || 'No se pudo registrar la venta en Supabase.', 'info');
-      return;
-    }
+      const currentRateSource = localStorage.getItem('frenyer_bcv_rate_source') || 'BCV_DIRECT';
+      const isFutureRateActive = localStorage.getItem('frenyer_bcv_is_future') === 'true';
+      const rateValueDate = localStorage.getItem('frenyer_bcv_rate_date') || new Date().toISOString().split('T')[0];
 
-    // 2. Adjust Bank Accounts and log Bank Movements for Contado payments
-    const bankMovementErrors: string[] = [];
-    if (paymentType === 'CONTADO') {
-      for (const p of payments) {
-        if (p.bank_account_id) {
-          const acc = dbAccounts.find(a => a.id === p.bank_account_id);
-          // If VES account, take original VES amount, else take USD amount
-          const originalAmount = acc && acc.currency === 'VES' ? p.amountVES : p.amountUSD;
+      const saleResult = await recordSaleInSupabase(
+        {
+          customer_id: customerId,
+          doc_type: documentType,
+          doc_number: docCorrelative,
+          status: 'COMPLETADA',
+          payment_type: paymentType,
+          exchange_rate: activeRate,
+          is_future_rate: isFutureRateActive,
+          rate_source: currentRateSource,
+          rate_value_date: rateValueDate,
+          subtotal_usd: rawSubtotalUSD,
+          discount_usd: discountAmountUSD,
+          tax_usd: taxAmountUSD,
+          igtf_usd: igtfAmountUSD,
+          total_usd: grandTotalUSD,
+          total_ves: grandTotalVES,
+          notes: observations
+        },
+        saleItemsPayload,
+        paymentsPayload
+      );
 
-          try {
-            const response = await authenticatedFetch('/api/bank-movements', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                bank_account_id: p.bank_account_id,
-                type: 'ENTRADA',
-                concept: `Abono de Venta POS - ${docCorrelative} (${clientName})`,
-                reference: docCorrelative,
-                user_name: 'Cajero POS',
-                rate: activeRate,
-                commission: 0,
-                amount: originalAmount
-              })
-            });
-            const result = await response.json();
-            if (!response.ok || !result.success) {
-              bankMovementErrors.push(result.error || 'No se pudo registrar un movimiento bancario.');
+      if (!saleResult.success) {
+        showToast(saleResult.error || 'No se pudo registrar la venta en Supabase.', 'info');
+        return;
+      }
+
+      // 2. Adjust Bank Accounts and log Bank Movements for Contado payments
+      const bankMovementErrors: string[] = [];
+      if (paymentType === 'CONTADO') {
+        for (const p of payments) {
+          let bankId = p.bank_account_id;
+          // Si no tiene bank_account_id o es un placeholder genérico, resolver a la cuenta de efectivo o primera cuenta activa
+          if (!bankId || bankId === 'ACC-CASH-DEFAULT') {
+            const cashAcc = dbAccounts.find(a => a.account_type === 'Efectivo' || a.currency === 'USD' || a.bank_name.toLowerCase().includes('efectivo') || a.bank_name.toLowerCase().includes('caja')) || dbAccounts[0];
+            if (cashAcc) bankId = cashAcc.id;
+          }
+
+          if (bankId) {
+            const acc = dbAccounts.find(a => a.id === bankId);
+            // If VES account, take original VES amount, else take USD amount
+            const originalAmount = acc && acc.currency === 'VES' ? p.amountVES : p.amountUSD;
+
+            try {
+              const response = await authenticatedFetch('/api/bank-movements', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  bank_account_id: bankId,
+                  type: 'ENTRADA',
+                  concept: `Abono de Venta POS - ${docCorrelative} (${clientName})`,
+                  reference: docCorrelative,
+                  user_name: 'Cajero POS',
+                  rate: activeRate,
+                  commission: 0,
+                  amount: originalAmount
+                })
+              });
+              const result = await response.json();
+              let createdMov = null;
+              if (!response.ok || !result.success) {
+                bankMovementErrors.push(result.error || 'No se pudo registrar un movimiento bancario.');
+              } else {
+                if (result.new_balance != null) {
+                  setDbAccounts(prev => prev.map(a => a.id === bankId ? { ...a, balance: result.new_balance } : a));
+                }
+                if (result.data) createdMov = result.data;
+              }
+              if (!createdMov) {
+                createdMov = {
+                  id: 'mov-' + Date.now() + '-' + Math.random().toString(36).substring(2, 6),
+                  bank_account_id: bankId,
+                  type: 'ENTRADA',
+                  concept: `Abono de Venta POS - ${docCorrelative} (${clientName})`,
+                  reference: docCorrelative,
+                  user_name: 'Cajero POS',
+                  rate: activeRate,
+                  commission: 0,
+                  commission_type: 'Fija',
+                  amount: originalAmount,
+                  created_at: new Date().toISOString()
+                };
+              }
+              if (typeof window !== 'undefined') {
+                try {
+                  const local = JSON.parse(localStorage.getItem('frenyer_local_bank_movements') || '[]');
+                  local.unshift(createdMov);
+                  localStorage.setItem('frenyer_local_bank_movements', JSON.stringify(local));
+                } catch {}
+              }
+            } catch (error) {
+              bankMovementErrors.push(error instanceof Error ? error.message : 'Error de conexión con movimientos bancarios.');
             }
-          } catch (error) {
-            bankMovementErrors.push(error instanceof Error ? error.message : 'Error de conexión con movimientos bancarios.');
           }
         }
+        window.dispatchEvent(new CustomEvent('frenyer:bank-updated'));
       }
+
+      // 2. Deduct inventory stocks locally in state
+      setCatalog(prev =>
+        prev.map(prod => {
+          const cartItem = cart.find(ci => ci.sku === prod.sku);
+          if (cartItem) {
+            return { ...prod, stock: Math.max(0, prod.stock - cartItem.quantity) };
+          }
+          return prod;
+        })
+      );
+
+      // 3. Set Print Document view
+      setPrintDocument({
+        docType: documentType,
+        correlative: docCorrelative,
+        date: new Date().toLocaleDateString('es-VE'),
+        client: {
+          name: clientName,
+          rif: clientRif,
+          address: clientAddress,
+          phone: clientPhone
+        },
+        items: [...cart],
+        subtotalUSD: rawSubtotalUSD,
+        subtotalVES: convertUSDtoVES(rawSubtotalUSD, activeRate),
+        totalUSD: grandTotalUSD,
+        totalVES: grandTotalVES,
+        rate: activeRate,
+        paymentMethod: paymentType === 'CREDITO' ? 'Cuenta por Cobrar (Crédito)' : payments.map(p => `${p.method} [$${p.amountUSD.toFixed(2)} / Bs.${p.amountVES.toFixed(2)}]`).join(' | ')
+      });
+
+      // Reset cart and checkout
+      setCart([]);
+      setCheckoutStep(null);
+      showToast(
+        bankMovementErrors.length > 0
+          ? `La venta se registró, pero falló un movimiento bancario: ${bankMovementErrors[0]}`
+          : `${documentType === 'FACTURA' ? 'Factura' : 'Nota'} ${docCorrelative} emitida exitosamente.`,
+        bankMovementErrors.length > 0 ? 'info' : undefined
+      );
+
+      // Reload database data (updates stocks, bank balances, and next invoice number in real time)
+      await loadSupabaseData();
+    } finally {
+      setIsSubmittingSale(false);
     }
-
-    // 2. Deduct inventory stocks locally in state
-    setCatalog(prev =>
-      prev.map(prod => {
-        const cartItem = cart.find(ci => ci.sku === prod.sku);
-        if (cartItem) {
-          return { ...prod, stock: Math.max(0, prod.stock - cartItem.quantity) };
-        }
-        return prod;
-      })
-    );
-
-    // 3. Set Print Document view
-    setPrintDocument({
-      docType: documentType,
-      correlative: docCorrelative,
-      date: new Date().toLocaleDateString('es-VE'),
-      client: {
-        name: clientName,
-        rif: clientRif,
-        address: clientAddress,
-        phone: clientPhone
-      },
-      items: [...cart],
-      subtotalUSD: rawSubtotalUSD,
-      subtotalVES: convertUSDtoVES(rawSubtotalUSD, activeRate),
-      totalUSD: grandTotalUSD,
-      totalVES: grandTotalVES,
-      rate: activeRate,
-      paymentMethod: paymentType === 'CREDITO' ? 'Cuenta por Cobrar (Crédito)' : payments.map(p => `${p.method} [$${p.amountUSD.toFixed(2)} / Bs.${p.amountVES.toFixed(2)}]`).join(' | ')
-    });
-
-    // Reset cart and checkout
-    setCart([]);
-    setCheckoutStep(null);
-    showToast(
-      bankMovementErrors.length > 0
-        ? `La venta se registró, pero falló un movimiento bancario: ${bankMovementErrors[0]}`
-        : `${documentType === 'FACTURA' ? 'Factura' : 'Nota'} ${docCorrelative} emitida exitosamente.`,
-      bankMovementErrors.length > 0 ? 'info' : undefined
-    );
-    
-    // Reload database data (updates stocks, bank balances, and next invoice number in real time)
-    await loadSupabaseData();
   };
 
   // Filtered Catalog
@@ -2373,9 +2416,22 @@ export function Sales() {
                   <Button
                     variant="primary"
                     onClick={handleFinalizeSale}
-                    style={{ fontWeight: 700, padding: '10px 24px', display: 'flex', alignItems: 'center', gap: 8 }}
+                    disabled={isSubmittingSale}
+                    style={{
+                      fontWeight: 700,
+                      padding: '10px 24px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 8,
+                      opacity: isSubmittingSale ? 0.7 : 1,
+                      cursor: isSubmittingSale ? 'not-allowed' : 'pointer'
+                    }}
                   >
-                    {documentType === 'ESPERA' ? (
+                    {isSubmittingSale ? (
+                      <>
+                        <RefreshCw size={16} className="animate-spin" /> PROCESANDO...
+                      </>
+                    ) : documentType === 'ESPERA' ? (
                       <>
                         <Clock size={16} /> GUARDAR EN ESPERA
                       </>

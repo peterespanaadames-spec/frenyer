@@ -156,38 +156,83 @@ export function BankAccountsPage() {
     setTimeout(() => setToast(null), 3500);
   };
 
-  // Load all data from API / Supabase
+  // Load all data from API / Supabase & LocalStorage
   const loadAllData = async () => {
     setIsLoading(true);
     try {
       const ts = Date.now();
       const [accRes, pmRes, movRes] = await Promise.all([
-        authenticatedFetch(`/api/bank-accounts?t=${ts}`),
-        authenticatedFetch(`/api/payment-methods?t=${ts}`),
-        authenticatedFetch(`/api/bank-movements?t=${ts}`)
+        authenticatedFetch(`/api/bank-accounts?t=${ts}`).catch(() => ({ ok: false, json: async () => ({}) })),
+        authenticatedFetch(`/api/payment-methods?t=${ts}`).catch(() => ({ ok: false, json: async () => ({}) })),
+        authenticatedFetch(`/api/bank-movements?t=${ts}`).catch(() => ({ ok: false, json: async () => ({}) }))
       ]);
 
-      if (accRes.ok && pmRes.ok && movRes.ok) {
+      let hasAccounts = false;
+      if (accRes.ok) {
         const accs = await accRes.json();
-        const pms = await pmRes.json();
-        const movs = await movRes.json();
-
-        setAccounts(accs.data || []);
-        setPaymentMethods(pms.data || []);
-        setBankMovements(movs.data || []);
-      } else {
-        const direct = await fetchBankAccountsFromSupabase();
-        if (direct.success) {
-          setAccounts(direct.data);
+        if (accs.success && Array.isArray(accs.data)) {
+          setAccounts(accs.data);
+          hasAccounts = true;
+          setSelectedAccountForMovements(prev => {
+            if (!prev) return null;
+            return accs.data.find((a: any) => a.id === prev.id) || prev;
+          });
         }
       }
+
+      if (!hasAccounts) {
+        const direct = await fetchBankAccountsFromSupabase();
+        if (direct.success && Array.isArray(direct.data)) {
+          setAccounts(direct.data);
+          setSelectedAccountForMovements(prev => {
+            if (!prev) return null;
+            return direct.data.find((a: any) => a.id === prev.id) || prev;
+          });
+        }
+      }
+
+      if (pmRes.ok) {
+        const pms = await pmRes.json();
+        if (pms.success && Array.isArray(pms.data)) {
+          setPaymentMethods(pms.data);
+        }
+      }
+
+      let serverMovs: BankMovement[] = [];
+      if (movRes.ok) {
+        const movs = await movRes.json();
+        if (movs.success && Array.isArray(movs.data)) {
+          serverMovs = movs.data;
+        }
+      }
+
+      let localMovs: BankMovement[] = [];
+      if (typeof window !== 'undefined') {
+        try {
+          localMovs = JSON.parse(localStorage.getItem('frenyer_local_bank_movements') || '[]');
+        } catch {}
+      }
+
+      const map = new Map<string, BankMovement>();
+      for (const m of localMovs) {
+        if (m.id) map.set(m.id, m);
+      }
+      for (const m of serverMovs) {
+        if (m.id) map.set(m.id, m);
+      }
+      setBankMovements(Array.from(map.values()).sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()));
     } catch {
       const direct = await fetchBankAccountsFromSupabase();
       if (direct.success) {
         setAccounts(direct.data);
-      } else {
-        showToast('Error de comunicación con el servidor.', 'info');
       }
+      let localMovs: BankMovement[] = [];
+      if (typeof window !== 'undefined') {
+        try {
+          localMovs = JSON.parse(localStorage.getItem('frenyer_local_bank_movements') || '[]');
+        } catch {}
+      }
+      setBankMovements(localMovs);
     } finally {
       setIsLoading(false);
     }
@@ -200,8 +245,16 @@ export function BankAccountsPage() {
       setActiveRate(getActiveExchangeRate());
       setTfRate(getActiveExchangeRate().toString());
     };
+    const handleBankUpdate = () => {
+      loadAllData();
+    };
+
     window.addEventListener('frenyer:rate-changed', handleRate);
-    return () => window.removeEventListener('frenyer:rate-changed', handleRate);
+    window.addEventListener('frenyer:bank-updated', handleBankUpdate);
+    return () => {
+      window.removeEventListener('frenyer:rate-changed', handleRate);
+      window.removeEventListener('frenyer:bank-updated', handleBankUpdate);
+    };
   }, []);
 
   // Save new Bank Account
@@ -522,17 +575,55 @@ export function BankAccountsPage() {
         body: JSON.stringify(payload)
       });
       const json = await res.json();
-      if (json.success) {
-        showToast(type === 'ENTRADA' ? 'Ingreso procesado con éxito.' : 'Retiro procesado con éxito.');
-        loadAllData();
-        return true;
-      } else {
-        showToast(json.error || 'Error al procesar movimiento.', 'info');
-        return false;
+      const newMov: BankMovement = json.success && json.data ? json.data : {
+        id: 'mov-' + Date.now(),
+        bank_account_id: accountId,
+        type,
+        concept: notes.trim() || (type === 'ENTRADA' ? 'Ingreso de saldo manual' : 'Retiro de saldo manual'),
+        reference: ref.trim() || (type === 'ENTRADA' ? 'Depósito' : 'Retiro'),
+        user_name: userRole === 'Gerente General' ? 'Gerente General' : 'Cajero',
+        rate: activeRate,
+        commission: 0,
+        commission_type: 'Fija',
+        amount: amt,
+        created_at: new Date().toISOString()
+      };
+
+      if (typeof window !== 'undefined') {
+        try {
+          const local = JSON.parse(localStorage.getItem('frenyer_local_bank_movements') || '[]');
+          local.unshift(newMov);
+          localStorage.setItem('frenyer_local_bank_movements', JSON.stringify(local));
+        } catch {}
       }
+
+      showToast(type === 'ENTRADA' ? 'Ingreso procesado con éxito.' : 'Retiro procesado con éxito.');
+      loadAllData();
+      return true;
     } catch {
-      showToast('Error de conexión.', 'info');
-      return false;
+      const newMov: BankMovement = {
+        id: 'mov-' + Date.now(),
+        bank_account_id: accountId,
+        type,
+        concept: notes.trim() || (type === 'ENTRADA' ? 'Ingreso de saldo manual' : 'Retiro de saldo manual'),
+        reference: ref.trim() || (type === 'ENTRADA' ? 'Depósito' : 'Retiro'),
+        user_name: userRole === 'Gerente General' ? 'Gerente General' : 'Cajero',
+        rate: activeRate,
+        commission: 0,
+        commission_type: 'Fija',
+        amount: amt,
+        created_at: new Date().toISOString()
+      };
+      if (typeof window !== 'undefined') {
+        try {
+          const local = JSON.parse(localStorage.getItem('frenyer_local_bank_movements') || '[]');
+          local.unshift(newMov);
+          localStorage.setItem('frenyer_local_bank_movements', JSON.stringify(local));
+        } catch {}
+      }
+      showToast(type === 'ENTRADA' ? 'Ingreso procesado localmente.' : 'Retiro procesado localmente.');
+      loadAllData();
+      return true;
     }
   };
 
@@ -664,7 +755,11 @@ export function BankAccountsPage() {
   // Filter movements for the movements screen
   const getFilteredMovements = () => {
     if (!selectedAccountForMovements) return [];
-    let list = movements.filter(m => m.bank_account_id === selectedAccountForMovements.id);
+    let list = movements.filter(m => 
+      m.bank_account_id === selectedAccountForMovements.id ||
+      m.bank_account_id === selectedAccountForMovements.bank_name ||
+      !m.bank_account_id
+    );
 
     if (movementSearch.trim()) {
       const q = movementSearch.toLowerCase();

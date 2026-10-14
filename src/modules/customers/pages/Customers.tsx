@@ -33,6 +33,7 @@ import {
   DbCustomer
 } from '../../../lib/supabase/db';
 import { supabase } from '../../../lib/supabase/client';
+import { authenticatedFetch } from '../../../lib/supabase/api';
 
 interface CustomerOrder {
   id: string;
@@ -75,6 +76,7 @@ export function Customers() {
   const [clientOrders, setClientOrders] = useState<CustomerOrder[]>([]);
   const [topProducts, setTopProducts] = useState<TopProduct[]>([]);
   const [isLoadingDetails, setIsLoadingDetails] = useState(false);
+  const [clientReceivableBalance, setClientReceivableBalance] = useState(0);
 
   const showToast = (msg: string) => {
     setToast(msg);
@@ -98,6 +100,7 @@ export function Customers() {
     if (!selectedClient) {
       setClientOrders([]);
       setTopProducts([]);
+      setClientReceivableBalance(0);
       return;
     }
 
@@ -111,25 +114,47 @@ export function Customers() {
           .eq('customer_id', selectedClient.id)
           .order('created_at', { ascending: false });
 
+        let ordersList: CustomerOrder[] = [];
         if (salesError) {
           console.warn('Error fetching client sales:', salesError.message);
           setClientOrders([]);
           setTopProducts([]);
-          setIsLoadingDetails(false);
-          return;
+        } else {
+          const rawSales = salesData || [];
+          // Deduplicate sales by composite key (doc_number + doc_type + total_usd) to prevent duplicate records
+          const uniqueSalesMap = new Map<string, CustomerOrder>();
+          for (const s of rawSales) {
+            const key = `${s.doc_number || ''}-${s.doc_type || ''}-${s.total_usd || 0}`;
+            if (!uniqueSalesMap.has(key)) {
+              uniqueSalesMap.set(key, s);
+            }
+          }
+          ordersList = Array.from(uniqueSalesMap.values());
+          setClientOrders(ordersList);
         }
 
-        const rawSales = salesData || [];
-        // Deduplicate sales by composite key (doc_number + doc_type + total_usd) to prevent duplicate records
-        const uniqueSalesMap = new Map<string, CustomerOrder>();
-        for (const s of rawSales) {
-          const key = `${s.doc_number || ''}-${s.doc_type || ''}-${s.total_usd || 0}`;
-          if (!uniqueSalesMap.has(key)) {
-            uniqueSalesMap.set(key, s);
+        // 1.B Fetch real accounts receivable for this customer to reflect payments and pending balance
+        try {
+          const cxcRes = await authenticatedFetch('/api/accounts-receivable');
+          if (cxcRes.ok) {
+            const cxcJson = await cxcRes.json();
+            if (cxcJson.success && Array.isArray(cxcJson.data)) {
+              const clientNameLower = (selectedClient.name || '').trim().toLowerCase();
+              const clientCxC = cxcJson.data.filter((c: any) =>
+                (c.customer_id && c.customer_id === selectedClient.id) ||
+                (c.customer_name && c.customer_name.trim().toLowerCase() === clientNameLower) ||
+                (c.customers?.name && c.customers.name.trim().toLowerCase() === clientNameLower)
+              );
+              const totalPending = clientCxC.reduce(
+                (sum: number, c: any) => sum + (Number(c.balance_usd != null ? c.balance_usd : c.total_usd) || 0),
+                0
+              );
+              setClientReceivableBalance(Math.round(totalPending * 100) / 100);
+            }
           }
+        } catch (cxcErr) {
+          console.warn('Aviso consultando cuentas por cobrar del cliente:', cxcErr);
         }
-        const ordersList: CustomerOrder[] = Array.from(uniqueSalesMap.values());
-        setClientOrders(ordersList);
 
         // 2. Fetch sale items for these orders to calculate top purchased products
         if (ordersList.length > 0) {
@@ -924,8 +949,8 @@ export function Customers() {
                 </div>
                 <div style={{ border: '1px solid var(--border)', borderRadius: 8, padding: 12, background: '#fafbfc' }}>
                   <span className="muted small" style={{ fontSize: 10, fontWeight: 700 }}>CUENTA POR COBRAR</span>
-                  <div style={{ fontSize: 16, fontWeight: 800, color: '#ef4444', marginTop: 2 }}>
-                    ${clientOrders.filter(o => o.status === 'Pendiente' || o.status === 'Crédito').reduce((sum, ord) => sum + (Number(ord.total_usd) || 0), 0).toFixed(2)}
+                  <div style={{ fontSize: 16, fontWeight: 800, color: clientReceivableBalance > 0 ? '#ef4444' : '#059669', marginTop: 2 }}>
+                    ${clientReceivableBalance.toFixed(2)}
                   </div>
                 </div>
               </div>

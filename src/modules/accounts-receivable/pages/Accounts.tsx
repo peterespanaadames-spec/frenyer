@@ -115,7 +115,17 @@ export function Accounts() {
           const balance = item.balance_usd != null && Number.isFinite(Number(item.balance_usd))
             ? Number(item.balance_usd)
             : Math.max(0, total - paidFromHistory);
-          const paid = total - balance;
+          const paid = Math.max(0, Math.round((total - balance) * 100) / 100);
+
+          if (history.length === 0 && paid > 0.01) {
+            history.push({
+              date: item.updated_at ? item.updated_at.slice(0, 10) : (item.created_at ? item.created_at.slice(0, 10) : ''),
+              amount: paid,
+              bank_name: 'Abono registrado',
+              ref: 'ABONO'
+            });
+          }
+
           const st = balance <= 0 || item.status === 'PAGADO' || item.status === 'Pagada' ? 'Pagada' : balance < total && balance > 0 ? 'Parcial' : 'Pendiente';
 
           return {
@@ -135,6 +145,11 @@ export function Accounts() {
           };
         });
       setAccounts(mapped);
+      setSelectedAccount(prev => {
+        if (!prev) return null;
+        const found = mapped.find(m => m.id === prev.id || (m.doc_number && m.doc_number === prev.doc_number));
+        return found || prev;
+      });
     } catch {
       showToast('Error cargando cuentas por cobrar.', 'info');
     } finally {
@@ -247,38 +262,118 @@ export function Accounts() {
         amount: targetBank?.currency === 'VES' ? amt * activeRate : amt
       };
 
-      await authenticatedFetch('/api/bank-movements', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(movementPayload)
-      });
-
-      // 2. Insert into receivable_payments in Supabase if real ID
-      if (!selectedAccount.id.startsWith('acc_') && selectedAccount.id.length > 10) {
-        await supabase.from('receivable_payments').insert({
-          receivable_id: selectedAccount.id,
-          bank_account_id: payBankId,
-          amount_usd: amt,
-          amount_ves: amt * activeRate,
-          exchange_rate: activeRate,
-          payment_method: bankName,
-          reference: payReference.trim() || 'PAGO'
+      try {
+        const movRes = await authenticatedFetch('/api/bank-movements', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(movementPayload)
         });
+        let createdMov = null;
+        if (movRes.ok) {
+          const movJson = await movRes.json();
+          if (movJson.success) {
+            if (typeof movJson.new_balance === 'number') {
+              setBankAccounts(prev => prev.map(b => b.id === payBankId ? { ...b, balance: movJson.new_balance } : b));
+            }
+            if (movJson.data) createdMov = movJson.data;
+          }
+        }
+        if (!createdMov) {
+          createdMov = {
+            id: 'mov-' + Date.now(),
+            bank_account_id: payBankId,
+            type: 'ENTRADA',
+            concept: `Cobro de CxC - ${selectedAccount.customer_name} (${selectedAccount.doc_number})`,
+            reference: payReference.trim() || 'COBRO-CXT',
+            user_name: 'Gerente / Cobranzas',
+            rate: activeRate,
+            commission: 0,
+            commission_type: 'Fija',
+            amount: targetBank?.currency === 'VES' ? amt * activeRate : amt,
+            created_at: new Date().toISOString()
+          };
+        }
+        if (typeof window !== 'undefined') {
+          try {
+            const local = JSON.parse(localStorage.getItem('frenyer_local_bank_movements') || '[]');
+            local.unshift(createdMov);
+            localStorage.setItem('frenyer_local_bank_movements', JSON.stringify(local));
+          } catch {}
+        }
+        window.dispatchEvent(new CustomEvent('frenyer:bank-updated'));
+      } catch (movErr) {
+        console.warn('Aviso registrando movimiento bancario:', movErr);
       }
 
-      // 3. Update account record in Supabase
-      const newPaid = selectedAccount.paid_amount + amt;
-      const newRemaining = Math.max(0, selectedAccount.total_amount - newPaid);
-      const newStatus = newRemaining === 0 ? 'PAGADO' : 'PARCIAL';
+      // 2. Post payment via backend proxy endpoint to update accounts_receivable and receivable_payments
+      const payPayload = {
+        amount_usd: amt,
+        amount_ves: targetBank?.currency === 'VES' ? amt * activeRate : amt,
+        exchange_rate: activeRate,
+        bank_account_id: payBankId,
+        payment_method: bankName,
+        reference: payReference.trim() || 'COBRO-CXT'
+      };
+
+      try {
+        await authenticatedFetch(`/api/accounts-receivable/${selectedAccount.id}/payments`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payPayload)
+        });
+      } catch (payApiErr) {
+        console.warn('Aviso registrando pago en proxy de servidor:', payApiErr);
+      }
+
+      // 3. Fallback directo a Supabase
+      if (!selectedAccount.id.startsWith('acc_') && selectedAccount.id.length > 10) {
+        try {
+          await supabase.from('receivable_payments').insert({
+            receivable_id: selectedAccount.id,
+            bank_account_id: payBankId,
+            amount_usd: amt,
+            amount_ves: amt * activeRate,
+            exchange_rate: activeRate,
+            payment_method: bankName,
+            reference: payReference.trim() || 'COBRO-CXT'
+          });
+        } catch {
+          // manejado por el proxy
+        }
+      }
+
+      // 4. Update local selectedAccount state immediately
+      const newPaid = Math.round((selectedAccount.paid_amount + amt) * 100) / 100;
+      const newRemaining = Math.max(0, Math.round((selectedAccount.total_amount - newPaid) * 100) / 100);
+      const newStatus = newRemaining <= 0 ? 'Pagada' : 'Parcial';
+      const newPaymentItem = {
+        date: new Date().toISOString().slice(0, 10),
+        amount: amt,
+        bank_name: bankName,
+        ref: payReference.trim() || 'COBRO-CXT'
+      };
+
+      const updatedHistory = [newPaymentItem, ...(selectedAccount.payments_history || [])];
+      setSelectedAccount({
+        ...selectedAccount,
+        paid_amount: newPaid,
+        remaining_amount: newRemaining,
+        status: newStatus,
+        payments_history: updatedHistory
+      });
 
       if (!selectedAccount.id.startsWith('acc_') && selectedAccount.id.length > 10) {
-        await supabase
-          .from('accounts_receivable')
-          .update({
-            balance_usd: newRemaining,
-            status: newStatus
-          })
-          .eq('id', selectedAccount.id);
+        try {
+          await supabase
+            .from('accounts_receivable')
+            .update({
+              balance_usd: newRemaining,
+              status: newRemaining <= 0 ? 'PAGADO' : 'PARCIAL'
+            })
+            .eq('id', selectedAccount.id);
+        } catch {
+          // manejado por el proxy
+        }
       }
 
       showToast(`Pago de $${amt.toFixed(2)} registrado e ingresado a ${bankName}.`);
@@ -286,7 +381,7 @@ export function Accounts() {
       setPayAmount('');
       setPayReference('');
       setPayBankId('');
-      loadData();
+      await loadData();
     } catch (err) {
       console.error(err);
       showToast('Error procesando el pago.', 'info');
@@ -740,10 +835,14 @@ export function Accounts() {
                 <span style={{ fontSize: 12, fontFamily: 'monospace', color: '#7c3aed' }}>{selectedAccount.doc_number}</span>
               </div>
 
-              <div style={{ background: '#f8fafc', padding: 12, borderRadius: 10, border: '1px solid var(--border)', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+              <div style={{ background: '#f8fafc', padding: 12, borderRadius: 10, border: '1px solid var(--border)', display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
                 <div>
                   <span style={{ fontSize: 10, color: '#64748b', fontWeight: 600 }}>Total Facturado</span>
                   <div style={{ fontSize: 13, fontWeight: 800, color: '#0f172a' }}>{formatUSD(selectedAccount.total_amount, '$ ')}</div>
+                </div>
+                <div>
+                  <span style={{ fontSize: 10, color: '#64748b', fontWeight: 600 }}>Abonado</span>
+                  <div style={{ fontSize: 13, fontWeight: 800, color: '#059669' }}>{formatUSD(selectedAccount.paid_amount, '$ ')}</div>
                 </div>
                 <div>
                   <span style={{ fontSize: 10, color: '#64748b', fontWeight: 600 }}>Pendiente</span>

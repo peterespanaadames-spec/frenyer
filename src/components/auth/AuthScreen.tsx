@@ -57,7 +57,10 @@ export function AuthScreen({
   const [isDbModalOpen, setIsDbModalOpen] = useState(false);
   const captchaContainerRef = useRef<HTMLDivElement>(null);
   const captchaWidgetId = useRef<string | null>(null);
-  const captchaSiteKey = import.meta.env.VITE_TURNSTILE_SITE_KEY || '';
+  const rawSiteKey = (import.meta.env.VITE_TURNSTILE_SITE_KEY || '').trim();
+  const captchaSiteKey = rawSiteKey && !rawSiteKey.includes('your-') && !rawSiteKey.includes('placeholder') && rawSiteKey.length > 5
+    ? rawSiteKey
+    : '';
 
   useEffect(() => {
     if (!captchaSiteKey) return;

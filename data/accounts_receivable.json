@@ -1,0 +1,27 @@
+[
+  {
+    "id": "7a97ce42-c5dd-48b9-b72b-2e0f3be2a06d",
+    "organization_id": "00000000-0000-0000-0000-000000000001",
+    "customer_id": "0f34b724-181c-4d2f-b1f3-9f8fa82d5f54",
+    "sale_id": "da2453ba-0371-48e4-91dc-5fdc4953ebca",
+    "doc_number": "0018",
+    "total_usd": 37.75,
+    "balance_usd": 26.75,
+    "status": "PARCIAL",
+    "due_date": null,
+    "created_at": "2026-10-14T01:43:30.472272+00:00",
+    "receivable_payments": [
+      {
+        "id": "892b31d5-5b49-4008-8cf8-6c0758749217",
+        "receivable_id": "7a97ce42-c5dd-48b9-b72b-2e0f3be2a06d",
+        "bank_account_id": null,
+        "amount_usd": 1,
+        "amount_ves": 45,
+        "exchange_rate": 45,
+        "payment_method": "Banesco USD",
+        "reference": "REF-TEST-001",
+        "payment_date": "2026-10-14T01:54:08.534Z"
+      }
+    ]
+  }
+]
