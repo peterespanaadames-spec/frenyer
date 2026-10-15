@@ -1,1 +1,72 @@
-[]
+[
+  {
+    "id": "e7c7010b-8960-424c-ba13-b9612b22747a",
+    "organization_id": "00000000-0000-0000-0000-000000000001",
+    "bank_account_id": "ba063cfe-3aef-4a50-b86f-52ef90bf7fdb",
+    "type": "ENTRADA",
+    "concept": "Test Cobro CxC",
+    "reference": "TEST-REF",
+    "user_name": "Gerente / Cobranzas",
+    "rate": 879.12,
+    "commission": 0,
+    "commission_type": "Fija",
+    "amount": 5,
+    "created_at": "2026-10-15T01:38:41.647Z"
+  },
+  {
+    "id": "592a6028-5147-4849-a436-8858d1a0743f",
+    "organization_id": "00000000-0000-0000-0000-000000000001",
+    "bank_account_id": "a37f2b1e-2ee8-46ef-b76b-44a4f3d6b517",
+    "type": "SALIDA",
+    "concept": "Pago a proveedor - Distri central AWS (014214)",
+    "reference": "efec-002",
+    "user_name": "Gerente / Pagos",
+    "rate": 879.1225,
+    "commission": 0,
+    "commission_type": "Fija",
+    "amount": 1758.25,
+    "created_at": "2026-10-15T01:08:02.226Z"
+  },
+  {
+    "id": "444876c6-b02f-4764-9bfe-f049ff8bc32b",
+    "organization_id": "00000000-0000-0000-0000-000000000001",
+    "bank_account_id": "ba063cfe-3aef-4a50-b86f-52ef90bf7fdb",
+    "type": "SALIDA",
+    "concept": "Pago a proveedor - Test (INV-1)",
+    "reference": "efe001",
+    "user_name": "Gerente / Pagos",
+    "rate": 879.1225,
+    "commission": 0,
+    "commission_type": "Fija",
+    "amount": 10,
+    "created_at": "2026-10-15T00:45:12.572Z"
+  },
+  {
+    "id": "68f1e0b1-c407-4a69-834a-79ffa702a900",
+    "organization_id": "00000000-0000-0000-0000-000000000001",
+    "bank_account_id": "a37f2b1e-2ee8-46ef-b76b-44a4f3d6b517",
+    "type": "SALIDA",
+    "concept": "Pago a proveedor - Distri pruuba1 (fac001)",
+    "reference": "41541",
+    "user_name": "Gerente / Pagos",
+    "rate": 879.1225,
+    "commission": 0,
+    "commission_type": "Fija",
+    "amount": 3516.49,
+    "created_at": "2026-10-15T00:44:17.884Z"
+  },
+  {
+    "id": "95e9d769-f671-4256-b2b3-685999f8944d",
+    "organization_id": "00000000-0000-0000-0000-000000000001",
+    "bank_account_id": "a37f2b1e-2ee8-46ef-b76b-44a4f3d6b517",
+    "type": "SALIDA",
+    "concept": "Pago a proveedor - dd (ass-12)",
+    "reference": "84141",
+    "user_name": "Gerente / Pagos",
+    "rate": 879.1225,
+    "commission": 0,
+    "commission_type": "Fija",
+    "amount": 7912.1,
+    "created_at": "2026-10-15T00:43:51.046Z"
+  }
+]

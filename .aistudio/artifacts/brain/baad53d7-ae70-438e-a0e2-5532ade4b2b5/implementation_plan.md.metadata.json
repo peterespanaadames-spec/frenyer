@@ -1,0 +1,6 @@
+{
+  "summary": "Implementation plan for adding the Daily Inventory Report (Reporte Diario) under Inventory > Movimientos in Frenyer ERP, with date filters, multi-currency valuation (USD/VES), and PDF/Excel export capabilities.",
+  "updatedAt": "2026-10-15T03:45:56.909590478Z",
+  "requestFeedback": true,
+  "userFacing": true
+}

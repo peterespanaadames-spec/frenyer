@@ -16,15 +16,16 @@ import { SalesReportPage } from '../../modules/sales/pages/SalesReport';
 import { SaleDetailPage } from '../../modules/sales/pages/SaleDetailPage';
 import { InternalPurchasesPage } from '../../modules/inventory/pages/InternalPurchases';
 import { MovementsPage } from '../../modules/inventory/pages/Movements';
+import { DailyInventoryReportPage } from '../../modules/inventory/pages/DailyInventoryReport';
 import { CashPage } from '../../modules/finance/pages/Cash';
 import { BankAccountsPage } from '../../modules/finance/pages/BankAccounts';
-import { AccountsPayablePage } from '../../modules/finance/pages/AccountsPayable';
 import { AccountsReportPage } from '../../modules/finance/pages/AccountsReport';
 import { ExpensesPage } from '../../modules/finance/pages/Expenses';
 import { SuppliersPage } from '../../modules/customers/pages/Suppliers';
 import { MarketingPage } from '../../modules/customers/pages/Marketing';
 import { CompanyHealthPage } from '../../modules/finance/pages/CompanyHealth';
 import { ProfitLossPage } from '../../modules/finance/pages/ProfitLoss';
+import { AccountsPayable } from '../../modules/finance/pages/AccountsPayable';
 import { ConfigPage } from '../../modules/alma/pages/Config';
 
 export const router = createBrowserRouter([
@@ -52,12 +53,13 @@ export const router = createBrowserRouter([
       { path: 'inventarios/productos', element: <Inventory /> },
       { path: 'inventarios/compras', element: <InternalPurchasesPage /> },
       { path: 'inventarios/movimientos', element: <MovementsPage /> },
+      { path: 'inventarios/reporte-diario', element: <DailyInventoryReportPage /> },
 
       // Cuentas
       { path: 'cuentas/caja', element: <CashPage /> },
       { path: 'cuentas/bancos', element: <BankAccountsPage /> },
       { path: 'cuentas/cobrar', element: <Accounts /> },
-      { path: 'cuentas/pagar', element: <AccountsPayablePage /> },
+      { path: 'cuentas/pagar', element: <AccountsPayable /> },
       { path: 'cuentas/reporte', element: <AccountsReportPage /> },
 
       // Gastos
@@ -87,6 +89,8 @@ export const router = createBrowserRouter([
       { path: 'inventario', element: <Inventory /> },
       { path: 'finanzas', element: <Finance /> },
       { path: 'cuentas', element: <Accounts /> },
+      { path: 'cuentas-por-pagar', element: <AccountsPayable /> },
+      { path: 'finanzas/cuentas-por-pagar', element: <AccountsPayable /> },
       { path: 'clientes', element: <Customers /> },
     ],
   },

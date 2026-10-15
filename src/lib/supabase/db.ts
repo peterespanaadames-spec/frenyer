@@ -297,7 +297,6 @@ export async function fetchSuppliersFromSupabase(organizationId?: string): Promi
     : [];
 
   let serverData: DbSupplier[] = [];
-  // 1. Try server proxy
   try {
     const res = await authenticatedFetch('/api/suppliers');
     if (res.ok) {
@@ -306,9 +305,7 @@ export async function fetchSuppliersFromSupabase(organizationId?: string): Promi
         serverData = json.data;
       }
     }
-  } catch {
-    // Fall back to direct client
-  }
+  } catch { }
 
   let supabaseData: DbSupplier[] = [];
   if (isSupabaseConfigured) {
@@ -319,34 +316,41 @@ export async function fetchSuppliersFromSupabase(organizationId?: string): Promi
         .select('*')
         .order('created_at', { ascending: false });
 
-      if (scopedOrganizationId) {
-        query = query.or(`organization_id.eq.${scopedOrganizationId},organization_id.is.null`);
+      let { data, error } = await query;
+      if (!error && (!data || data.length === 0) && scopedOrganizationId) {
+        // Fallback: consultar sin restricción de organization_id para recuperar proveedores globales o de demostración
+        try {
+          const { data: allData, error: allErr } = await supabase
+            .from('suppliers')
+            .select('*')
+            .order('created_at', { ascending: false });
+          if (!allErr && allData && allData.length > 0) {
+            data = allData;
+          }
+        } catch { }
       }
 
-      const { data, error } = await query;
-      if (!error && Array.isArray(data)) {
+      if (!error && data) {
         supabaseData = data;
       }
     } catch (err) {
-      console.warn('Aviso consultando proveedores en Supabase:', err);
+      console.warn('Error consultando proveedores en Supabase:', err);
     }
   }
 
-  // Fusionar todas las fuentes (servidor, supabase y local) por id o doc_number
+  // Fusionar fuentes
   const map = new Map<string, DbSupplier>();
+  
+  // Agregar primero datos remotos (prioridad si existen)
+  for (const s of supabaseData) if (s.id) map.set(s.id, s);
+  for (const s of serverData) if (s.id) map.set(s.id, { ...map.get(s.id), ...s } as DbSupplier);
+  
+  // Agregar/combinar datos locales si no están en remoto, o actualizar si falta info
   for (const s of rawLocal) {
-    if (s.id) map.set(s.id, s);
-  }
-  for (const s of serverData) {
     if (s.id) {
-      const existing = map.get(s.id) || {};
-      map.set(s.id, { ...existing, ...s });
-    }
-  }
-  for (const s of supabaseData) {
-    if (s.id) {
-      const existing = map.get(s.id) || {};
-      map.set(s.id, { ...existing, ...s });
+      if (!map.has(s.id)) {
+        map.set(s.id, s);
+      }
     }
   }
 
@@ -453,8 +457,7 @@ export async function createSupplierInSupabase(
             delete currentPayload[match[1]];
             continue;
           }
-          // Si falla por políticas de RLS o permisos, continuar al fallback local resiliente
-          console.warn('Aviso creando proveedor en Supabase (aplicando persistencia local resiliente):', error.message);
+          console.warn('Aviso creando proveedor en Supabase:', error.message);
           break;
         }
       }
@@ -464,6 +467,11 @@ export async function createSupplierInSupabase(
   }
 
   // 3. Fallback resiliente con persistencia local garantizada
+  if (typeof window !== 'undefined') {
+    const existing = JSON.parse(localStorage.getItem('frenyer_local_suppliers') || '[]');
+    existing.push(supplierRecord);
+    localStorage.setItem('frenyer_local_suppliers', JSON.stringify(existing));
+  }
   return supplierRecord;
 }
 
@@ -483,38 +491,45 @@ export async function updateSupplierInSupabase(id: string, updates: Partial<DbSu
     // Fall back
   }
 
-  if (!isSupabaseConfigured) return true;
+  if (isSupabaseConfigured) {
+    try {
+      let currentUpdates = { ...updates };
+      let attempts = 0;
+      while (attempts < 6) {
+        attempts++;
+        const { error } = await supabase
+          .from('suppliers')
+          .update(currentUpdates)
+          .eq('id', id);
 
-  try {
-    let currentUpdates = { ...updates };
-    let attempts = 0;
-    while (attempts < 6) {
-      attempts++;
-      const { error } = await supabase
-        .from('suppliers')
-        .update(currentUpdates)
-        .eq('id', id);
+        if (!error) {
+          return true;
+        }
 
-      if (!error) {
-        return true;
+        const match = error.message.match(/Could not find the '([^']+)' column of 'suppliers'/i);
+        if (match && match[1] && match[1] in currentUpdates) {
+          delete (currentUpdates as any)[match[1]];
+          continue;
+        }
+
+        console.warn('Aviso actualizando proveedor en Supabase:', error.message);
+        break;
       }
-
-      const match = error.message.match(/Could not find the '([^']+)' column of 'suppliers'/i);
-      if (match && match[1] && match[1] in currentUpdates) {
-        console.warn(`Columna '${match[1]}' no disponible en 'suppliers' de Supabase; reintentando actualización sin ella...`);
-        delete (currentUpdates as any)[match[1]];
-        continue;
-      }
-
-      console.warn('Aviso actualizando proveedor en Supabase:', error.message);
-      break;
+    } catch (err) {
+      console.warn('Network notice updating supplier in Supabase:', err);
     }
-    // Retornar true ya que los cambios se persistieron localmente con éxito
-    return true;
-  } catch (err) {
-    console.warn('Network notice updating supplier in Supabase:', err);
-    return true;
   }
+
+  // Persistir localmente en caso de fallo de Supabase
+  if (typeof window !== 'undefined') {
+    const existing = JSON.parse(localStorage.getItem('frenyer_local_suppliers') || '[]');
+    const index = existing.findIndex((s: DbSupplier) => s.id === id);
+    if (index !== -1) {
+      existing[index] = { ...existing[index], ...updates };
+      localStorage.setItem('frenyer_local_suppliers', JSON.stringify(existing));
+    }
+  }
+  return true;
 }
 
 export async function deleteSupplierFromSupabase(id: string): Promise<boolean> {
