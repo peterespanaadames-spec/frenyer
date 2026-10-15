@@ -1940,7 +1940,7 @@ grant all on table public.expense_payments to anon, authenticated;
         >
           <div
             style={{
-              background: 'var(--bg-card)',
+              background: '#ffffff',
               borderRadius: 'var(--radius-lg)',
               width: '100%',
               maxWidth: 440,

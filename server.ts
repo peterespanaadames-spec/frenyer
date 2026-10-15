@@ -3544,10 +3544,17 @@ app.post('/api/expenses/:id/pay', async (req, res: AuthenticatedResponse) => {
         });
 
         // B. Actualizar balance de cuenta bancaria
-        const accRes = await authenticatedSupabaseRestRequest(res, `bank_accounts?id=eq.${encodeURIComponent(bankAccountId)}&select=balance`);
+        const accRes = await authenticatedSupabaseRestRequest(res, `bank_accounts?id=eq.${encodeURIComponent(bankAccountId)}&select=balance,currency`);
         if (accRes.data && accRes.data.length > 0) {
-          const currentBalance = Number(accRes.data[0].balance) || 0;
-          const newBalance = Math.round((currentBalance - numAmount) * 100) / 100;
+          const acc = accRes.data[0];
+          let deductionAmount = numAmount;
+          if (currency && acc.currency && currency !== acc.currency) {
+             deductionAmount = (currency === 'USD' && acc.currency === 'VES')
+               ? numAmount * (exchangeRate || 1.0)
+               : numAmount / (exchangeRate || 1.0);
+          }
+          const currentBalance = Number(acc.balance) || 0;
+          const newBalance = Math.round((currentBalance - deductionAmount) * 100) / 100;
           
           await authenticatedSupabaseRestRequest(res, `bank_accounts?id=eq.${encodeURIComponent(bankAccountId)}`, {
             method: 'PATCH',

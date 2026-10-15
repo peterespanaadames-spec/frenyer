@@ -3300,6 +3300,29 @@ export async function recordExpensePaymentInSupabase(
           reference: paymentData.reference || null,
           notes: paymentData.notes || null
         }]);
+        
+        // --- ADDED DEFENSIVE DEDUCTION ---
+        if (paymentData.bankAccountId) {
+            const { data: bAcc } = await supabase
+                .from('bank_accounts')
+                .select('id, balance, currency')
+                .eq('id', paymentData.bankAccountId)
+                .maybeSingle();
+            
+            if (bAcc) {
+                let deductionAmount = paymentData.amount;
+                if (paymentData.currency && bAcc.currency && paymentData.currency !== bAcc.currency) {
+                    deductionAmount = (paymentData.currency === 'USD' && bAcc.currency === 'VES')
+                        ? paymentData.amount * paymentData.exchangeRate
+                        : paymentData.amount / paymentData.exchangeRate;
+                }
+                
+                await supabase
+                    .from('bank_accounts')
+                    .update({ balance: Math.round((Number(bAcc.balance) - deductionAmount) * 100) / 100 })
+                    .eq('id', paymentData.bankAccountId);
+            }
+        }
       }
 
       return { success: true };
