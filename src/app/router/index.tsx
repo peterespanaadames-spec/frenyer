@@ -75,6 +75,7 @@ export const router = createBrowserRouter([
 
       // Finanzas
       { path: 'finanzas/salud', element: <CompanyHealthPage /> },
+      { path: 'finanzas/salud-del-negocio', element: <CompanyHealthPage /> },
       { path: 'finanzas/ganancias-perdidas', element: <ProfitLossPage /> },
 
       // Configuración

@@ -3527,6 +3527,7 @@ app.post('/api/expenses/:id/pay', async (req, res: AuthenticatedResponse) => {
     // 2. Si se especificó cuenta bancaria, registrar movimiento de egreso
     if (bankAccountId) {
       try {
+        // A. Registrar movimiento
         await authenticatedSupabaseRestRequest(res, 'bank_movements', {
           method: 'POST',
           body: {
@@ -3541,6 +3542,18 @@ app.post('/api/expenses/:id/pay', async (req, res: AuthenticatedResponse) => {
             source: 'GASTO_OPERATIVO'
           }
         });
+
+        // B. Actualizar balance de cuenta bancaria
+        const accRes = await authenticatedSupabaseRestRequest(res, `bank_accounts?id=eq.${encodeURIComponent(bankAccountId)}&select=balance`);
+        if (accRes.data && accRes.data.length > 0) {
+          const currentBalance = Number(accRes.data[0].balance) || 0;
+          const newBalance = Math.round((currentBalance - numAmount) * 100) / 100;
+          
+          await authenticatedSupabaseRestRequest(res, `bank_accounts?id=eq.${encodeURIComponent(bankAccountId)}`, {
+            method: 'PATCH',
+            body: { balance: newBalance }
+          });
+        }
       } catch (bmErr) {
         console.warn('Aviso registrando movimiento bancario de gasto:', bmErr);
       }
