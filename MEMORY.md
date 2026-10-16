@@ -12,14 +12,10 @@
   - Modal de "Agregar / Editar Usuario" con roles definidos (`Admin`, `Manager`, `Cashier`, `Viewer`) y permisos granulares de módulos (Ventas/POS, Inventario, Finanzas/Bancos, Informes de Gestión, Gestión de Usuarios).
   - Tarjetas de usuarios asociadas con avatar de iniciales, insignia de rol por colores, interruptor de estatus activo/inactivo, etiquetas de módulos permitidos, botones de editar/eliminar y opción de activar perfil en sesión.
   - Menú lateral (`Sidebar.tsx`) con filtrado dinámico según los permisos del usuario activo.
+- **Dashboard Operativo (`/dashboard`)**:
+  - Utilidad Mensual sincronizada exactamente con las fórmulas de *Salud del Negocio* (`totalIngresos - totalCostosVentas - totalGastosOperativos`), deduciendo costos por venta y gastos de `expenses`.
+  - Top 5 productos más vendidos recuperado e infalible mediante agrupación directa sobre `sale_items` y catálogo.
+  - Cuentas por Cobrar y por Pagar a Vencer filtradas estrictamente para incluir documentos con saldo activo con vencimiento en los **próximos 21 días** o correspondientes al **mes calendario en curso**, mostrando conteo de documentos.
+  - Tipografía y jerarquía visual del Design System aplicadas globalmente.
 - **Estado**: Compilación TypeScript y linting limpios al 100%. Servidor activo en puerto 3000.
 
-## Decisiones importantes
-- **Regla de Oro de Interfaz ("Golden Template")**: Pantallas montadas dentro de `<div className="content">` con cabecera estándar `<div className="page-head">`, tarjetas `<Card>`, botones `<Button>` y tablas `.table-wrap`.
-- **Persistencia Dual Resiliente**: Endpoints robustos en `server.ts` con sincronización en Supabase y respaldo en archivos locales JSON (`data/users.json`, `data/branches.json`, `data/bank_movements.json`) para garantizar que la app nunca falle por desconexión de base de datos.
-- **Control de Acceso (RBAC)**: Permisos reactivos en cliente comunicados por eventos `frenyer:active-user-changed`, adaptando la visibilidad del menú al rol del operador.
-
-## Errores a evitar
-- No intentar crear usuarios administrativos directamente desde el navegador contra Supabase sin pasar por el backend seguro.
-- No dejar campos de roles o permisos con valores quemados estáticos sin conexión al estado reactivo y al backend.
-- Mantener siempre la bimonetariedad exacta y el redondeo a 2 decimales en transacciones.
