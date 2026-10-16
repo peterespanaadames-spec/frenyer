@@ -24,6 +24,9 @@
     - **Compromisos pendientes y detalle**: Desglose exhaustivo de facturas activas en Cuentas por Pagar (N° documento, concepto, fecha emisión/vencimiento, alertas de morosidad, monto total, abonado y saldo deudor en USD y VES a tasa BCV, con historial desplegable de pagos).
     - **Ticket promedio de ventas**: Muestra el ticket promedio de ventas del comercio ($ USD y Bs) para evaluar la liquidez y rotación, junto con el ticket promedio por factura con dicho proveedor.
     - **Tiempo estimado de pago de deuda**: Proyección de amortización y días restantes según vencimiento contractual y capacidad de flujo diario, con semáforo de urgencia (Al día, En plazo comercial, Por vencer, Vencida).
-    - Acceso directo a Cuentas por Pagar e impresión de estado de cuenta oficial.
+- **RBAC & Autenticación Supabase / Next.js**:
+  - Migración `0021_rbac_profiles_and_first_user_trigger.sql` con roles `'gerente'`, `'administrador'`, `'cajero'`, `'cliente'`.
+  - Trigger automático `handle_new_user`: primer usuario registrado obtiene rol `'gerente'`, usuarios subsecuentes `'cliente'` por defecto o el asignado en metadata.
+  - Arquitectura Next.js App Router con `@supabase/ssr`, `middleware.ts` para control de rutas administrativas y páginas `/login`, `/register` y `/forgot-password`.
 - **Estado**: Compilación TypeScript y linting limpios al 100%. Servidor activo en puerto 3000.
 
