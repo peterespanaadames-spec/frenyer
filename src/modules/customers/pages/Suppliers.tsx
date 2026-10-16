@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useState, useEffect, useMemo } from 'react';
+import { useSearchParams, useNavigate } from 'react-router-dom';
 import * as XLSX from 'xlsx';
 import {
   Truck,
@@ -20,12 +20,21 @@ import {
   Save,
   DollarSign,
   ChevronDown,
-  Download
+  Download,
+  Eye,
+  Clock,
+  Calendar,
+  TrendingUp,
+  CheckCircle2,
+  AlertTriangle,
+  CreditCard,
+  ExternalLink
 } from 'lucide-react';
 import { Card } from '../../../components/ui/Card';
 import { Button } from '../../../components/ui/Button';
 import { Badge } from '../../../components/ui/Badge';
-import { getActiveExchangeRate, convertUSDtoVES, formatVES } from '../../../lib/currency';
+import { getActiveExchangeRate, convertUSDtoVES, formatVES, formatUSD } from '../../../lib/currency';
+import { authenticatedFetch } from '../../../lib/supabase/api';
 import {
   fetchSuppliersFromSupabase,
   createSupplierInSupabase,
@@ -34,8 +43,10 @@ import {
   getActiveOrgId,
   DbSupplier
 } from '../../../lib/supabase/db';
+import { SupplierDetailModal } from '../components/SupplierDetailModal';
 
 export function SuppliersPage() {
+  const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const [suppliers, setSuppliers] = useState<DbSupplier[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -43,6 +54,9 @@ export function SuppliersPage() {
   const [statusFilter, setStatusFilter] = useState<'Todos' | 'Activo' | 'Inactivo' | 'Con Deuda'>('Todos');
   const [activeRate] = useState(() => getActiveExchangeRate());
   const [toast, setToast] = useState<string | null>(null);
+
+  // Modal de Detalle, Compromisos y Métricas de Proveedor
+  const [selectedSupplierModal, setSelectedSupplierModal] = useState<DbSupplier | null>(null);
 
   // View Mode: 'list' (directorio) | 'form' (pantalla externa de formulario)
   const [viewMode, setViewMode] = useState<'list' | 'form'>(() => {
@@ -170,6 +184,9 @@ export function SuppliersPage() {
       status: statusInput
     };
 
+    const cleanDoc = docNumberInput.trim().toUpperCase().replace(/[\s.-]/g, '');
+    const cleanName = nameInput.trim().toLowerCase().replace(/\s+/g, ' ');
+
     try {
       if (editingId) {
         const ok = await updateSupplierInSupabase(editingId, payload);
@@ -182,6 +199,23 @@ export function SuppliersPage() {
           showToast('❌ Error actualizando proveedor.');
         }
       } else {
+        const duplicate = suppliers.find(s => 
+          (cleanDoc && s.doc_number && s.doc_number.trim().toUpperCase().replace(/[\s.-]/g, '') === cleanDoc) ||
+          (cleanName && s.name && s.name.trim().toLowerCase().replace(/\s+/g, ' ') === cleanName)
+        );
+        if (duplicate) {
+          const ok = await updateSupplierInSupabase(duplicate.id, payload);
+          if (ok) {
+            showToast(`ℹ️ El proveedor ya existía (${duplicate.code || 'PRV'}). Datos actualizados sin duplicar.`);
+            await loadSuppliers();
+            setRegistrationPhase(1);
+            handleReturnToList();
+          } else {
+            showToast('❌ Error actualizando proveedor existente.');
+          }
+          return;
+        }
+
         const created = await createSupplierInSupabase({
           ...payload
         });
@@ -983,7 +1017,13 @@ export function SuppliersPage() {
                 filteredSuppliers.map((s) => {
                   const debtVES = convertUSDtoVES(s.balance_usd || 0, activeRate);
                   return (
-                    <tr key={s.id}>
+                    <tr
+                      key={s.id}
+                      onClick={() => setSelectedSupplierModal(s)}
+                      style={{ cursor: 'pointer', transition: 'background-color 0.15s' }}
+                      title="Haz clic para ver compromisos, ticket promedio y tiempo estimado de pago"
+                      className="hover:bg-slate-50"
+                    >
                       <td>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                           <div
@@ -1002,7 +1042,7 @@ export function SuppliersPage() {
                             <Building2 size={18} />
                           </div>
                           <div>
-                            <b>{s.name}</b>
+                            <b style={{ color: 'var(--text)' }}>{s.name}</b>
                             <div className="muted small">{s.code || 'PRV-GEN'}</div>
                           </div>
                         </div>
@@ -1057,7 +1097,18 @@ export function SuppliersPage() {
                       </td>
 
                       <td style={{ textAlign: 'center' }}>
-                        <div style={{ display: 'flex', justifyContent: 'center', gap: 6 }}>
+                        <div
+                          style={{ display: 'flex', justifyContent: 'center', gap: 6 }}
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <Button
+                            variant="secondary"
+                            title="Ver compromisos y métricas"
+                            onClick={() => setSelectedSupplierModal(s)}
+                          >
+                            <Eye size={14} />
+                          </Button>
+
                           <Button
                             variant="secondary"
                             title="Editar Proveedor"
@@ -1203,6 +1254,17 @@ export function SuppliersPage() {
           </div>
         </div>
       )}
+
+      {/* Modal: Detalle de Proveedor, Compromisos, Ticket Promedio y Tiempo Estimado de Pago */}
+      <SupplierDetailModal
+        isOpen={Boolean(selectedSupplierModal)}
+        onClose={() => setSelectedSupplierModal(null)}
+        supplier={selectedSupplierModal}
+        onEditSupplier={(s) => {
+          setSelectedSupplierModal(null);
+          handleOpenEditForm(s);
+        }}
+      />
     </div>
   );
 }

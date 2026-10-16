@@ -1,6 +1,6 @@
 [
   {
-    "id": "sup-mvaguopj-f5ia",
+    "id": "sup-mvai4lu6-9vlh",
     "organization_id": "00000000-0000-0000-0000-000000000001",
     "code": "PRV-0001",
     "name": "Distri central AWS",
@@ -16,9 +16,9 @@
     "created_at": "2026-10-15T01:08:02.226Z"
   },
   {
-    "id": "6aebc011-a1db-4f66-b09a-59ac24b9541e",
+    "id": "sup-mvai4lu6-9mcz",
     "organization_id": "00000000-0000-0000-0000-000000000001",
-    "code": "PRV-0006",
+    "code": "PRV-0002",
     "name": "Test",
     "doc_type": "RIF (J / G / V)",
     "doc_number": "INV-1",
@@ -26,18 +26,18 @@
     "email": "",
     "contact_person": "",
     "address": "",
-    "category": "Compra Interna",
-    "balance_usd": 5,
+    "category": "Distribuidor Comercial",
+    "balance_usd": 0,
     "status": "Activo",
-    "created_at": "2026-10-16T04:28:01.897Z"
+    "created_at": "2026-10-15T00:45:12.572Z"
   },
   {
-    "id": "sup-mvaguopj-0wbr",
+    "id": "sup-mvai4lu6-8fyk",
     "organization_id": "00000000-0000-0000-0000-000000000001",
     "code": "PRV-0003",
     "name": "Distri pruuba1",
     "doc_type": "RIF (J / G / V)",
-    "doc_number": "fac001",
+    "doc_number": "FAC001",
     "phone": "",
     "email": "",
     "contact_person": "",
@@ -48,19 +48,19 @@
     "created_at": "2026-10-15T00:44:17.884Z"
   },
   {
-    "id": "362c19ce-7e1a-48a9-9944-b77d8c7b85e8",
+    "id": "sup-mvai4lu6-d0fb",
     "organization_id": "00000000-0000-0000-0000-000000000001",
-    "code": "PRV-0005",
+    "code": "PRV-0004",
     "name": "dd",
     "doc_type": "RIF (J / G / V)",
-    "doc_number": "ass-12",
+    "doc_number": "ASS-12",
     "phone": "",
     "email": "",
     "contact_person": "",
     "address": "",
-    "category": "Compra Interna",
-    "balance_usd": 5,
+    "category": "Distribuidor Comercial",
+    "balance_usd": 0,
     "status": "Activo",
-    "created_at": "2026-10-16T04:30:15.763Z"
+    "created_at": "2026-10-15T00:43:51.046Z"
   }
 ]

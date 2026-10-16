@@ -17,5 +17,13 @@
   - Top 5 productos más vendidos recuperado e infalible mediante agrupación directa sobre `sale_items` y catálogo.
   - Cuentas por Cobrar y por Pagar a Vencer filtradas estrictamente para incluir documentos con saldo activo con vencimiento en los **próximos 21 días** o correspondientes al **mes calendario en curso**, mostrando conteo de documentos.
   - Tipografía y jerarquía visual del Design System aplicadas globalmente.
+- **Gestión de Usuarios y RBAC**: (Ver arriba).
+- **Regla Bimonetaria de Transacciones**: Todo formulario de transacción verifica la tasa BCV oficial del momento, recalcula el total en VES sobre USD y registra ambos valores históricamente.
+- **Proveedores - Modal de Detalle, Compromisos y Métricas**:
+  - Al hacer clic en cualquier fila del directorio de proveedores (o botón de ver detalle):
+    - **Compromisos pendientes y detalle**: Desglose exhaustivo de facturas activas en Cuentas por Pagar (N° documento, concepto, fecha emisión/vencimiento, alertas de morosidad, monto total, abonado y saldo deudor en USD y VES a tasa BCV, con historial desplegable de pagos).
+    - **Ticket promedio de ventas**: Muestra el ticket promedio de ventas del comercio ($ USD y Bs) para evaluar la liquidez y rotación, junto con el ticket promedio por factura con dicho proveedor.
+    - **Tiempo estimado de pago de deuda**: Proyección de amortización y días restantes según vencimiento contractual y capacidad de flujo diario, con semáforo de urgencia (Al día, En plazo comercial, Por vencer, Vencida).
+    - Acceso directo a Cuentas por Pagar e impresión de estado de cuenta oficial.
 - **Estado**: Compilación TypeScript y linting limpios al 100%. Servidor activo en puerto 3000.
 

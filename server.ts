@@ -241,6 +241,12 @@ let lastCertifiedRate: {
   sourceDetails: 'Tasa inicial por defecto (877.90)'
 };
 
+function calculateTransactionVES(usdAmount: number, providedRate?: number): { vesAmount: number; rate: number } {
+  const rate = providedRate && providedRate > 0 ? providedRate : (lastCertifiedRate?.appliedRate || 877.90);
+  const vesAmount = Math.round((usdAmount * rate) * 100) / 100;
+  return { vesAmount, rate };
+}
+
 // Helper to get Caracas date and hour (UTC-4)
 function getCaracasTimeInfo() {
   const now = new Date();
@@ -1615,7 +1621,7 @@ app.post('/api/orders', async (req, res) => {
       const qty = Math.max(1, Number(item.quantity) || 1);
       const unitPrice = Number(item.unit_price_usd) || 0;
       const lineTotalUSD = Math.round(qty * unitPrice * 100) / 100;
-      const lineTotalVES = Math.round(lineTotalUSD * effectiveRate * 100) / 100;
+      const { vesAmount: lineTotalVES } = calculateTransactionVES(lineTotalUSD, effectiveRate);
       subtotalUSD += lineTotalUSD;
 
       return {
@@ -1631,8 +1637,9 @@ app.post('/api/orders', async (req, res) => {
       };
     });
 
+    const { vesAmount: totalVES } = calculateTransactionVES(subtotalUSD, Number(exchange_rate) || undefined);
+    // effectiveRate is already defined at line 1593
     const totalUSD = Math.round(subtotalUSD * 100) / 100;
-    const totalVES = Math.round(totalUSD * effectiveRate * 100) / 100;
     const nowIso = new Date().toISOString();
 
     const newOrder = {
@@ -2844,6 +2851,67 @@ app.post('/api/bank-transfers', async (req, res: AuthenticatedResponse) => {
 // ---------------------------------------------------------------------------
 const SUPPLIERS_FILE = path.resolve(process.cwd(), 'data', 'suppliers.json');
 
+function normalizeSupplierDoc(doc?: string | null): string {
+  if (!doc || typeof doc !== 'string') return '';
+  return doc.trim().toUpperCase().replace(/[\s.-]/g, '');
+}
+
+function normalizeSupplierName(name?: string | null): string {
+  if (!name || typeof name !== 'string') return '';
+  return name.trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+function getNextSupplierCode(suppliersList: any[]): string {
+  let maxNum = 0;
+  for (const s of suppliersList) {
+    if (s && s.code && typeof s.code === 'string') {
+      const match = s.code.match(/PRV-(\d+)/i);
+      if (match) {
+        const num = parseInt(match[1], 10);
+        if (!isNaN(num) && num > maxNum) {
+          maxNum = num;
+        }
+      }
+    }
+  }
+  return `PRV-${(maxNum + 1).toString().padStart(4, '0')}`;
+}
+
+function findExistingSupplier(
+  suppliersList: any[],
+  candidate: { id?: string | null; doc_number?: string | null; name?: string | null; code?: string | null }
+): { supplier: any; index: number } | null {
+  if (!Array.isArray(suppliersList) || suppliersList.length === 0) return null;
+
+  // 1. Coincidencia por ID estricto
+  if (candidate.id) {
+    const idx = suppliersList.findIndex((s: any) => s && s.id === candidate.id);
+    if (idx >= 0) return { supplier: suppliersList[idx], index: idx };
+  }
+
+  // 2. Coincidencia por RIF / doc_number normalizado (si no está vacío)
+  const normDoc = normalizeSupplierDoc(candidate.doc_number);
+  if (normDoc) {
+    const idx = suppliersList.findIndex((s: any) => normalizeSupplierDoc(s?.doc_number) === normDoc);
+    if (idx >= 0) return { supplier: suppliersList[idx], index: idx };
+  }
+
+  // 3. Coincidencia por nombre normalizado (si no está vacío)
+  const normName = normalizeSupplierName(candidate.name);
+  if (normName) {
+    const idx = suppliersList.findIndex((s: any) => normalizeSupplierName(s?.name) === normName);
+    if (idx >= 0) return { supplier: suppliersList[idx], index: idx };
+  }
+
+  // 4. Coincidencia por código PRV
+  if (candidate.code && candidate.code !== 'PRV-0001' && candidate.code !== 'PRV-GEN') {
+    const idx = suppliersList.findIndex((s: any) => s && s.code === candidate.code);
+    if (idx >= 0) return { supplier: suppliersList[idx], index: idx };
+  }
+
+  return null;
+}
+
 function loadPersistedSuppliers(orgId?: string): any[] {
   try {
     if (fs.existsSync(SUPPLIERS_FILE)) {
@@ -2863,20 +2931,37 @@ function loadPersistedSuppliers(orgId?: string): any[] {
   return [];
 }
 
-function savePersistedSupplier(supplier: any) {
+function savePersistedSupplier(supplier: any): any {
   try {
     const dir = path.dirname(SUPPLIERS_FILE);
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
     const current = loadPersistedSuppliers();
-    const idx = current.findIndex((s: any) => s.id === supplier.id || (s.doc_number && s.doc_number === supplier.doc_number));
-    if (idx >= 0) {
-      current[idx] = { ...current[idx], ...supplier };
+    const found = findExistingSupplier(current, supplier);
+    
+    let savedRecord: any;
+    if (found) {
+      savedRecord = {
+        ...found.supplier,
+        ...supplier,
+        id: found.supplier.id || supplier.id,
+        code: found.supplier.code || supplier.code || getNextSupplierCode(current)
+      };
+      current[found.index] = savedRecord;
     } else {
-      current.push(supplier);
+      const finalCode = supplier.code && /^PRV-\d+$/i.test(supplier.code)
+        ? supplier.code
+        : getNextSupplierCode(current);
+      savedRecord = {
+        ...supplier,
+        code: finalCode
+      };
+      current.push(savedRecord);
     }
     fs.writeFileSync(SUPPLIERS_FILE, JSON.stringify(current, null, 2), 'utf-8');
+    return savedRecord;
   } catch (err) {
     console.warn('Aviso guardando proveedor local:', err);
+    return supplier;
   }
 }
 
@@ -2885,7 +2970,23 @@ function saveAllPersistedSuppliers(list: any[]) {
     if (!Array.isArray(list) || list.length === 0) return;
     const dir = path.dirname(SUPPLIERS_FILE);
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(SUPPLIERS_FILE, JSON.stringify(list, null, 2), 'utf-8');
+    
+    const deduplicated: any[] = [];
+    for (const item of list) {
+      const existing = findExistingSupplier(deduplicated, item);
+      if (existing) {
+        deduplicated[existing.index] = {
+          ...deduplicated[existing.index],
+          ...item,
+          id: deduplicated[existing.index].id || item.id,
+          code: deduplicated[existing.index].code || item.code
+        };
+      } else {
+        deduplicated.push(item);
+      }
+    }
+
+    fs.writeFileSync(SUPPLIERS_FILE, JSON.stringify(deduplicated, null, 2), 'utf-8');
   } catch (err) {
     console.warn('Aviso guardando lista de proveedores:', err);
   }
@@ -2904,47 +3005,49 @@ function deletePersistedSupplier(id: string) {
 }
 
 function autoReconcileSuppliers(orgId: string): any[] {
-  const map = new Map<string, any>();
+  const localList = loadPersistedSuppliers(orgId);
+  const result: any[] = [...localList];
 
-  // 1. Cargar proveedores existentes en data/suppliers.json
-  const local = loadPersistedSuppliers(orgId);
-  for (const s of local) {
-    const key = `${(s.name || '').trim().toLowerCase()}|${(s.doc_number || '').trim().toLowerCase()}`;
-    if (key !== '|') map.set(key, s);
-  }
-
-  // 2. Extraer proveedores de cuentas por pagar (accounts_payable)
+  // 1. Conciliar con cuentas por pagar (accounts_payable)
   const payables = loadPersistedPayables(orgId);
   for (const p of payables) {
     const name = (p.supplier_name || '').trim();
     const doc = (p.supplier_doc || '').trim();
     if (!name && !doc) continue;
-    
-    // Clave única basada en nombre y doc
-    const key = `${name.toLowerCase()}|${doc.toLowerCase()}`;
-    const existing = map.get(key) || {};
-    const remaining = Math.max(0, Number(p.balance_usd ?? p.remaining_amount ?? 0));
 
-    const updated = {
-      id: existing.id || p.supplier_id || `sup-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
-      organization_id: orgId,
-      code: existing.code || `PRV-${(map.size + 1).toString().padStart(4, '0')}`,
-      name: name,
-      doc_type: existing.doc_type || (p.supplier_doc?.startsWith('J') ? 'RIF Jurídico' : 'RIF (J / G / V)'),
-      doc_number: existing.doc_number || doc || '',
-      phone: existing.phone || p.supplier_phone || '',
-      email: existing.email || p.supplier_email || '',
-      contact_person: existing.contact_person || p.supplier_contact || '',
-      address: existing.address || p.supplier_address || '',
-      category: existing.category || p.origin || 'Proveedor de Insumos',
-      balance_usd: (Number(existing.balance_usd) || 0) + remaining,
-      status: existing.status || 'Activo',
-      created_at: existing.created_at || p.created_at || new Date().toISOString()
-    };
-    map.set(key, updated);
+    const remaining = Math.max(0, Number(p.balance_usd ?? p.remaining_amount ?? 0));
+    const found = findExistingSupplier(result, { id: p.supplier_id, doc_number: doc, name });
+
+    if (found) {
+      result[found.index] = {
+        ...result[found.index],
+        balance_usd: (Number(result[found.index].balance_usd) || 0) + remaining,
+        phone: result[found.index].phone || p.supplier_phone || '',
+        email: result[found.index].email || p.supplier_email || '',
+        doc_number: result[found.index].doc_number || doc
+      };
+    } else {
+      const newCode = getNextSupplierCode(result);
+      result.push({
+        id: p.supplier_id || `sup-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+        organization_id: orgId,
+        code: newCode,
+        name: name || 'Proveedor Comercial',
+        doc_type: doc.startsWith('J') ? 'RIF Jurídico' : 'RIF (J / G / V)',
+        doc_number: doc,
+        phone: p.supplier_phone || '',
+        email: p.supplier_email || '',
+        contact_person: p.supplier_contact || '',
+        address: p.supplier_address || '',
+        category: p.origin || 'Proveedor Comercial',
+        balance_usd: remaining,
+        status: 'Activo',
+        created_at: p.created_at || new Date().toISOString()
+      });
+    }
   }
 
-  // 3. Extraer proveedores de movimientos bancarios (data/bank_movements.json)
+  // 2. Conciliar pagos bancarios
   try {
     const bankMovFile = path.resolve(process.cwd(), 'data', 'bank_movements.json');
     if (fs.existsSync(bankMovFile)) {
@@ -2956,12 +3059,13 @@ function autoReconcileSuppliers(orgId: string): any[] {
           if (match && match[1]) {
             const rawName = match[1].trim();
             const rawDoc = match[2] ? match[2].trim() : '';
-            const key = rawName.toLowerCase();
-            if (!map.has(key)) {
-              map.set(key, {
+            const found = findExistingSupplier(result, { name: rawName, doc_number: rawDoc });
+            if (!found) {
+              const newCode = getNextSupplierCode(result);
+              result.push({
                 id: `sup-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
                 organization_id: orgId,
-                code: `PRV-${(map.size + 1).toString().padStart(4, '0')}`,
+                code: newCode,
                 name: rawName,
                 doc_type: 'RIF (J / G / V)',
                 doc_number: rawDoc,
@@ -2983,10 +3087,7 @@ function autoReconcileSuppliers(orgId: string): any[] {
     console.warn('Aviso conciliando proveedores de movimientos bancarios:', err);
   }
 
-  const result = Array.from(map.values());
-  if (result.length > 0) {
-    saveAllPersistedSuppliers(result);
-  }
+  saveAllPersistedSuppliers(result);
   return result;
 }
 
@@ -2996,7 +3097,7 @@ app.get('/api/suppliers', async (req, res: AuthenticatedResponse) => {
     const authHeader = req.headers.authorization;
     const token = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : undefined;
     
-    // 1. Auto-conciliar proveedores registrados en compras, facturas y pagos
+    // 1. Auto-conciliar proveedores de forma segura y sin duplicar
     const autoSuppliers = autoReconcileSuppliers(orgId);
 
     // 2. Consultar tabla suppliers en Supabase si está disponible
@@ -3010,54 +3111,30 @@ app.get('/api/suppliers', async (req, res: AuthenticatedResponse) => {
       console.warn('Aviso consultando suppliers en Supabase:', e);
     }
 
-    // 3. Fusionar garantizando no perder campos enriquecidos (teléfono, email, categoría, saldo)
-    const map = new Map<string, any>();
+    // 3. Fusionar usando findExistingSupplier por clave de negocio canónica (doc_number / name)
+    const mergedList: any[] = [];
     for (const s of autoSuppliers) {
-      const k = (s.name || s.id || '').trim().toLowerCase();
-      if (k) map.set(k, s);
+      const found = findExistingSupplier(mergedList, s);
+      if (found) {
+        mergedList[found.index] = { ...mergedList[found.index], ...s };
+      } else {
+        mergedList.push({ ...s });
+      }
     }
     for (const s of dbSuppliers) {
-      const k = (s.name || s.id || '').trim().toLowerCase();
-      if (k) {
-        const local = map.get(k) || {};
-        map.set(k, { ...local, ...s, id: s.id || local.id });
+      const found = findExistingSupplier(mergedList, s);
+      if (found) {
+        mergedList[found.index] = { ...mergedList[found.index], ...s, id: s.id || mergedList[found.index].id };
+      } else {
+        mergedList.push({ ...s });
       }
     }
 
-    const merged = Array.from(map.values());
-    if (merged.length > 0) {
-      saveAllPersistedSuppliers(merged);
+    if (mergedList.length > 0) {
+      saveAllPersistedSuppliers(mergedList);
     }
 
-    // 4. Intentar sincronizar hacia Supabase de fondo los que no estén en la nube
-    // enviando únicamente las columnas existentes en Supabase (name, doc_type, doc_number, code, balance_usd, status)
-    if (dbSuppliers.length === 0 && merged.length > 0) {
-      (async () => {
-        for (const item of merged) {
-          try {
-            const cleanSupabasePayload: Record<string, any> = {
-              organization_id: orgId,
-              name: item.name,
-              doc_type: item.doc_type || 'RIF (J / G / V)',
-              doc_number: item.doc_number || '',
-              code: item.code || `PRV-0001`,
-              balance_usd: Number(item.balance_usd) || 0,
-              status: item.status || 'Activo'
-            };
-            if (item.id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(item.id)) {
-              cleanSupabasePayload.id = item.id;
-            }
-            await supabaseRestRequest('suppliers', {
-              method: 'POST',
-              headers: { Prefer: 'resolution=ignore-duplicates' },
-              body: cleanSupabasePayload
-            }, token);
-          } catch { }
-        }
-      })().catch(() => {});
-    }
-
-    return res.json({ success: true, data: merged });
+    return res.json({ success: true, data: mergedList });
   } catch (err: any) {
     return res.status(200).json({ success: true, data: autoReconcileSuppliers('00000000-0000-0000-0000-000000000001') });
   }
@@ -3069,55 +3146,75 @@ app.post('/api/suppliers', async (req, res: AuthenticatedResponse) => {
     const authHeader = req.headers.authorization;
     const token = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : undefined;
     const rawSupplier = req.body || {};
-    const supplierId = (rawSupplier.id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(rawSupplier.id))
+
+    const currentSuppliers = loadPersistedSuppliers(orgId);
+    const existing = findExistingSupplier(currentSuppliers, {
+      id: rawSupplier.id,
+      doc_number: rawSupplier.doc_number,
+      name: rawSupplier.name
+    });
+
+    const targetCode = existing?.supplier?.code || (rawSupplier.code && /^PRV-\d+$/i.test(rawSupplier.code) ? rawSupplier.code : getNextSupplierCode(currentSuppliers));
+    const targetId = existing?.supplier?.id || (rawSupplier.id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(rawSupplier.id)
       ? rawSupplier.id
-      : (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : 'b1c2d3e4-3333-4000-8000-' + Date.now().toString().slice(-12).padStart(12, '0'));
+      : (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : 'b1c2d3e4-3333-4000-8000-' + Date.now().toString().slice(-12).padStart(12, '0')));
 
     const supplierRecord = {
+      ...(existing?.supplier || {}),
       ...rawSupplier,
-      id: supplierId,
+      id: targetId,
       organization_id: orgId,
-      code: rawSupplier.code || `PRV-${Date.now().toString().slice(-4)}`,
-      name: (rawSupplier.name || '').trim(),
-      doc_type: rawSupplier.doc_type || 'RIF (J / G / V)',
-      doc_number: (rawSupplier.doc_number || '').trim().toUpperCase(),
-      contact_person: (rawSupplier.contact_person || '').trim(),
-      phone: (rawSupplier.phone || '').trim(),
-      email: (rawSupplier.email || '').trim(),
-      address: (rawSupplier.address || '').trim(),
-      category: (rawSupplier.category || 'General').trim(),
-      balance_usd: Number(rawSupplier.balance_usd) || 0,
-      status: rawSupplier.status || 'Activo',
-      created_at: rawSupplier.created_at || new Date().toISOString()
+      code: targetCode,
+      name: (rawSupplier.name || existing?.supplier?.name || '').trim(),
+      doc_type: rawSupplier.doc_type || existing?.supplier?.doc_type || 'RIF (J / G / V)',
+      doc_number: (rawSupplier.doc_number || existing?.supplier?.doc_number || '').trim().toUpperCase(),
+      contact_person: (rawSupplier.contact_person ?? existing?.supplier?.contact_person ?? '').trim(),
+      phone: (rawSupplier.phone ?? existing?.supplier?.phone ?? '').trim(),
+      email: (rawSupplier.email ?? existing?.supplier?.email ?? '').trim(),
+      address: (rawSupplier.address ?? existing?.supplier?.address ?? '').trim(),
+      category: (rawSupplier.category || existing?.supplier?.category || 'General').trim(),
+      balance_usd: Number(rawSupplier.balance_usd ?? existing?.supplier?.balance_usd) || 0,
+      status: rawSupplier.status || existing?.supplier?.status || 'Activo',
+      created_at: existing?.supplier?.created_at || rawSupplier.created_at || new Date().toISOString()
     };
 
-    // 1. Guardar de inmediato en persistencia local
+    // 1. Guardar de inmediato en persistencia local deduplicada
     savePersistedSupplier(supplierRecord);
 
-    // 2. Intentar guardar en Supabase adaptando las columnas
+    // 2. Sincronizar en Supabase (PATCH si existía con UUID, o POST si es nuevo)
     try {
       let payload: Record<string, any> = { ...supplierRecord };
-      let attempts = 0;
-      while (attempts < 6) {
-        attempts++;
-        const result = await supabaseRestRequest('suppliers', {
-          method: 'POST',
+      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(targetId);
+
+      if (existing?.supplier?.id && isUuid) {
+        await supabaseRestRequest(`suppliers?id=eq.${encodeURIComponent(targetId)}`, {
+          method: 'PATCH',
           headers: { Prefer: 'return=representation' },
           body: payload
         }, token);
-        if (!result.error && result.data) {
-          const created = Array.isArray(result.data) ? result.data[0] : result.data;
-          const merged = { ...supplierRecord, ...created };
-          savePersistedSupplier(merged);
-          return res.json({ success: true, data: merged });
-        }
-        if (result.error) {
-          const missingColMatch = result.error.match(/Could not find the '([^']+)' column of 'suppliers'/i);
-          if (missingColMatch && missingColMatch[1] && missingColMatch[1] in payload) {
-            delete payload[missingColMatch[1]];
-            continue;
+      } else {
+        let attempts = 0;
+        while (attempts < 6) {
+          attempts++;
+          const result = await supabaseRestRequest('suppliers', {
+            method: 'POST',
+            headers: { Prefer: 'return=representation' },
+            body: payload
+          }, token);
+          if (!result.error && result.data) {
+            const created = Array.isArray(result.data) ? result.data[0] : result.data;
+            const merged = { ...supplierRecord, ...created };
+            savePersistedSupplier(merged);
+            return res.json({ success: true, data: merged });
           }
-          break;
+          if (result.error) {
+            const missingColMatch = result.error.match(/Could not find the '([^']+)' column of 'suppliers'/i);
+            if (missingColMatch && missingColMatch[1] && missingColMatch[1] in payload) {
+              delete payload[missingColMatch[1]];
+              continue;
+            }
+            break;
+          }
         }
       }
     } catch (sbErr) {
@@ -4550,50 +4647,54 @@ app.post('/api/accounts-payable', async (req, res: AuthenticatedResponse) => {
 
     let finalSupplierId = raw.supplier_id || raw.supplierId || null;
     const finalSupplierName = (raw.supplier_name || raw.supplierName || 'Proveedor').trim();
+    const finalSupplierDoc = (raw.supplier_doc || raw.supplierDoc || '').trim().toUpperCase();
 
-    // Si se indicó registrar un nuevo proveedor o no se tiene un supplier_id válido y se solicitó guardar
-    if ((raw.create_new_supplier || raw.save_supplier || raw.save_supplier_data) && (!finalSupplierId || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(finalSupplierId))) {
+    // 1. Verificar primero si ya existe un proveedor con ese ID, RIF o Nombre
+    const currentSuppliers = loadPersistedSuppliers(orgId);
+    const existingSupplier = findExistingSupplier(currentSuppliers, {
+      id: finalSupplierId,
+      doc_number: finalSupplierDoc,
+      name: finalSupplierName
+    });
+
+    if (existingSupplier) {
+      finalSupplierId = existingSupplier.supplier.id;
+    } else if (raw.create_new_supplier || raw.save_supplier || raw.save_supplier_data) {
+      // Solo crear si realmente NO existe
+      const generatedSupplierId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : 'b1c2d3e4-3333-4000-8000-' + Date.now().toString().slice(-12).padStart(12, '0');
+      const supplierRecord = {
+        id: generatedSupplierId,
+        organization_id: orgId,
+        code: getNextSupplierCode(currentSuppliers),
+        name: finalSupplierName,
+        doc_type: raw.supplier_doc_type || 'RIF (J / G / V)',
+        doc_number: finalSupplierDoc,
+        contact_person: (raw.supplier_contact || raw.contact_person || '').trim(),
+        phone: (raw.supplier_phone || raw.phone || '').trim(),
+        email: (raw.supplier_email || raw.email || '').trim(),
+        address: (raw.supplier_address || raw.address || '').trim(),
+        category: raw.supplier_category || 'Proveedor comercial',
+        balance_usd: 0,
+        status: 'Activo',
+        created_at: new Date().toISOString()
+      };
+
+      const saved = savePersistedSupplier(supplierRecord);
+      finalSupplierId = saved.id || generatedSupplierId;
+
       try {
-        const generatedSupplierId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : 'b1c2d3e4-3333-4000-8000-' + Date.now().toString().slice(-12).padStart(12, '0');
-        const supplierRecord = {
-          id: generatedSupplierId,
-          organization_id: orgId,
-          code: `PRV-${Date.now().toString().slice(-4)}`,
-          name: finalSupplierName,
-          doc_type: raw.supplier_doc_type || 'RIF (J / G / V)',
-          doc_number: (raw.supplier_doc || '').trim().toUpperCase(),
-          contact_person: (raw.supplier_contact || raw.contact_person || '').trim(),
-          phone: (raw.supplier_phone || raw.phone || '').trim(),
-          email: (raw.supplier_email || raw.email || '').trim(),
-          address: (raw.supplier_address || raw.address || '').trim(),
-          category: raw.supplier_category || 'Proveedor comercial',
-          balance_usd: 0,
-          status: 'Activo',
-          created_at: new Date().toISOString()
-        };
-
-        savePersistedSupplier(supplierRecord);
-
-        // Guardar en tabla 'suppliers' de Supabase
-        try {
-          const supRes = await supabaseRestRequest('suppliers', {
-            method: 'POST',
-            headers: { Prefer: 'return=representation' },
-            body: supplierRecord
-          });
-          if (!supRes.error && supRes.data) {
-            const createdSup = Array.isArray(supRes.data) ? supRes.data[0] : supRes.data;
-            finalSupplierId = createdSup.id || generatedSupplierId;
-            savePersistedSupplier({ ...supplierRecord, ...createdSup });
-          } else {
-            finalSupplierId = generatedSupplierId;
-          }
-        } catch (supErr) {
-          console.warn('Aviso guardando proveedor en Supabase:', supErr);
-          finalSupplierId = generatedSupplierId;
+        const supRes = await supabaseRestRequest('suppliers', {
+          method: 'POST',
+          headers: { Prefer: 'return=representation' },
+          body: supplierRecord
+        });
+        if (!supRes.error && supRes.data) {
+          const createdSup = Array.isArray(supRes.data) ? supRes.data[0] : supRes.data;
+          finalSupplierId = createdSup.id || finalSupplierId;
+          savePersistedSupplier({ ...supplierRecord, ...createdSup });
         }
-      } catch (e) {
-        console.warn('Aviso creando proveedor automático en cuentas por pagar:', e);
+      } catch (supErr) {
+        console.warn('Aviso guardando proveedor en Supabase:', supErr);
       }
     }
 
@@ -4603,6 +4704,7 @@ app.post('/api/accounts-payable', async (req, res: AuthenticatedResponse) => {
       organization_id: orgId,
       supplier_id: finalSupplierId,
       supplier_name: finalSupplierName,
+      supplier_doc: finalSupplierDoc,
       doc_number: (raw.doc_number || raw.docNumber || '').trim(),
       concept: (raw.concept || 'Compra o compromiso comercial').trim(),
       description: raw.description?.trim() || null,
@@ -4870,11 +4972,9 @@ app.post('/api/purchases', async (req, res: AuthenticatedResponse) => {
     const orgId = res.locals.supabaseContext?.organizationId || '00000000-0000-0000-0000-000000000001';
     const body = req.body || {};
     const items = Array.isArray(body.items) ? body.items : (Array.isArray(body.p_items) ? body.p_items : []);
-    const rate = Number(body.exchangeRate || body.p_exchange_rate) || 1;
-
     const subtotalUsd = items.reduce((sum: number, it: any) => sum + ((Number(it.quantity) || 0) * (Number(it.unitCostUSD || it.unit_cost_usd) || 0)), 0);
+    const { vesAmount: totalVes, rate } = calculateTransactionVES(subtotalUsd, Number(body.exchangeRate || body.p_exchange_rate) || undefined);
     const totalUsd = Math.round(subtotalUsd * 100) / 100;
-    const totalVes = Math.round(totalUsd * rate * 100) / 100;
 
     const docNumber = body.docNumber || body.doc_number || `CMP-${Date.now().toString().slice(-5)}`;
     const invoiceNumber = (body.invoiceNumber || body.p_invoice_number || docNumber).trim();
@@ -4933,6 +5033,7 @@ app.post('/api/purchases', async (req, res: AuthenticatedResponse) => {
         organization_id: orgId,
         supplier_id: body.supplierId || body.p_supplier_id || null,
         supplier_name: supplierName,
+        supplier_doc: (body.supplierDoc || body.supplier_doc || '').trim().toUpperCase(),
         doc_number: invoiceNumber,
         concept: `Compra de inventario (${docNumber})`,
         origin: 'Compra Interna',

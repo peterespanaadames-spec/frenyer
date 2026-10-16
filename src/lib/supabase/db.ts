@@ -338,24 +338,52 @@ export async function fetchSuppliersFromSupabase(organizationId?: string): Promi
     }
   }
 
-  // Fusionar fuentes
-  const map = new Map<string, DbSupplier>();
-  
-  // Agregar primero datos remotos (prioridad si existen)
-  for (const s of supabaseData) if (s.id) map.set(s.id, s);
-  for (const s of serverData) if (s.id) map.set(s.id, { ...map.get(s.id), ...s } as DbSupplier);
-  
-  // Agregar/combinar datos locales si no están en remoto, o actualizar si falta info
-  for (const s of rawLocal) {
-    if (s.id) {
-      if (!map.has(s.id)) {
-        map.set(s.id, s);
-      }
+  // Helper de clave canónica para deduplicar
+  const getSupplierKey = (s: Partial<DbSupplier>): string => {
+    const doc = (s.doc_number || '').trim().toUpperCase().replace(/[\s.-]/g, '');
+    if (doc) return `doc:${doc}`;
+    const name = (s.name || '').trim().toLowerCase().replace(/\s+/g, ' ');
+    if (name) return `name:${name}`;
+    return `id:${s.id || ''}`;
+  };
+
+  const canonicalMap = new Map<string, DbSupplier>();
+
+  // 1. Agregar datos remotos de Supabase
+  for (const s of supabaseData) {
+    if (!s) continue;
+    const k = getSupplierKey(s);
+    canonicalMap.set(k, s);
+  }
+
+  // 2. Fusionar datos del servidor proxy (priorizar UUID remoto si existe)
+  for (const s of serverData) {
+    if (!s) continue;
+    const k = getSupplierKey(s);
+    const existing = canonicalMap.get(k);
+    if (existing) {
+      canonicalMap.set(k, {
+        ...s,
+        ...existing,
+        id: (existing.id && isValidUuid(existing.id)) ? existing.id : (s.id || existing.id),
+        code: existing.code || s.code
+      });
+    } else {
+      canonicalMap.set(k, s);
     }
   }
 
-  const merged = Array.from(map.values());
-  if (typeof window !== 'undefined' && merged.length > 0) {
+  // 3. Fusionar datos de localStorage solo si no están ya registrados
+  for (const s of rawLocal) {
+    if (!s) continue;
+    const k = getSupplierKey(s);
+    if (!canonicalMap.has(k)) {
+      canonicalMap.set(k, s);
+    }
+  }
+
+  const merged = Array.from(canonicalMap.values());
+  if (typeof window !== 'undefined') {
     localStorage.setItem('frenyer_local_suppliers', JSON.stringify(merged));
   }
 
@@ -366,6 +394,22 @@ export async function createSupplierInSupabase(
   supplier: Omit<DbSupplier, 'id' | 'created_at'> & { id?: string }
 ): Promise<DbSupplier | null> {
   const orgId = await getActiveOrgId();
+
+  // Comprobar si ya existe un proveedor idéntico localmente para no duplicar
+  if (typeof window !== 'undefined') {
+    const local = JSON.parse(localStorage.getItem('frenyer_local_suppliers') || '[]');
+    const normDoc = (supplier.doc_number || '').trim().toUpperCase().replace(/[\s.-]/g, '');
+    const normName = (supplier.name || '').trim().toLowerCase().replace(/\s+/g, ' ');
+    const existing = local.find((s: any) => 
+      (normDoc && s.doc_number && s.doc_number.trim().toUpperCase().replace(/[\s.-]/g, '') === normDoc) ||
+      (normName && s.name && s.name.trim().toLowerCase().replace(/\s+/g, ' ') === normName)
+    );
+    if (existing) {
+      await updateSupplierInSupabase(existing.id, supplier);
+      return { ...existing, ...supplier };
+    }
+  }
+
   const newId = supplier.id && isValidUuid(supplier.id)
     ? supplier.id
     : ((typeof crypto !== 'undefined' && crypto.randomUUID) ? crypto.randomUUID() : 'b1c2d3e4-3333-4000-8000-' + Date.now().toString().slice(-12).padStart(12, '0'));
@@ -373,10 +417,10 @@ export async function createSupplierInSupabase(
   const supplierRecord: DbSupplier = {
     id: newId,
     organization_id: orgId || '00000000-0000-0000-0000-000000000001',
-    code: supplier.code || `PRV-${Date.now().toString().slice(-4)}`,
+    code: supplier.code || `PRV-0001`,
     name: supplier.name,
     doc_type: supplier.doc_type || 'RIF (J / G / V)',
-    doc_number: supplier.doc_number || '',
+    doc_number: (supplier.doc_number || '').trim().toUpperCase(),
     contact_person: supplier.contact_person || '',
     phone: supplier.phone || '',
     email: supplier.email || '',

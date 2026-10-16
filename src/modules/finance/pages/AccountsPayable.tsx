@@ -579,8 +579,8 @@ export function AccountsPayable() {
         supplier_email: supplierEmail,
         supplier_contact: supplierContact,
         supplier_address: supplierAddress,
-        create_new_supplier: formSupplierMode === 'new' && formSaveSupplierToDb,
-        save_supplier: formSaveSupplierToDb,
+        create_new_supplier: isNewSupplierSaved ? false : (formSupplierMode === 'new' && formSaveSupplierToDb),
+        save_supplier: isNewSupplierSaved ? false : formSaveSupplierToDb,
         doc_number: docNo,
         concept: formConcept.trim() || 'Compra de insumos o servicios',
         origin: 'Compra Interna',
@@ -1521,7 +1521,7 @@ export function AccountsPayable() {
                       gap: 6
                     }}
                   >
-                    <Plus size={14} /> + Registrar nuevo proveedor
+                    <Plus size={14} /> Nuevo Proveedor
                   </button>
                 </div>
 
@@ -1678,7 +1678,7 @@ export function AccountsPayable() {
                               cursor: 'pointer'
                             }}
                           >
-                            + Registrar nuevo proveedor
+                            Nuevo Proveedor
                           </button>
                         </div>
                       </div>
