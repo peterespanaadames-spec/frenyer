@@ -17,6 +17,8 @@
     "@tanstack/react-query": "latest",
     "cors": "^2.8.6",
     "express": "^5.2.1",
+    "html2canvas": "^1.4.1",
+    "jspdf": "^4.2.1",
     "lucide-react": "latest",
     "react": "19.0.0",
     "react-dom": "19.0.0",

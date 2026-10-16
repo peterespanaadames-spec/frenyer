@@ -26,6 +26,33 @@ export function DashboardLayout() {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isDbReady, setIsDbReady] = useState(() => isSupabaseConfigured);
 
+  // Active User Profile State (RBAC)
+  const [activeUser, setActiveUser] = useState<any>(() => {
+    try {
+      const stored = localStorage.getItem('frenyer_active_user');
+      if (stored) return JSON.parse(stored);
+    } catch {}
+    return {
+      name: 'Administrador Principal',
+      role: 'Admin',
+      initials: 'AP',
+      permissions: ['ventas', 'inventario', 'finanzas', 'reportes', 'usuarios']
+    };
+  });
+
+  useEffect(() => {
+    const handleUserChange = () => {
+      try {
+        const stored = localStorage.getItem('frenyer_active_user');
+        if (stored) {
+          setActiveUser(JSON.parse(stored));
+        }
+      } catch {}
+    };
+    window.addEventListener('frenyer:active-user-changed', handleUserChange);
+    return () => window.removeEventListener('frenyer:active-user-changed', handleUserChange);
+  }, []);
+
   // Proposed Rate Notification Banner
   const [proposedRate, setProposedRate] = useState<{
     newRate: number;
@@ -287,7 +314,44 @@ export function DashboardLayout() {
             <span className="muted" style={{ fontSize: 12 }}>
               Sucursal Principal
             </span>
-            <div className="avatar">FG</div>
+            <div
+              onClick={() => navigate('/configuracion')}
+              title={`Usuario activo: ${activeUser?.name || 'Administrador'} (${activeUser?.role || 'Admin'})`}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                padding: '4px 10px',
+                borderRadius: 8,
+                border: '1px solid var(--border)',
+                background: '#fff',
+                cursor: 'pointer',
+                transition: 'border-color 0.15s ease'
+              }}
+            >
+              <div
+                className="avatar"
+                style={{
+                  width: 26,
+                  height: 26,
+                  fontSize: 11,
+                  fontWeight: 700,
+                  background: '#f3e8ff',
+                  color: '#7e22ce',
+                  border: '1px solid #e9d5ff'
+                }}
+              >
+                {activeUser?.initials || 'AP'}
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', lineHeight: 1.1 }}>
+                <span style={{ fontSize: 11, fontWeight: 700, color: '#1e293b' }}>
+                  {activeUser?.name?.split(' ')[0] || 'Admin'}
+                </span>
+                <span style={{ fontSize: 9, fontWeight: 700, color: '#7e22ce', textTransform: 'uppercase' }}>
+                  {activeUser?.role || 'Admin'}
+                </span>
+              </div>
+            </div>
             {isAuthenticationRequired && <button
               type="button"
               onClick={handleSignOut}

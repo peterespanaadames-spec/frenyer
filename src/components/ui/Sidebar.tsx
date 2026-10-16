@@ -33,10 +33,12 @@ interface SidebarItem {
   label: string;
   icon: any;
   to?: string;
+  permissionKey?: string;
   children?: {
     label: string;
     icon: any;
     to: string;
+    permissionKey?: string;
   }[];
 }
 
@@ -48,7 +50,44 @@ interface SidebarProps {
 export function Sidebar({ isMobileOpen = false, onNavigate }: SidebarProps) {
   const location = useLocation();
 
-  // Define the menu structure exactly as shown in the image
+  // Permisos del usuario activo (RBAC)
+  const [userPermissions, setUserPermissions] = useState<string[]>(() => {
+    try {
+      const stored = localStorage.getItem('frenyer_active_user');
+      if (stored) {
+        const u = JSON.parse(stored);
+        if (Array.isArray(u.permissions)) return u.permissions;
+      }
+      const rawPerms = localStorage.getItem('frenyer_user_permissions');
+      if (rawPerms) {
+        const p = JSON.parse(rawPerms);
+        if (Array.isArray(p)) return p;
+      }
+    } catch {}
+    // Default: acceso completo a todos los módulos
+    return ['ventas', 'inventario', 'finanzas', 'reportes', 'usuarios'];
+  });
+
+  useEffect(() => {
+    const handleUserChange = () => {
+      try {
+        const stored = localStorage.getItem('frenyer_active_user');
+        if (stored) {
+          const u = JSON.parse(stored);
+          if (Array.isArray(u.permissions)) {
+            setUserPermissions(u.permissions);
+            return;
+          }
+        }
+      } catch {}
+      setUserPermissions(['ventas', 'inventario', 'finanzas', 'reportes', 'usuarios']);
+    };
+
+    window.addEventListener('frenyer:active-user-changed', handleUserChange);
+    return () => window.removeEventListener('frenyer:active-user-changed', handleUserChange);
+  }, []);
+
+  // Define the menu structure exactly as shown in the image with RBAC keys
   const menuItems: SidebarItem[] = [
     {
       label: 'Dashboard',
@@ -58,6 +97,7 @@ export function Sidebar({ isMobileOpen = false, onNavigate }: SidebarProps) {
     {
       label: 'Ventas Flash',
       icon: ShoppingCart,
+      permissionKey: 'ventas',
       children: [
         { label: 'Ventas', icon: ShoppingCart, to: '/ventas-flash/ventas' },
         { label: 'Pedidos', icon: ClipboardList, to: '/ventas-flash/pedidos' },
@@ -68,6 +108,7 @@ export function Sidebar({ isMobileOpen = false, onNavigate }: SidebarProps) {
     {
       label: 'Inventarios',
       icon: Package,
+      permissionKey: 'inventario',
       children: [
         { label: 'Productos', icon: Box, to: '/inventarios/productos' },
         { label: 'Compras internas', icon: Inbox, to: '/inventarios/compras' },
@@ -78,6 +119,7 @@ export function Sidebar({ isMobileOpen = false, onNavigate }: SidebarProps) {
     {
       label: 'Cuentas',
       icon: Landmark,
+      permissionKey: 'finanzas',
       children: [
         { label: 'Caja', icon: Banknote, to: '/cuentas/caja' },
         { label: 'Cuentas bancarias', icon: Building, to: '/cuentas/bancos' },
@@ -89,6 +131,7 @@ export function Sidebar({ isMobileOpen = false, onNavigate }: SidebarProps) {
     {
       label: 'Gastos',
       icon: Coins,
+      permissionKey: 'finanzas',
       to: '/gastos',
     },
     {
@@ -107,12 +150,19 @@ export function Sidebar({ isMobileOpen = false, onNavigate }: SidebarProps) {
     {
       label: 'Finanzas',
       icon: Percent,
+      permissionKey: 'reportes',
       children: [
         { label: 'Salud de empresa', icon: Heart, to: '/finanzas/salud' },
         { label: 'Ganancias y pérdidas', icon: Percent, to: '/finanzas/ganancias-perdidas' },
       ],
     },
   ];
+
+  // Filtrar ítems visibles por permisos
+  const visibleMenuItems = menuItems.filter(item => {
+    if (!item.permissionKey) return true;
+    return userPermissions.includes(item.permissionKey);
+  });
 
   // Expanded sections state
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
@@ -122,7 +172,7 @@ export function Sidebar({ isMobileOpen = false, onNavigate }: SidebarProps) {
     const newExpanded = { ...expanded };
     let changed = false;
 
-    menuItems.forEach((item) => {
+    visibleMenuItems.forEach((item) => {
       if (item.children) {
         const hasActiveChild = item.children.some((child) => location.pathname === child.to);
         if (hasActiveChild && !expanded[item.label]) {
@@ -152,7 +202,7 @@ export function Sidebar({ isMobileOpen = false, onNavigate }: SidebarProps) {
       <div className="nav-section">Principal</div>
       
       <div className="sidebar-nav">
-        {menuItems.map((item) => {
+        {visibleMenuItems.map((item) => {
           const Icon = item.icon;
           
           if (item.children) {
@@ -231,18 +281,20 @@ export function Sidebar({ isMobileOpen = false, onNavigate }: SidebarProps) {
           </span>
         </NavLink>
 
-        <NavLink
-          to="/configuracion"
-          onClick={onNavigate}
-          className={({ isActive }) =>
-            `sidebar-parent ${isActive ? 'active-config' : 'config-link'}`
-          }
-        >
-          <span className="sidebar-parent-label">
-            <Settings size={18} />
-            <span>Configuración</span>
-          </span>
-        </NavLink>
+        {userPermissions.includes('usuarios') && (
+          <NavLink
+            to="/configuracion"
+            onClick={onNavigate}
+            className={({ isActive }) =>
+              `sidebar-parent ${isActive ? 'active-config' : 'config-link'}`
+            }
+          >
+            <span className="sidebar-parent-label">
+              <Settings size={18} />
+              <span>Configuración</span>
+            </span>
+          </NavLink>
+        )}
         
         <div style={{ padding: '12px 12px 4px 12px', fontSize: 11, color: '#9298a5' }}>
           Gestión empresarial

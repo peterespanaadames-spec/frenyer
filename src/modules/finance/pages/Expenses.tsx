@@ -421,6 +421,14 @@ export function ExpensesPage() {
         nextDueDate = calculateNextDueDate(payingExpense.due_date, payingExpense.frequency);
       }
 
+      console.log('Intentando registrar pago de gasto:', {
+        expenseId: payingExpense.id,
+        amount: numAmount,
+        currency: payCurrency,
+        bankAccountId: payBankAccountId,
+        method: payMethod,
+        reference: payReference
+      });
       const res = await recordExpensePaymentInSupabase(payingExpense.id, {
         amount: numAmount,
         currency: payCurrency,
@@ -432,6 +440,8 @@ export function ExpensesPage() {
         notes: payNotes.trim() || undefined,
         nextDueDate
       });
+
+      console.log('Resultado del registro de pago:', res);
 
       if (res.success) {
         showToast(

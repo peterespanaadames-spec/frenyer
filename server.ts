@@ -3260,6 +3260,271 @@ app.delete('/api/branches/:id', async (req, res: AuthenticatedResponse) => {
 });
 
 // ---------------------------------------------------------------------------
+// 7.B.2 GESTIÓN DE USUARIOS ASOCIADOS Y CONTROL RBAC PROXY
+// ---------------------------------------------------------------------------
+const USERS_FILE = path.resolve(process.cwd(), 'data', 'users.json');
+
+function loadPersistedUsers(): any[] {
+  try {
+    if (fs.existsSync(USERS_FILE)) {
+      const content = fs.readFileSync(USERS_FILE, 'utf-8');
+      const list = JSON.parse(content);
+      if (Array.isArray(list)) return list;
+    }
+  } catch (err) {
+    console.warn('Aviso cargando usuarios locales:', err);
+  }
+  return [];
+}
+
+function savePersistedUser(user: any) {
+  try {
+    const dir = path.dirname(USERS_FILE);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    const current = loadPersistedUsers();
+    const idx = current.findIndex((u: any) => String(u.id) === String(user.id) || (u.email && u.email.toLowerCase() === (user.email || '').toLowerCase()));
+    if (idx >= 0) {
+      current[idx] = { ...current[idx], ...user };
+    } else {
+      current.push(user);
+    }
+    fs.writeFileSync(USERS_FILE, JSON.stringify(current, null, 2), 'utf-8');
+  } catch (err) {
+    console.warn('Aviso guardando usuario local:', err);
+  }
+}
+
+function deletePersistedUser(id: string) {
+  try {
+    if (fs.existsSync(USERS_FILE)) {
+      const current = loadPersistedUsers();
+      const updated = current.filter((u: any) => String(u.id) !== String(id));
+      fs.writeFileSync(USERS_FILE, JSON.stringify(updated, null, 2), 'utf-8');
+    }
+  } catch (err) {
+    console.warn('Aviso eliminando usuario local:', err);
+  }
+}
+
+app.get('/api/users', async (_req, res: AuthenticatedResponse) => {
+  try {
+    const orgId = res.locals.supabaseContext?.organizationId || '00000000-0000-0000-0000-000000000001';
+    
+    // 1. Intentar consultar perfiles/usuarios de Supabase si existe conexión
+    try {
+      const result = await supabaseRestRequest('profiles?select=*&order=created_at.desc');
+      if (!result.error && Array.isArray(result.data) && result.data.length > 0) {
+        // Mapear al modelo unificado de usuarios asociados
+        const mappedFromSupabase = result.data.map((p: any) => {
+          const names = (p.full_name || p.name || 'Usuario').trim().split(/\s+/);
+          const initials = names.length >= 2 ? `${names[0][0]}${names[1][0]}`.toUpperCase() : names[0].slice(0, 2).toUpperCase();
+          return {
+            id: p.id,
+            name: p.full_name || p.name || 'Usuario Registrado',
+            email: p.email || '',
+            role: p.role || 'Cashier',
+            title: p.title || p.position || 'Personal Asociado',
+            active: p.active !== false && p.is_active !== false,
+            initials: initials,
+            permissions: Array.isArray(p.permissions) ? p.permissions : ['ventas'],
+            created_at: p.created_at || new Date().toISOString()
+          };
+        });
+
+        // Combinar con los locales para asegurar que no se pierdan usuarios guardados localmente
+        const localList = loadPersistedUsers();
+        const combined = [...mappedFromSupabase];
+        localList.forEach((lu: any) => {
+          if (!combined.some(cu => String(cu.id) === String(lu.id) || (cu.email && cu.email.toLowerCase() === (lu.email || '').toLowerCase()))) {
+            combined.push(lu);
+          }
+        });
+
+        return res.json({ success: true, data: combined });
+      }
+    } catch (sbErr) {
+      console.warn('Aviso consultando usuarios en Supabase:', sbErr);
+    }
+
+    // 2. Si Supabase no responde o está en modo local resiliente
+    let local = loadPersistedUsers();
+    if (local.length === 0) {
+      // Seed default user if empty
+      const defaultUser = {
+        id: 'usr-001',
+        name: 'Administrador Principal',
+        email: 'fotocopiasfyp@gmail.com',
+        role: 'Admin',
+        title: 'Director General',
+        active: true,
+        initials: 'AP',
+        permissions: ['ventas', 'inventario', 'finanzas', 'reportes', 'usuarios'],
+        created_at: new Date().toISOString()
+      };
+      savePersistedUser(defaultUser);
+      local = [defaultUser];
+    }
+    return res.json({ success: true, data: local });
+  } catch (err: any) {
+    return res.status(200).json({ success: false, error: err?.message, data: loadPersistedUsers() });
+  }
+});
+
+app.post('/api/users', async (req, res: AuthenticatedResponse) => {
+  try {
+    const orgId = res.locals.supabaseContext?.organizationId || '00000000-0000-0000-0000-000000000001';
+    const body = req.body || {};
+    
+    if (!body.name || !body.email) {
+      return res.status(400).json({ success: false, error: 'El nombre y correo electrónico son obligatorios.' });
+    }
+
+    const userId = body.id || `usr-${Date.now().toString(36)}-${Math.random().toString(36).substr(2, 5)}`;
+    const names = body.name.trim().split(/\s+/);
+    const initials = names.length >= 2 ? `${names[0][0]}${names[1][0]}`.toUpperCase() : names[0].slice(0, 2).toUpperCase();
+
+    // Default permissions per role if not specified
+    let permissions = Array.isArray(body.permissions) ? body.permissions : [];
+    if (permissions.length === 0) {
+      const role = (body.role || 'Cashier').toLowerCase();
+      if (role === 'admin' || role === 'propietario' || role === 'administrador') {
+        permissions = ['ventas', 'inventario', 'finanzas', 'reportes', 'usuarios'];
+      } else if (role === 'manager' || role === 'gerente') {
+        permissions = ['ventas', 'inventario', 'reportes'];
+      } else if (role === 'cashier' || role === 'cajero') {
+        permissions = ['ventas'];
+      } else {
+        permissions = ['reportes'];
+      }
+    }
+
+    const newUser: Record<string, any> = {
+      id: userId,
+      name: body.name.trim(),
+      email: body.email.trim().toLowerCase(),
+      role: body.role || 'Cashier',
+      title: body.title ? body.title.trim() : (body.role || 'Asociado'),
+      active: body.active !== undefined ? Boolean(body.active) : true,
+      initials: initials,
+      permissions: permissions,
+      created_at: new Date().toISOString()
+    };
+
+    // 1. Guardar en persistencia local resiliente
+    savePersistedUser(newUser);
+
+    // 2. Intentar registrar en Supabase (tabla profiles y organization_members)
+    try {
+      // Si el id es UUID válido, podemos intentar registrar en profiles
+      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(userId);
+      const sbPayload: Record<string, any> = {
+        full_name: newUser.name,
+        email: newUser.email,
+        role: newUser.role.toLowerCase()
+      };
+      if (isUuid) {
+        sbPayload.id = userId;
+      }
+      await supabaseRestRequest('profiles', {
+        method: 'POST',
+        headers: { Prefer: 'resolution=merge-duplicates' },
+        body: sbPayload
+      });
+    } catch (sbErr) {
+      console.warn('Aviso sincronizando usuario con Supabase (guardado localmente):', sbErr);
+    }
+
+    return res.json({ success: true, data: newUser, message: 'Usuario registrado exitosamente.' });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message || 'Error al crear usuario' });
+  }
+});
+
+app.patch('/api/users/:id', async (req, res: AuthenticatedResponse) => {
+  try {
+    const { id } = req.params;
+    const updates = req.body || {};
+    const current = loadPersistedUsers();
+    const existing = current.find((u: any) => String(u.id) === String(id));
+
+    if (!existing) {
+      return res.status(404).json({ success: false, error: 'Usuario no encontrado.' });
+    }
+
+    const updatedUser = {
+      ...existing,
+      ...updates,
+      updated_at: new Date().toISOString()
+    };
+
+    if (updates.name) {
+      const names = updates.name.trim().split(/\s+/);
+      updatedUser.initials = names.length >= 2 ? `${names[0][0]}${names[1][0]}`.toUpperCase() : names[0].slice(0, 2).toUpperCase();
+    }
+
+    savePersistedUser(updatedUser);
+
+    // Intentar actualizar en Supabase si corresponde
+    try {
+      await supabaseRestRequest(`profiles?id=eq.${encodeURIComponent(id)}`, {
+        method: 'PATCH',
+        body: {
+          full_name: updatedUser.name,
+          role: (updatedUser.role || '').toLowerCase()
+        }
+      });
+    } catch {}
+
+    return res.json({ success: true, data: updatedUser });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message });
+  }
+});
+
+app.post('/api/users/:id/toggle-status', async (req, res: AuthenticatedResponse) => {
+  try {
+    const { id } = req.params;
+    const current = loadPersistedUsers();
+    const existing = current.find((u: any) => String(u.id) === String(id));
+
+    if (!existing) {
+      return res.status(404).json({ success: false, error: 'Usuario no encontrado.' });
+    }
+
+    const newActiveState = !existing.active;
+    const updatedUser = {
+      ...existing,
+      active: newActiveState,
+      updated_at: new Date().toISOString()
+    };
+
+    savePersistedUser(updatedUser);
+    return res.json({ success: true, data: updatedUser, active: newActiveState });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message });
+  }
+});
+
+app.delete('/api/users/:id', async (req, res: AuthenticatedResponse) => {
+  try {
+    const { id } = req.params;
+    deletePersistedUser(id);
+
+    try {
+      await supabaseRestRequest(`profiles?id=eq.${encodeURIComponent(id)}`, {
+        method: 'DELETE'
+      });
+    } catch {}
+
+    return res.json({ success: true, message: 'Usuario eliminado exitosamente.' });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message });
+  }
+});
+
+// ---------------------------------------------------------------------------
 // 7.C MÓDULO DE GASTOS FIJOS Y VARIABLES (EXPENSES) PROXY
 // ---------------------------------------------------------------------------
 app.get('/api/expense-categories', async (_req, res: AuthenticatedResponse) => {

@@ -1,20 +1,25 @@
 # MEMORY.md — FRENYER
 
 ## Estado actual
-- **Migración desde GitHub (`peterespanaadames-spec/frenyer`)**: Importación completada y verificada exitosamente bajo los estándares de Frenyer ERP (Node.js 22, Express, Vite, React 19, Tailwind CSS, TypeScript, Supabase con respaldo local).
-- **Tasas de Cambio / Bimonetariedad**: Actualizada la tasa de cambio predeterminada y los respaldos en servidor a **877.90** (`DEFAULT_EXCHANGE_RATE`, `lastCertifiedRate`, y fallbacks de pedidos) para asegurar coherencia en los cálculos bimonetarios.
-- **Punto de Venta (POS) / Emisión (`/ventas/pos`)**: Implementado bloqueo estricto anti-doble-clic y prevención de duplicación de operaciones (`isSubmittingSale`), junto con indicador visual de carga ("Procesando...") en el botón 'Finalizar e Imprimir' para garantizar rapidez y una experiencia de usuario fluida y segura.
-- **Compras (`/inventarios/compras`)**: Corregido: La inserción directa ahora actualiza correctamente el stock de productos y los movimientos bancarios de salida.
-- **Inventario - Reporte Diario (`/inventarios/reporte-diario`)**: Refactorizado y armonizado al 100% con el Design System nativo de Frenyer (AppShell, `.content`, `<Card>`, `<Button>`, `<Badge>`). Implementado botón desplegable unificado **'Exportar'** (Excel `.xlsx`, CSV `.csv`, Imprimir / PDF). Para la opción 'Imprimir / PDF' se incorporó un modal de vista previa del documento oficial con impresión nativa por iframe oculto (sin bloqueos de iframe/sandbox) y descarga directa de archivo HTML imprimible.
-- **Finanzas - Salud del Negocio (`/finanzas/salud`)**: Sección de **CAPITAL y VALOR DE ACTIVOS** reubicada estrictamente **por encima del gráfico** de Evolución Mensual. Datos 100% reales conectados a Supabase (`products`, `bank_accounts`, `accounts_receivable`, `accounts_payable`, `sales`, `expenses`, `sale_items`) con suscripción `postgres_changes` en tiempo real y sin datos simulados. Se removieron todos los mensajes o textos de "tiempo real / conexión supabase". Tarjeta de evaluación optimizada con diseño verde vibrante, gran corazón, flecha de crecimiento ascendente a la derecha y puntuación destacada.
-- **Estado**: Compilación TypeScript y linting limpios. Servidor activo en puerto 3000 (0.0.0.0).
+- **Migración y Base del Sistema**: Frenyer ERP bimonetario (Node.js 22, Express, Vite, React 19, Tailwind CSS, TypeScript, Supabase con respaldo local resiliente).
+- **Tasas de Cambio / Bimonetariedad**: Tasa predeterminada en **877.90** (`DEFAULT_EXCHANGE_RATE`, servidor y respaldos) con soporte oficial BCV y tasa futura.
+- **Punto de Venta (POS) / Emisión (`/ventas/pos`)**: Bloqueo estricto anti-doble-clic y prevención de duplicados con indicador de procesamiento.
+- **Compras (`/inventarios/compras`)**: Inserción directa sincronizada con stock de productos y egresos bancarios.
+- **Inventario - Reporte Diario (`/inventarios/reporte-diario`)**: Botón exportar unificado (Excel, CSV, Imprimir/PDF con vista previa e impresión segura).
+- **Finanzas - Salud del Negocio y PyG**: Indicadores de capital, balance real bimonetario y exportación completa.
+- **Gestión de Usuarios y RBAC (`/configuracion` -> Usuarios Asociados)**:
+  - Implementado sistema completo de gestión de usuarios con persistencia dual (`server.ts` con `/api/users`, `/api/users/:id`, `/api/users/:id/toggle-status`, sincronizado con Supabase `profiles` y respaldo en `data/users.json`).
+  - Modal de "Agregar / Editar Usuario" con roles definidos (`Admin`, `Manager`, `Cashier`, `Viewer`) y permisos granulares de módulos (Ventas/POS, Inventario, Finanzas/Bancos, Informes de Gestión, Gestión de Usuarios).
+  - Tarjetas de usuarios asociadas con avatar de iniciales, insignia de rol por colores, interruptor de estatus activo/inactivo, etiquetas de módulos permitidos, botones de editar/eliminar y opción de activar perfil en sesión.
+  - Menú lateral (`Sidebar.tsx`) con filtrado dinámico según los permisos del usuario activo.
+- **Estado**: Compilación TypeScript y linting limpios al 100%. Servidor activo en puerto 3000.
 
 ## Decisiones importantes
-- **Regla de Oro de Interfaz ("Golden Template")**: Toda pantalla nueva de Frenyer DEBE montarse dentro de `<div className="content">` con cabecera estándar `<div className="page-head">`, tarjetas `<Card>`, botones `<Button>` y tablas `.table-wrap`. Nunca inyectar contenedores `min-h-screen`, `bg-slate-50` ni clases Tailwind que dupliquen o anulen el AppShell (`DashboardLayout.tsx`).
-- Endpoints robustos en `server.ts` para `/api/accounts-payable`, `/api/accounts-payable/:id/payments`, `/api/bank-accounts` and `/api/bank-movements` con persistencia dual (Supabase + local JSON) y sincronización con `payable_payments`, `receivable_payments` y `bank_movements`.
-- Uso unificado de `fetchSuppliersFromSupabase()` y `createSupplierInSupabase()` tanto en gestión de contactos como en cuentas por pagar para evitar discrepancias de sesión o almacenamiento.
+- **Regla de Oro de Interfaz ("Golden Template")**: Pantallas montadas dentro de `<div className="content">` con cabecera estándar `<div className="page-head">`, tarjetas `<Card>`, botones `<Button>` y tablas `.table-wrap`.
+- **Persistencia Dual Resiliente**: Endpoints robustos en `server.ts` con sincronización en Supabase y respaldo en archivos locales JSON (`data/users.json`, `data/branches.json`, `data/bank_movements.json`) para garantizar que la app nunca falle por desconexión de base de datos.
+- **Control de Acceso (RBAC)**: Permisos reactivos en cliente comunicados por eventos `frenyer:active-user-changed`, adaptando la visibilidad del menú al rol del operador.
 
 ## Errores a evitar
-- **Bypass del Design System**: No construir pantallas con clases de Tailwind genéricas desconectadas de `tokens.css` y `src/components/ui/`.
-- No dejar desconectados los abonos a proveedores/clientes de los movimientos bancarios ni de la tabla de saldos de cuentas bancarias.
-- No depender exclusivamente de tablas Supabase remotas sin respaldo en archivo local resiliente para cuentas y movimientos bancarios.
+- No intentar crear usuarios administrativos directamente desde el navegador contra Supabase sin pasar por el backend seguro.
+- No dejar campos de roles o permisos con valores quemados estáticos sin conexión al estado reactivo y al backend.
+- Mantener siempre la bimonetariedad exacta y el redondeo a 2 decimales en transacciones.

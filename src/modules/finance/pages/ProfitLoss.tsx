@@ -8,6 +8,8 @@ import {
   CheckCircle2,
   Info
 } from 'lucide-react';
+import { jsPDF } from 'jspdf';
+import html2canvas from 'html2canvas';
 import { Card } from '../../../components/ui/Card';
 import { Button } from '../../../components/ui/Button';
 import { supabase } from '../../../lib/supabase/client';
@@ -39,6 +41,27 @@ export function ProfitLossPage() {
     expensesByCategory: [],
     exchangeRate: getActiveExchangeRate()
   });
+
+  const handleExportPDF = async () => {
+    const input = document.querySelector('.content') as HTMLElement;
+    if (!input) return;
+
+    const canvas = await html2canvas(input, {
+      scale: 2,
+      logging: false,
+      useCORS: true,
+      backgroundColor: '#ffffff'
+    });
+
+    const imgData = canvas.toDataURL('image/png');
+    const pdf = new jsPDF('p', 'mm', 'a4');
+    const imgProps = pdf.getImageProperties(imgData);
+    const pdfWidth = pdf.internal.pageSize.getWidth();
+    const pdfHeight = (imgProps.height * pdfWidth) / imgProps.width;
+
+    pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
+    pdf.save(`informe_ganancias_perdidas_${period}.pdf`);
+  };
 
   const fetchPnLData = async () => {
     setIsLoading(true);
@@ -161,7 +184,7 @@ export function ProfitLossPage() {
           <Button variant="secondary" onClick={fetchPnLData}>
             <RefreshCcw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} /> Actualizar
           </Button>
-          <Button variant="secondary" onClick={() => window.print()}>
+          <Button variant="secondary" onClick={handleExportPDF}>
             <FileDown className="w-4 h-4" /> Exportar
           </Button>
         </div>

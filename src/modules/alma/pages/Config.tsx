@@ -43,13 +43,15 @@ import {
 } from '../../../lib/supabase/db';
 
 interface AssociatedUser {
-  id: number;
+  id: string | number;
   name: string;
   email: string;
   role: string;
   active: boolean;
   title: string;
   initials: string;
+  permissions?: string[];
+  created_at?: string;
 }
 
 interface RateRecord {
@@ -395,17 +397,21 @@ export function ConfigPage() {
   const [stockAlert, setStockAlert] = useState(5);
   const [ticketFooter, setTicketFooter] = useState('¡Gracias por su compra!');
 
-  // --- ASSOCIATED USERS STATE ---
-  const users: AssociatedUser[] = [];
+  // --- ASSOCIATED USERS & RBAC STATE ---
+  const [users, setUsers] = useState<AssociatedUser[]>([]);
+  const [isLoadingUsers, setIsLoadingUsers] = useState(false);
   const [userSearch, setUserSearch] = useState('');
   const [isAddUserModalOpen, setIsAddUserModalOpen] = useState(false);
+  const [editingUserId, setEditingUserId] = useState<string | number | null>(null);
 
-  // Add User Form State
+  // Add / Edit User Form State
   const [newUserName, setNewUserName] = useState('');
   const [newUserEmail, setNewUserEmail] = useState('');
-  const [newUserRole, setNewUserRole] = useState('PROPIETARIO');
-  const [newUserTitle, setNewUserTitle] = useState('Gerente');
+  const [newUserRole, setNewUserRole] = useState<'Admin' | 'Manager' | 'Cashier' | 'Viewer'>('Cashier');
+  const [newUserTitle, setNewUserTitle] = useState('Cajero Principal');
   const [newUserActive, setNewUserActive] = useState(true);
+  const [newUserPermissions, setNewUserPermissions] = useState<string[]>(['ventas']);
+  const [isSavingUser, setIsSavingUser] = useState(false);
 
   // Alert/Notifications
   const [notification, setNotification] = useState<{ type: 'success' | 'info'; message: string } | null>(null);
@@ -501,25 +507,168 @@ export function ConfigPage() {
     }
   };
 
-  // Associated Users actions
-  const toggleUserStatus = (id: number) => {
-    void id;
-    showNotification('La gestión de usuarios debe habilitarse desde Supabase.', 'info');
+  // --- ASSOCIATED USERS & RBAC FUNCTIONS ---
+  const fetchUsers = async () => {
+    setIsLoadingUsers(true);
+    try {
+      const res = await fetch('/api/users');
+      if (res.ok) {
+        const json = await res.json();
+        if (json.success && Array.isArray(json.data)) {
+          setUsers(json.data);
+        }
+      }
+    } catch (err) {
+      console.warn('Aviso cargando usuarios asociados:', err);
+    } finally {
+      setIsLoadingUsers(false);
+    }
   };
 
-  const handleDeleteUser = (id: number) => {
-    void id;
-    showNotification('La gestión de usuarios debe habilitarse desde Supabase.', 'info');
+  useEffect(() => {
+    fetchUsers();
+  }, []);
+
+  const handleRoleChange = (role: 'Admin' | 'Manager' | 'Cashier' | 'Viewer') => {
+    setNewUserRole(role);
+    if (role === 'Admin') {
+      setNewUserPermissions(['ventas', 'inventario', 'finanzas', 'reportes', 'usuarios']);
+      if (!newUserName) setNewUserTitle('Administrador General');
+    } else if (role === 'Manager') {
+      setNewUserPermissions(['ventas', 'inventario', 'reportes']);
+      if (!newUserName) setNewUserTitle('Gerente de Operaciones');
+    } else if (role === 'Cashier') {
+      setNewUserPermissions(['ventas']);
+      if (!newUserName) setNewUserTitle('Cajero Principal');
+    } else if (role === 'Viewer') {
+      setNewUserPermissions(['reportes']);
+      if (!newUserName) setNewUserTitle('Auditor de Gestión');
+    }
   };
 
-  const handleAddUser = (e: React.FormEvent) => {
+  const togglePermission = (permKey: string) => {
+    setNewUserPermissions(prev =>
+      prev.includes(permKey) ? prev.filter(p => p !== permKey) : [...prev, permKey]
+    );
+  };
+
+  const toggleUserStatus = async (id: string | number) => {
+    try {
+      const res = await fetch(`/api/users/${id}/toggle-status`, { method: 'POST' });
+      if (res.ok) {
+        const json = await res.json();
+        if (json.success) {
+          setUsers(prev => prev.map(u => String(u.id) === String(id) ? { ...u, active: json.active } : u));
+          showNotification(`Estado de usuario actualizado: ${json.active ? 'Activo' : 'Inactivo'}.`);
+          return;
+        }
+      }
+      throw new Error('No se pudo actualizar');
+    } catch {
+      showNotification('Error al alternar el estatus del usuario.', 'info');
+    }
+  };
+
+  const handleDeleteUser = async (id: string | number) => {
+    if (!window.confirm('¿Está seguro de que desea eliminar este usuario asociado?')) return;
+    try {
+      const res = await fetch(`/api/users/${id}`, { method: 'DELETE' });
+      if (res.ok) {
+        setUsers(prev => prev.filter(u => String(u.id) !== String(id)));
+        showNotification('Usuario eliminado exitosamente.');
+      } else {
+        throw new Error('Error al eliminar');
+      }
+    } catch {
+      showNotification('No se pudo eliminar el usuario.', 'info');
+    }
+  };
+
+  const handleOpenAddUser = () => {
+    setEditingUserId(null);
+    setNewUserName('');
+    setNewUserEmail('');
+    setNewUserRole('Cashier');
+    setNewUserTitle('Cajero Principal');
+    setNewUserActive(true);
+    setNewUserPermissions(['ventas']);
+    setIsAddUserModalOpen(true);
+  };
+
+  const handleOpenEditUser = (user: AssociatedUser) => {
+    setEditingUserId(user.id);
+    setNewUserName(user.name);
+    setNewUserEmail(user.email);
+    setNewUserRole((user.role as any) || 'Cashier');
+    setNewUserTitle(user.title || '');
+    setNewUserActive(user.active);
+    setNewUserPermissions(user.permissions && user.permissions.length > 0 ? user.permissions : ['ventas']);
+    setIsAddUserModalOpen(true);
+  };
+
+  const handleSaveUser = async (e: React.FormEvent) => {
     e.preventDefault();
-    setIsAddUserModalOpen(false);
-    showNotification('La gestión de usuarios debe habilitarse desde Supabase.', 'info');
+    if (!newUserName.trim() || !newUserEmail.trim()) {
+      showNotification('Por favor ingrese el nombre y correo del usuario.', 'info');
+      return;
+    }
+
+    setIsSavingUser(true);
+    try {
+      if (editingUserId) {
+        // Actualizar usuario existente
+        const res = await fetch(`/api/users/${editingUserId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: newUserName.trim(),
+            email: newUserEmail.trim(),
+            role: newUserRole,
+            title: newUserTitle.trim(),
+            active: newUserActive,
+            permissions: newUserPermissions
+          })
+        });
+        const json = await res.json();
+        if (json.success && json.data) {
+          setUsers(prev => prev.map(u => String(u.id) === String(editingUserId) ? json.data : u));
+          showNotification(`Usuario ${newUserName} actualizado correctamente.`);
+          setIsAddUserModalOpen(false);
+        } else {
+          showNotification(json.error || 'Error al actualizar usuario.', 'info');
+        }
+      } else {
+        // Crear nuevo usuario asociado
+        const res = await fetch('/api/users', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: newUserName.trim(),
+            email: newUserEmail.trim(),
+            role: newUserRole,
+            title: newUserTitle.trim(),
+            active: newUserActive,
+            permissions: newUserPermissions
+          })
+        });
+        const json = await res.json();
+        if (json.success && json.data) {
+          setUsers(prev => [json.data, ...prev]);
+          showNotification(`Usuario ${newUserName} registrado exitosamente con rol ${newUserRole}.`);
+          setIsAddUserModalOpen(false);
+        } else {
+          showNotification(json.error || 'Error al registrar usuario.', 'info');
+        }
+      }
+    } catch {
+      showNotification('Error de conexión al procesar el usuario.', 'info');
+    } finally {
+      setIsSavingUser(false);
+    }
   };
 
   const filteredUsers = users.filter(
-    u => u.name.includes(userSearch.toLowerCase()) || u.email.includes(userSearch.toLowerCase())
+    u => (u.name || '').toLowerCase().includes(userSearch.toLowerCase()) || (u.email || '').toLowerCase().includes(userSearch.toLowerCase())
   );
 
   return (
@@ -772,7 +921,7 @@ export function ConfigPage() {
           {/* Section 2: Tasa de Cambio Diaria (Image 2) */}
           <div>
             {/* Dark Blue Active Rate Card */}
-            <div className="rate-display-card">
+            <div className="rate-display-card" style={{ backgroundColor: '#7e22ce' }}>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                 <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                   <span className="rate-badge active">
@@ -1879,17 +2028,20 @@ GRANT ALL ON TABLE public.branches TO anon;`}</pre>
               <div style={{ display: 'flex', gap: 8, flex: 1, minWidth: 280 }}>
                 <Button
                   variant="primary"
-                  disabled
-                  style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 700, fontSize: 11, letterSpacing: '0.04em' }}
+                  style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 700, fontSize: 11, letterSpacing: '0.04em', background: '#7e22ce', borderColor: '#6b21a8' }}
+                  onClick={handleOpenAddUser}
                 >
-                  <Plus size={15} /> GESTIÓN EN SUPABASE
+                  <Plus size={15} /> Agregar Usuario
                 </Button>
                 
                 <Button
-                  style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, background: '#fff', color: '#5f6572', borderColor: '#d1d5db' }}
-                  disabled
+                  style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, background: '#fff', color: '#5f6572', borderColor: '#d1d5db', cursor: 'pointer' }}
+                  onClick={fetchUsers}
+                  disabled={isLoadingUsers}
+                  title="Sincronizar lista de usuarios"
                 >
-                  <RefreshCw size={13} /> Sin sincronización
+                  <RefreshCw size={13} className={isLoadingUsers ? 'animate-spin' : ''} />
+                  {isLoadingUsers ? 'Sincronizando...' : 'Sincronizar'}
                 </Button>
               </div>
 
@@ -1915,95 +2067,185 @@ GRANT ALL ON TABLE public.branches TO anon;`}</pre>
           {/* Associated Users Roster List */}
           {filteredUsers.length === 0 ? (
             <Card className="empty">
-              No se encontraron usuarios asociados registrados con esos criterios.
+              {isLoadingUsers ? 'Cargando usuarios asociados...' : 'No se encontraron usuarios asociados registrados con esos criterios.'}
             </Card>
           ) : (
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(360px, 1fr))', gap: 16 }}>
-              {filteredUsers.map((item) => (
-                <div key={item.id} className="associated-user-card">
-                  <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
-                    {/* User Profile Avatar */}
-                    <div
-                      className="avatar"
-                      style={{
-                        width: 44,
-                        height: 44,
-                        fontSize: 14,
-                        fontWeight: 700,
-                        background: '#e0ebff',
-                        color: 'var(--brand-700)',
-                        border: '1px solid #c2dbff'
-                      }}
-                    >
-                      {item.initials}
-                    </div>
+              {filteredUsers.map((item) => {
+                const roleColors: Record<string, { bg: string; border: string; text: string }> = {
+                  Admin: { bg: '#faf5ff', border: '#e9d5ff', text: '#7e22ce' },
+                  Manager: { bg: '#eff6ff', border: '#bfdbfe', text: '#1d4ed8' },
+                  Cashier: { bg: '#ecfdf5', border: '#a7f3d0', text: '#047857' },
+                  Viewer: { bg: '#f8fafc', border: '#cbd5e1', text: '#475569' }
+                };
+                const currentTone = roleColors[item.role] || roleColors.Viewer;
+                const perms = item.permissions || ['ventas'];
 
-                    {/* Roster detail */}
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                        <b style={{ textTransform: 'capitalize', fontSize: 14, color: 'var(--text)' }}>
-                          {item.name}
-                        </b>
-                        <Badge tone="brand">
-                          {item.role}
-                        </Badge>
+                return (
+                  <div
+                    key={item.id}
+                    style={{
+                      background: '#ffffff',
+                      border: '1px solid var(--border)',
+                      borderRadius: 'var(--radius-lg)',
+                      padding: '16px',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: 12,
+                      boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
+                      transition: 'border-color 0.15s ease'
+                    }}
+                  >
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10 }}>
+                      <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+                        {/* User Profile Avatar */}
+                        <div
+                          className="avatar"
+                          style={{
+                            width: 44,
+                            height: 44,
+                            fontSize: 14,
+                            fontWeight: 700,
+                            background: '#f3e8ff',
+                            color: '#7e22ce',
+                            border: '1px solid #e9d5ff',
+                            flexShrink: 0
+                          }}
+                        >
+                          {item.initials}
+                        </div>
+
+                        {/* Roster detail */}
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                            <b style={{ textTransform: 'capitalize', fontSize: 14, color: 'var(--text)' }}>
+                              {item.name}
+                            </b>
+                            <span
+                              style={{
+                                fontSize: 11,
+                                fontWeight: 700,
+                                padding: '2px 8px',
+                                borderRadius: 12,
+                                background: currentTone.bg,
+                                border: `1px solid ${currentTone.border}`,
+                                color: currentTone.text
+                              }}
+                            >
+                              {item.role}
+                            </span>
+                          </div>
+
+                          <span className="muted small" style={{ fontSize: 11, color: '#64748b' }}>
+                            {item.title || item.role}
+                          </span>
+
+                          <span className="muted small" style={{ fontSize: 11, color: '#9298a5' }}>
+                            {item.email}
+                          </span>
+                        </div>
                       </div>
 
-                      {/* Active switch inside card (as in Image 4) */}
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '2px 0' }}>
-                        <div className="switch-container" onClick={() => toggleUserStatus(item.id)}>
+                      {/* Active switch inside card */}
+                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
+                        <div className="switch-container" onClick={() => toggleUserStatus(item.id)} title="Alternar estatus">
                           <div className={`switch-track ${item.active ? 'active' : ''}`} style={{ width: 30, height: 16 }}>
                             <div className="switch-thumb" style={{ width: 10, height: 10, top: 3, left: 3 }} />
                           </div>
                         </div>
-                        <span className="muted small" style={{ fontSize: 11 }}>
-                          {item.active ? 'Activo' : 'Inactivo'} • {item.title}
+                        <span style={{ fontSize: 10, fontWeight: 700, color: item.active ? '#15803d' : '#94a3b8' }}>
+                          {item.active ? 'Activo' : 'Inactivo'}
                         </span>
                       </div>
+                    </div>
 
-                      <span className="muted small" style={{ fontSize: 11, color: '#9298a5' }}>
-                        {item.email}
-                      </span>
+                    {/* Permissions tags preview */}
+                    <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', paddingTop: 6, borderTop: '1px solid #f1f5f9' }}>
+                      {perms.includes('ventas') && (
+                        <span style={{ fontSize: 10, fontWeight: 600, padding: '2px 6px', borderRadius: 4, background: '#f8fafc', border: '1px solid #e2e8f0', color: '#475569' }}>
+                          Ventas/POS
+                        </span>
+                      )}
+                      {perms.includes('inventario') && (
+                        <span style={{ fontSize: 10, fontWeight: 600, padding: '2px 6px', borderRadius: 4, background: '#f8fafc', border: '1px solid #e2e8f0', color: '#475569' }}>
+                          Inventario
+                        </span>
+                      )}
+                      {perms.includes('finanzas') && (
+                        <span style={{ fontSize: 10, fontWeight: 600, padding: '2px 6px', borderRadius: 4, background: '#f8fafc', border: '1px solid #e2e8f0', color: '#475569' }}>
+                          Finanzas
+                        </span>
+                      )}
+                      {perms.includes('reportes') && (
+                        <span style={{ fontSize: 10, fontWeight: 600, padding: '2px 6px', borderRadius: 4, background: '#f8fafc', border: '1px solid #e2e8f0', color: '#475569' }}>
+                          Informes
+                        </span>
+                      )}
+                      {perms.includes('usuarios') && (
+                        <span style={{ fontSize: 10, fontWeight: 600, padding: '2px 6px', borderRadius: 4, background: '#faf5ff', border: '1px solid #e9d5ff', color: '#7e22ce' }}>
+                          Usuarios
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Actions bar at bottom */}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: 6, borderTop: '1px solid #f8fafc' }}>
+                      <button
+                        type="button"
+                        style={{
+                          background: '#f8fafc',
+                          border: '1px solid #e2e8f0',
+                          color: '#475569',
+                          cursor: 'pointer',
+                          padding: '3px 8px',
+                          borderRadius: 6,
+                          fontSize: 10,
+                          fontWeight: 700,
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 4
+                        }}
+                        onClick={() => {
+                          localStorage.setItem('frenyer_active_user', JSON.stringify(item));
+                          window.dispatchEvent(new CustomEvent('frenyer:active-user-changed'));
+                          showNotification(`Sesión activa cambiada a: ${item.name} (${item.role}). Los menús reflejarán sus permisos.`);
+                        }}
+                        title="Simular o activar sesión con este usuario para verificar sus permisos"
+                      >
+                        <Users size={12} /> Activar perfil
+                      </button>
+
+                      <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                        <button
+                          title="Ver permisos asignados"
+                          style={{ background: 'transparent', border: 'none', color: '#9298a5', cursor: 'pointer', padding: 6, borderRadius: 6 }}
+                          onClick={() => showNotification(`Permisos de ${item.name}: ${perms.join(', ')}`, 'info')}
+                        >
+                          <Shield size={16} />
+                        </button>
+                        <button
+                          title="Editar usuario"
+                          style={{ background: 'transparent', border: 'none', color: '#7e22ce', cursor: 'pointer', padding: 6, borderRadius: 6 }}
+                          onClick={() => handleOpenEditUser(item)}
+                        >
+                          <Edit2 size={15} />
+                        </button>
+                        <button
+                          title="Eliminar asociado"
+                          style={{ background: 'transparent', border: 'none', color: '#e36f6f', cursor: 'pointer', padding: 6, borderRadius: 6 }}
+                          onClick={() => handleDeleteUser(item.id)}
+                        >
+                          <Trash2 size={15} />
+                        </button>
+                      </div>
                     </div>
                   </div>
-
-                  {/* Actions column on right side */}
-                  <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                    <button
-                      title="Permisos y seguridad"
-                      style={{ background: 'transparent', border: 'none', color: '#9298a5', cursor: 'pointer', padding: 6 }}
-                      onClick={() => showNotification(`Permisos de ${item.name} actualizados de forma segura.`, 'info')}
-                    >
-                      <Shield size={16} />
-                    </button>
-                    <button
-                      title="Editar usuario"
-                      style={{ background: 'transparent', border: 'none', color: '#9298a5', cursor: 'pointer', padding: 6 }}
-                      onClick={() => {
-                        setNewUserName(item.name);
-                        setNewUserEmail(item.email);
-                        setNewUserRole(item.role);
-                        setNewUserTitle(item.title);
-                        setNewUserActive(item.active);
-                        setIsAddUserModalOpen(true);
-                      }}
-                    >
-                      <Edit2 size={15} />
-                    </button>
-                    <button
-                      title="Eliminar asociado"
-                      style={{ background: 'transparent', border: 'none', color: '#e36f6f', cursor: 'pointer', padding: 6 }}
-                      onClick={() => handleDeleteUser(item.id)}
-                    >
-                      <Trash2 size={15} />
-                    </button>
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
 
-          {/* Add User Modal Dialog */}
+          {/* Add / Edit User Modal Dialog (RBAC) */}
           {isAddUserModalOpen && (
             <div
               style={{
@@ -2012,91 +2254,189 @@ GRANT ALL ON TABLE public.branches TO anon;`}</pre>
                 left: 0,
                 right: 0,
                 bottom: 0,
-                background: 'rgba(0,0,0,0.4)',
-                backdropFilter: 'blur(3px)',
+                background: 'rgba(0,0,0,0.45)',
+                backdropFilter: 'blur(4px)',
                 display: 'grid',
                 placeItems: 'center',
                 zIndex: 1000,
                 padding: 16
               }}
             >
-              <div className="card" style={{ width: '100%', maxWidth: 440, padding: 24, boxShadow: '0 10px 25px rgba(0,0,0,0.1)' }}>
-                <div style={{ marginBottom: 20 }}>
-                  <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700 }}>
-                    Agregar Usuario Asociado
-                  </h3>
-                  <span className="muted small">
-                    Registra personal, gerentes o administradores asociados al negocio.
+              <div
+                className="card"
+                style={{
+                  width: '100%',
+                  maxWidth: 480,
+                  maxHeight: '90vh',
+                  overflowY: 'auto',
+                  padding: 24,
+                  borderRadius: 'var(--radius-lg)',
+                  boxShadow: '0 20px 40px rgba(0,0,0,0.15)',
+                  background: '#ffffff'
+                }}
+              >
+                <div style={{ marginBottom: 18, borderBottom: '1px solid #f1f5f9', paddingBottom: 12 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <h3 style={{ margin: 0, fontSize: 17, fontWeight: 800, color: '#0f172a' }}>
+                      {editingUserId ? 'Editar Usuario Asociado' : 'Agregar Usuario Asociado'}
+                    </h3>
+                    <button
+                      type="button"
+                      onClick={() => setIsAddUserModalOpen(false)}
+                      style={{ background: 'transparent', border: 'none', color: '#94a3b8', cursor: 'pointer', padding: 4 }}
+                    >
+                      <X size={18} />
+                    </button>
+                  </div>
+                  <span className="muted small" style={{ fontSize: 12, marginTop: 4, display: 'block' }}>
+                    Configura las credenciales, rol y módulos accesibles en el sistema (RBAC).
                   </span>
                 </div>
 
-                <form onSubmit={handleAddUser} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+                <form onSubmit={handleSaveUser} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
                   <div className="field">
-                    <label>Nombre Completo *</label>
+                    <label style={{ fontSize: 12, fontWeight: 700, color: '#334155' }}>Nombre Completo *</label>
                     <input
                       className="input"
                       value={newUserName}
                       onChange={(e) => setNewUserName(e.target.value)}
-                      placeholder="Nombre completo"
+                      placeholder="Ej: Carlos Pérez"
                       required
                     />
                   </div>
 
                   <div className="field">
-                    <label>Correo Electrónico *</label>
+                    <label style={{ fontSize: 12, fontWeight: 700, color: '#334155' }}>Correo Electrónico *</label>
                     <input
                       type="email"
                       className="input"
                       value={newUserEmail}
                       onChange={(e) => setNewUserEmail(e.target.value)}
-                      placeholder="ejemplo@correo.com"
+                      placeholder="usuario@empresa.com"
                       required
                     />
                   </div>
 
-                  <div className="field">
-                    <label>Rol Empresarial</label>
-                    <select
-                      className="input"
-                      value={newUserRole}
-                      onChange={(e) => setNewUserRole(e.target.value)}
-                    >
-                      <option value="PROPIETARIO">Propietario</option>
-                      <option value="GERENTE">Gerente</option>
-                      <option value="ADMINISTRADOR">Administrador</option>
-                      <option value="CAJERO">Cajero / POS</option>
-                    </select>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                    <div className="field">
+                      <label style={{ fontSize: 12, fontWeight: 700, color: '#334155' }}>Rol en el Sistema *</label>
+                      <select
+                        className="input"
+                        value={newUserRole}
+                        onChange={(e) => handleRoleChange(e.target.value as any)}
+                        style={{ fontWeight: 600 }}
+                      >
+                        <option value="Admin">Admin (Control Total)</option>
+                        <option value="Manager">Manager (Gerente)</option>
+                        <option value="Cashier">Cashier (Cajero / POS)</option>
+                        <option value="Viewer">Viewer (Solo lectura)</option>
+                      </select>
+                    </div>
+
+                    <div className="field">
+                      <label style={{ fontSize: 12, fontWeight: 700, color: '#334155' }}>Cargo / Puesto</label>
+                      <input
+                        className="input"
+                        value={newUserTitle}
+                        onChange={(e) => setNewUserTitle(e.target.value)}
+                        placeholder="Ej: Cajero Principal"
+                      />
+                    </div>
                   </div>
 
-                  <div className="field">
-                    <label>Cargo / Cargo público</label>
-                    <input
-                      className="input"
-                      value={newUserTitle}
-                      onChange={(e) => setNewUserTitle(e.target.value)}
-                      placeholder="Ej: Gerente, Supervisor, etc."
-                    />
+                  {/* Permisos de Módulos (RBAC Granular) */}
+                  <div
+                    style={{
+                      background: '#f8fafc',
+                      border: '1px solid #e2e8f0',
+                      borderRadius: 10,
+                      padding: '12px 14px',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: 8
+                    }}
+                  >
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <span style={{ fontSize: 12, fontWeight: 800, color: '#1e293b' }}>
+                        Permisos de Módulos
+                      </span>
+                      <span style={{ fontSize: 10, color: '#64748b' }}>
+                        Selecciona los accesos permitidos
+                      </span>
+                    </div>
+
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 4 }}>
+                      {[
+                        { key: 'ventas', label: 'Acceso a Ventas/POS', desc: 'Punto de venta, pedidos y cotizaciones' },
+                        { key: 'inventario', label: 'Acceso a Inventario', desc: 'Catálogo de productos, compras y movimientos' },
+                        { key: 'finanzas', label: 'Acceso a Finanzas/Bancos', desc: 'Caja, cuentas bancarias, CxC, CxP y gastos' },
+                        { key: 'reportes', label: 'Acceso a Informes de Gestión', desc: 'Salud de empresa y ganancias/pérdidas' },
+                        { key: 'usuarios', label: 'Gestión de usuarios y permisos', desc: 'Configuración de asociados y parámetros' }
+                      ].map((p) => {
+                        const isChecked = newUserPermissions.includes(p.key);
+                        return (
+                          <label
+                            key={p.key}
+                            style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: 10,
+                              cursor: 'pointer',
+                              padding: '6px 8px',
+                              borderRadius: 6,
+                              background: isChecked ? '#f3e8ff' : '#ffffff',
+                              border: isChecked ? '1px solid #d8b4fe' : '1px solid #e2e8f0',
+                              transition: 'all 0.15s ease'
+                            }}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={isChecked}
+                              onChange={() => togglePermission(p.key)}
+                              style={{ width: 16, height: 16, accentColor: '#7e22ce', cursor: 'pointer' }}
+                            />
+                            <div style={{ display: 'flex', flexDirection: 'column', lineHeight: 1.2 }}>
+                              <span style={{ fontSize: 12, fontWeight: 700, color: isChecked ? '#581c87' : '#334155' }}>
+                                {p.label}
+                              </span>
+                              <span style={{ fontSize: 10, color: isChecked ? '#7e22ce' : '#64748b' }}>
+                                {p.desc}
+                              </span>
+                            </div>
+                          </label>
+                        );
+                      })}
+                    </div>
                   </div>
 
-                  <div className="field" style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 6 }}>
+                  {/* Switch Activo */}
+                  <div className="field" style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 12, margin: '4px 0' }}>
                     <div className="switch-container" onClick={() => setNewUserActive(!newUserActive)}>
                       <div className={`switch-track ${newUserActive ? 'active' : ''}`}>
                         <div className="switch-thumb" />
                       </div>
                     </div>
-                    <span style={{ fontSize: 13, fontWeight: 500 }}>Estatus de cuenta Activo</span>
+                    <span style={{ fontSize: 13, fontWeight: 600, color: '#334155' }}>
+                      Estatus de cuenta: <b>{newUserActive ? 'Activo' : 'Inactivo'}</b>
+                    </span>
                   </div>
 
-                  <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 14 }}>
+                  <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 10 }}>
                     <Button
                       type="button"
                       style={{ background: '#fff', color: '#5f6572', borderColor: '#d1d5db' }}
                       onClick={() => setIsAddUserModalOpen(false)}
+                      disabled={isSavingUser}
                     >
                       Cancelar
                     </Button>
-                    <Button type="submit" variant="primary">
-                      Agregar Asociado
+                    <Button
+                      type="submit"
+                      variant="primary"
+                      disabled={isSavingUser}
+                      style={{ background: '#7e22ce', borderColor: '#6b21a8' }}
+                    >
+                      {isSavingUser ? 'Guardando...' : (editingUserId ? 'Actualizar Usuario' : 'Guardar Usuario')}
                     </Button>
                   </div>
                 </form>

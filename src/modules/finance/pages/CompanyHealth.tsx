@@ -1,4 +1,6 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
+import { jsPDF } from 'jspdf';
+import html2canvas from 'html2canvas';
 import {
   RefreshCcw,
   FileDown,
@@ -60,6 +62,21 @@ export const CompanyHealthPage = () => {
   const [availableYears, setAvailableYears] = useState<string[]>([new Date().getFullYear().toString()]);
   const [isLoading, setIsLoading] = useState(true);
   const [activeRate, setActiveRate] = useState(() => getActiveExchangeRate());
+
+  const handleExportPDF = async () => {
+    const input = document.querySelector('.content') as HTMLElement;
+    if (!input) return;
+
+    const canvas = await html2canvas(input, { scale: 2, backgroundColor: '#f8fafc' });
+    const imgData = canvas.toDataURL('image/png');
+    
+    const pdf = new jsPDF('p', 'mm', 'a4');
+    const pdfWidth = pdf.internal.pageSize.getWidth();
+    const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
+    
+    pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
+    pdf.save(`informe_salud_empresa_${selectedYear}.pdf`);
+  };
 
   // Métricas financieras calculadas estrictamente con datos reales
   const [financialMetrics, setFinancialMetrics] = useState({
@@ -392,8 +409,8 @@ export const CompanyHealthPage = () => {
 
           <Button
             variant="secondary"
-            onClick={() => window.print()}
-            title="Exportar informe o imprimir"
+            onClick={handleExportPDF}
+            title="Exportar informe a PDF"
           >
             <FileDown size={15} />
             <span>Exportar</span>
@@ -777,14 +794,14 @@ export const CompanyHealthPage = () => {
         {/* TARJETA 1 (IZQUIERDA): HERO TOTAL DE CAPITAL */}
         <div
           style={{
-            background: 'linear-gradient(135deg, #6366f1 0%, #4f46e5 50%, #2563eb 100%)',
+            background: 'linear-gradient(135deg, #a855f7 0%, #9333ea 50%, #7e22ce 100%)',
             borderRadius: 'var(--radius-lg, 16px)',
             padding: '24px 26px',
             color: '#ffffff',
             display: 'flex',
             flexDirection: 'column',
             justifyContent: 'space-between',
-            boxShadow: '0 10px 25px -5px rgba(79, 70, 229, 0.35)',
+            boxShadow: '0 10px 25px -5px rgba(147, 51, 234, 0.35)',
             minHeight: 210
           }}
         >
@@ -1043,7 +1060,7 @@ export const CompanyHealthPage = () => {
                 value={selectedYear}
                 onChange={(e) => setSelectedYear(e.target.value)}
                 style={{
-                  background: '#4f46e5',
+                  background: '#7e22ce',
                   color: '#ffffff',
                   fontSize: 12,
                   fontWeight: 800,
@@ -1052,7 +1069,7 @@ export const CompanyHealthPage = () => {
                   border: 'none',
                   outline: 'none',
                   cursor: 'pointer',
-                  boxShadow: '0 2px 6px rgba(79, 70, 229, 0.3)'
+                  boxShadow: '0 2px 6px rgba(126, 34, 206, 0.3)'
                 }}
               >
                 {availableYears.map((y) => (
@@ -1064,14 +1081,14 @@ export const CompanyHealthPage = () => {
             ) : (
               <span
                 style={{
-                  background: '#4f46e5',
+                  background: '#7e22ce',
                   color: '#ffffff',
                   fontSize: 12,
                   fontWeight: 800,
                   padding: '4px 14px',
                   borderRadius: 999,
                   letterSpacing: '0.02em',
-                  boxShadow: '0 2px 6px rgba(79, 70, 229, 0.3)'
+                  boxShadow: '0 2px 6px rgba(126, 34, 206, 0.3)'
                 }}
               >
                 Año {selectedYear}
@@ -1093,7 +1110,7 @@ export const CompanyHealthPage = () => {
             }}
           >
             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              <span style={{ width: 12, height: 12, background: '#0284c7', borderRadius: 2 }} />
+              <span style={{ width: 12, height: 12, background: '#7e22ce', borderRadius: 2 }} />
               <span style={{ fontWeight: 500 }}>Ingresos</span>
             </div>
 
@@ -1103,7 +1120,7 @@ export const CompanyHealthPage = () => {
             </div>
 
             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              <span style={{ width: 12, height: 12, background: '#fca5a5', borderRadius: 2 }} />
+              <span style={{ width: 12, height: 12, background: '#ef4444', borderRadius: 2 }} />
               <span style={{ fontWeight: 500 }}>Gastos fijos/variables</span>
             </div>
 
@@ -1159,9 +1176,9 @@ export const CompanyHealthPage = () => {
                   boxShadow: '0 4px 14px rgba(0,0,0,0.08)'
                 }}
               />
-              <Bar dataKey="ingresos" name="Ingresos" fill="#0284c7" radius={[3, 3, 0, 0]} maxBarSize={28} />
+              <Bar dataKey="ingresos" name="Ingresos" fill="#7e22ce" radius={[3, 3, 0, 0]} maxBarSize={28} />
               <Bar dataKey="costos" name="Total Costos ventas" fill="#93c5fd" radius={[3, 3, 0, 0]} maxBarSize={28} />
-              <Bar dataKey="gastos" name="Gastos fijos/variables" fill="#fca5a5" radius={[3, 3, 0, 0]} maxBarSize={28} />
+              <Bar dataKey="gastos" name="Gastos fijos/variables" fill="#ef4444" radius={[3, 3, 0, 0]} maxBarSize={28} />
               <Line
                 type="monotone"
                 dataKey="utilidad"
