@@ -2903,40 +2903,163 @@ function deletePersistedSupplier(id: string) {
   }
 }
 
+function autoReconcileSuppliers(orgId: string): any[] {
+  const map = new Map<string, any>();
+
+  // 1. Cargar proveedores existentes en data/suppliers.json
+  const local = loadPersistedSuppliers(orgId);
+  for (const s of local) {
+    const key = `${(s.name || '').trim().toLowerCase()}|${(s.doc_number || '').trim().toLowerCase()}`;
+    if (key !== '|') map.set(key, s);
+  }
+
+  // 2. Extraer proveedores de cuentas por pagar (accounts_payable)
+  const payables = loadPersistedPayables(orgId);
+  for (const p of payables) {
+    const name = (p.supplier_name || '').trim();
+    const doc = (p.supplier_doc || '').trim();
+    if (!name && !doc) continue;
+    
+    // Clave única basada en nombre y doc
+    const key = `${name.toLowerCase()}|${doc.toLowerCase()}`;
+    const existing = map.get(key) || {};
+    const remaining = Math.max(0, Number(p.balance_usd ?? p.remaining_amount ?? 0));
+
+    const updated = {
+      id: existing.id || p.supplier_id || `sup-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+      organization_id: orgId,
+      code: existing.code || `PRV-${(map.size + 1).toString().padStart(4, '0')}`,
+      name: name,
+      doc_type: existing.doc_type || (p.supplier_doc?.startsWith('J') ? 'RIF Jurídico' : 'RIF (J / G / V)'),
+      doc_number: existing.doc_number || doc || '',
+      phone: existing.phone || p.supplier_phone || '',
+      email: existing.email || p.supplier_email || '',
+      contact_person: existing.contact_person || p.supplier_contact || '',
+      address: existing.address || p.supplier_address || '',
+      category: existing.category || p.origin || 'Proveedor de Insumos',
+      balance_usd: (Number(existing.balance_usd) || 0) + remaining,
+      status: existing.status || 'Activo',
+      created_at: existing.created_at || p.created_at || new Date().toISOString()
+    };
+    map.set(key, updated);
+  }
+
+  // 3. Extraer proveedores de movimientos bancarios (data/bank_movements.json)
+  try {
+    const bankMovFile = path.resolve(process.cwd(), 'data', 'bank_movements.json');
+    if (fs.existsSync(bankMovFile)) {
+      const movs = JSON.parse(fs.readFileSync(bankMovFile, 'utf-8'));
+      if (Array.isArray(movs)) {
+        for (const m of movs) {
+          const concept = String(m.concept || '');
+          const match = concept.match(/Pago a proveedor\s*-\s*([^(]+)(?:\(([^)]+)\))?/i);
+          if (match && match[1]) {
+            const rawName = match[1].trim();
+            const rawDoc = match[2] ? match[2].trim() : '';
+            const key = rawName.toLowerCase();
+            if (!map.has(key)) {
+              map.set(key, {
+                id: `sup-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+                organization_id: orgId,
+                code: `PRV-${(map.size + 1).toString().padStart(4, '0')}`,
+                name: rawName,
+                doc_type: 'RIF (J / G / V)',
+                doc_number: rawDoc,
+                phone: '',
+                email: '',
+                contact_person: '',
+                address: '',
+                category: 'Distribuidor Comercial',
+                balance_usd: 0,
+                status: 'Activo',
+                created_at: m.created_at || new Date().toISOString()
+              });
+            }
+          }
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('Aviso conciliando proveedores de movimientos bancarios:', err);
+  }
+
+  const result = Array.from(map.values());
+  if (result.length > 0) {
+    saveAllPersistedSuppliers(result);
+  }
+  return result;
+}
+
 app.get('/api/suppliers', async (req, res: AuthenticatedResponse) => {
   try {
     const orgId = res.locals.supabaseContext?.organizationId || '00000000-0000-0000-0000-000000000001';
     const authHeader = req.headers.authorization;
     const token = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : undefined;
     
-    // 1. Consultar tabla suppliers en Supabase con token de autorización si está presente
-    const result = await supabaseRestRequest('suppliers?select=*&order=created_at.desc', {}, token);
+    // 1. Auto-conciliar proveedores registrados en compras, facturas y pagos
+    const autoSuppliers = autoReconcileSuppliers(orgId);
+
+    // 2. Consultar tabla suppliers en Supabase si está disponible
     let dbSuppliers: any[] = [];
-    if (!result.error && Array.isArray(result.data)) {
-      dbSuppliers = result.data;
+    try {
+      const result = await supabaseRestRequest('suppliers?select=*&order=created_at.desc', {}, token);
+      if (!result.error && Array.isArray(result.data)) {
+        dbSuppliers = result.data;
+      }
+    } catch (e) {
+      console.warn('Aviso consultando suppliers en Supabase:', e);
     }
 
-    // 2. Cargar proveedores locales persistidos
-    const localSuppliers = loadPersistedSuppliers(orgId);
-
-    // 3. Fusionar garantizando no perder campos enriquecidos (teléfono, email, categoría)
+    // 3. Fusionar garantizando no perder campos enriquecidos (teléfono, email, categoría, saldo)
     const map = new Map<string, any>();
-    for (const s of localSuppliers) {
-      if (s.id) map.set(s.id, s);
+    for (const s of autoSuppliers) {
+      const k = (s.name || s.id || '').trim().toLowerCase();
+      if (k) map.set(k, s);
     }
     for (const s of dbSuppliers) {
-      if (s.id) {
-        const local = map.get(s.id) || {};
-        map.set(s.id, { ...local, ...s });
+      const k = (s.name || s.id || '').trim().toLowerCase();
+      if (k) {
+        const local = map.get(k) || {};
+        map.set(k, { ...local, ...s, id: s.id || local.id });
       }
     }
+
     const merged = Array.from(map.values());
     if (merged.length > 0) {
       saveAllPersistedSuppliers(merged);
     }
+
+    // 4. Intentar sincronizar hacia Supabase de fondo los que no estén en la nube
+    // enviando únicamente las columnas existentes en Supabase (name, doc_type, doc_number, code, balance_usd, status)
+    if (dbSuppliers.length === 0 && merged.length > 0) {
+      (async () => {
+        for (const item of merged) {
+          try {
+            const cleanSupabasePayload: Record<string, any> = {
+              organization_id: orgId,
+              name: item.name,
+              doc_type: item.doc_type || 'RIF (J / G / V)',
+              doc_number: item.doc_number || '',
+              code: item.code || `PRV-0001`,
+              balance_usd: Number(item.balance_usd) || 0,
+              status: item.status || 'Activo'
+            };
+            if (item.id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(item.id)) {
+              cleanSupabasePayload.id = item.id;
+            }
+            await supabaseRestRequest('suppliers', {
+              method: 'POST',
+              headers: { Prefer: 'resolution=ignore-duplicates' },
+              body: cleanSupabasePayload
+            }, token);
+          } catch { }
+        }
+      })().catch(() => {});
+    }
+
     return res.json({ success: true, data: merged });
   } catch (err: any) {
-    return res.status(200).json({ success: true, data: loadPersistedSuppliers() });
+    return res.status(200).json({ success: true, data: autoReconcileSuppliers('00000000-0000-0000-0000-000000000001') });
   }
 });
 

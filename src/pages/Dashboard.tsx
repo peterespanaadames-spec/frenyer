@@ -30,6 +30,8 @@ interface DashboardSummary {
   payableDueCount: number;
   stockUnits: number;
   lowStockProductsCount: number;
+  receivables: any[];
+  payables: any[];
   topProducts: TopProduct[];
   lowStockProductsList: Product[];
 }
@@ -44,7 +46,9 @@ const EMPTY_SUMMARY: DashboardSummary = {
   stockUnits: 0,
   lowStockProductsCount: 0,
   topProducts: [],
-  lowStockProductsList: []
+  lowStockProductsList: [],
+  receivables: [],
+  payables: []
 };
 
 export function Dashboard() {
@@ -235,8 +239,10 @@ export function Dashboard() {
           monthlyProfit: utilidadNeta,
           receivableDueUsd: Math.round(receivableDue * 100) / 100,
           receivableDueCount,
+          receivables: filteredReceivables.slice(0, 10),
           payableDueUsd: Math.round(payableDue * 100) / 100,
           payableDueCount,
+          payables: filteredPayables.slice(0, 10),
           stockUnits: products.reduce((acc, p) => acc + Number(p.stock || 0), 0),
           lowStockProductsCount: products.filter((p) => Number(p.stock) <= Number(p.min_stock)).length,
           topProducts,
