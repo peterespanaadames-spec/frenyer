@@ -1,23 +1,16 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, Outlet } from 'react-router-dom';
-import { Menu, Sparkles, RefreshCw, Edit3, ShieldAlert, AlertCircle, ArrowUpRight, Check, X, LogOut, Database } from 'lucide-react';
+import { Menu, Sparkles, RefreshCw, Edit3, AlertCircle, ArrowUpRight, Check, X, Database } from 'lucide-react';
 import { Sidebar } from '../components/ui/Sidebar';
 import { ManualBcvRateModal } from '../components/modals/ManualBcvRateModal';
 import { SupabaseConnectionModal } from '../components/modals/SupabaseConnectionModal';
-import { AuthScreen } from '../components/auth/AuthScreen';
 import { getActiveExchangeRate, setActiveExchangeRate, isFutureExchangeRate } from '../lib/currency';
 import { isSupabaseConfigured, supabase } from '../lib/supabase/client';
 import { getActiveOrgId } from '../lib/supabase/db';
 import { getBusinessProfile, BusinessProfile } from '../lib/businessProfile';
 
-const isAuthenticationRequired = import.meta.env.VITE_AUTH_REQUIRED === 'true';
-
 export function DashboardLayout() {
   const navigate = useNavigate();
-  const [authStatus, setAuthStatus] = useState<'loading' | 'signedOut' | 'noOrganization' | 'authenticated'>(
-    isAuthenticationRequired ? 'loading' : 'authenticated'
-  );
-  const [authMessage, setAuthMessage] = useState('');
   const [bcvRate, setBcvRate] = useState(() => getActiveExchangeRate());
   const [isFuture, setIsFuture] = useState(() => isFutureExchangeRate());
   const [rateSource, setRateSource] = useState(() => localStorage.getItem('frenyer_bcv_rate_source') || 'BCV');
@@ -149,76 +142,6 @@ export function DashboardLayout() {
     setProposedRate(null);
   };
 
-  const checkAuthenticatedMembership = async () => {
-    if (new URLSearchParams(window.location.search).get('auth') === 'recovery') {
-      setAuthMessage('');
-      setAuthStatus('signedOut');
-      return;
-    }
-    if (!isSupabaseConfigured) {
-      setAuthMessage('Configure VITE_SUPABASE_URL y VITE_SUPABASE_ANON_KEY para iniciar sesión.');
-      setAuthStatus('signedOut');
-      return;
-    }
-    const { data, error } = await supabase.auth.getSession();
-    if (error) {
-      setAuthMessage(`No se pudo validar la sesión: ${error.message}`);
-      setAuthStatus('signedOut');
-      return;
-    }
-    if (!data.session) {
-      setAuthMessage('');
-      setAuthStatus('signedOut');
-      return;
-    }
-
-    const organizationId = await getActiveOrgId();
-    if (!organizationId) {
-      setAuthMessage('La cuenta no pertenece a una organización autorizada.');
-      setAuthStatus('noOrganization');
-      return;
-    }
-
-    // NEW: Check if user is a shop_customer
-    const { data: customer } = await supabase
-      .from('shop_customers')
-      .select('id')
-      .eq('id', data.session.user.id)
-      .maybeSingle();
-
-    if (customer) {
-      setAuthMessage('Esta cuenta es de cliente. No tiene acceso al panel administrativo.');
-      await supabase.auth.signOut();
-      setAuthStatus('signedOut');
-      return;
-    }
-
-    setAuthMessage('');
-    setAuthStatus('authenticated');
-  };
-
-  const handleSignOut = async () => {
-    const { error } = await supabase.auth.signOut();
-    if (error) {
-      setAuthMessage(`No se pudo cerrar la sesión: ${error.message}`);
-      return;
-    }
-    setAuthStatus('signedOut');
-    setAuthMessage('');
-  };
-
-  useEffect(() => {
-    if (!isAuthenticationRequired) return;
-    void checkAuthenticatedMembership();
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
-      if (event === 'PASSWORD_RECOVERY') return;
-      window.setTimeout(() => {
-        void checkAuthenticatedMembership();
-      }, 0);
-    });
-    return () => subscription.unsubscribe();
-  }, []);
-
   useEffect(() => {
     fetchBackendRate();
 
@@ -236,27 +159,10 @@ export function DashboardLayout() {
     };
 
     window.addEventListener('frenyer:rate-changed', handleRateEvent);
-    const handleDbConfigured = () => {
-      setIsDbReady(true);
-      void checkAuthenticatedMembership();
-    };
-    window.addEventListener('frenyer:supabase-configured', handleDbConfigured);
     return () => {
       window.removeEventListener('frenyer:rate-changed', handleRateEvent);
-      window.removeEventListener('frenyer:supabase-configured', handleDbConfigured);
     };
   }, []);
-
-  if (isAuthenticationRequired && authStatus !== 'authenticated') {
-    return <AuthScreen
-      isLoading={authStatus === 'loading'}
-      isConfigured={isSupabaseConfigured}
-      message={authMessage}
-      canSignOut={authStatus === 'noOrganization'}
-      onAuthenticated={checkAuthenticatedMembership}
-      onSignOut={handleSignOut}
-    />;
-  }
 
   return (
     <div className="shell">
@@ -383,15 +289,6 @@ export function DashboardLayout() {
                 </span>
               </div>
             </div>
-            {isAuthenticationRequired && <button
-              type="button"
-              onClick={handleSignOut}
-              title="Cerrar sesión"
-              aria-label="Cerrar sesión"
-              style={{ border: '1px solid var(--border)', borderRadius: 8, background: '#fff', padding: 7, color: '#475569', cursor: 'pointer' }}
-            >
-              <LogOut size={16} />
-            </button>}
           </div>
         </header>
 
@@ -528,7 +425,6 @@ export function DashboardLayout() {
         onClose={() => setIsSupabaseModalOpen(false)}
         onConnected={() => {
           setIsDbReady(true);
-          void checkAuthenticatedMembership();
         }}
       />
     </div>

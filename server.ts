@@ -2538,6 +2538,44 @@ app.get('/api/bank-movements', async (req, res) => {
   }
 });
 
+app.get('/api/debug/bank-movements-check', async (req, res) => {
+  try {
+    const result = await supabaseRestRequest('bank_movements?select=*');
+    const accountsRes = await supabaseRestRequest('bank_accounts?select=id,bank_name');
+    
+    if (result.error || accountsRes.error) {
+      return res.json({ success: false, error: result.error || accountsRes.error });
+    }
+
+    const accounts = accountsRes.data;
+    const movements = result.data;
+    
+    const validIds = new Set(accounts.map((a: any) => a.id));
+    const orphans = movements.filter((m: any) => !validIds.has(m.bank_account_id));
+
+    return res.json({
+      success: true,
+      totalMovements: movements.length,
+      accounts: accounts,
+      orphans: orphans
+    });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.get('/api/debug/accounts-list', async (req, res) => {
+  try {
+    const result = await supabaseRestRequest('bank_accounts?select=id,bank_name');
+    if (result.error) {
+      return res.json({ success: false, error: result.error });
+    }
+    return res.json({ success: true, data: result.data });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 app.post('/api/bank-movements', async (req, res: AuthenticatedResponse) => {
   try {
     const movement = req.body || {};

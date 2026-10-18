@@ -770,7 +770,7 @@ export function MovementsPage() {
           .header-banner h2 { color: #ffffff; margin: 0 0 4px; font-size: 18px; font-weight: bold; }
           .header-banner p { color: #e5e7eb; font-size: 12px; margin: 0; }
           table { width: 100%; border-collapse: collapse; margin-top: 15px; font-size: 11px; }
-          th { background: #4b5563; color: #ffffff; font-weight: bold; border: 1px solid #cbd5e1; padding: 9px 8px; text-align: left; }
+          th { background: #4b5563; color: #ffffff; font-weight: bold; text-decoration: underline; border: 1px solid #cbd5e1; padding: 9px 8px; text-align: left; }
           td { color: #000000; border: 1px solid #cbd5e1; padding: 7px 8px; text-align: left; background-color: #ffffff; }
           tr:nth-child(even) td { background-color: #f8fafc; }
           .footer { margin-top: 30px; font-size: 11px; color: #6b7280; text-align: right; }
@@ -804,9 +804,9 @@ export function MovementsPage() {
         </table>
         ${getReportFooterHtml()}
         <script>
-          window.onload = function() {
+          setTimeout(function() {
             window.print();
-          }
+          }, 500);
         </script>
       </body>
       </html>

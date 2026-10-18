@@ -849,6 +849,7 @@ export function BankAccountsPage() {
               </h1>
             </div>
             
+            
             <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
               <button
                 onClick={loadAllData}
@@ -857,49 +858,11 @@ export function BankAccountsPage() {
                 <RefreshCw size={14} className={isLoading ? 'animate-spin' : ''} />
                 <span>Sincronizar</span>
               </button>
-
-              <button
-                onClick={() => setIsPaymentMethodsModalOpen(true)}
-                style={{ height: 38, padding: '0 14px', borderRadius: 8, border: '1px solid #7c3aed', background: '#fff', color: '#7c3aed', fontSize: 12, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}
-              >
-                <CreditCard size={15} /> Métodos de pago
-              </button>
-
-              <button
-                onClick={() => setIsNewAccountModalOpen(true)}
-                style={{ height: 38, padding: '0 16px', borderRadius: 8, background: '#7c3aed', color: '#fff', border: 'none', fontSize: 12, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', boxShadow: '0 2px 8px rgba(124,58,237,0.35)' }}
-              >
-                <Plus size={15} /> Nueva cuenta
-              </button>
             </div>
           </div>
 
-          {/* Operations Action Bar & Search */}
-              <div className="card" style={{ padding: '12px 18px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, flexWrap: 'wrap', gap: 12 }}>
-                <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-                  <button
-                    onClick={() => setIsTransferModalOpen(true)}
-                    style={{ height: 44, padding: '0 20px', borderRadius: 10, background: '#7c3aed', border: 'none', fontSize: 13, fontWeight: 800, color: '#fff', display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', boxShadow: '0 4px 12px rgba(124,58,237,0.3)' }}
-                  >
-                    <ArrowLeftRight size={16} /> Transferir entre cuentas
-                  </button>
-
-                  <button
-                    onClick={() => setIsDepositModalOpen(true)}
-                    style={{ height: 44, padding: '0 20px', borderRadius: 10, background: '#fff', border: '2px solid #7c3aed', fontSize: 13, fontWeight: 800, color: '#7c3aed', display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', boxShadow: '0 2px 8px rgba(124,58,237,0.15)' }}
-                  >
-                    <PlusCircle size={16} /> Ingresar saldo
-                  </button>
-
-                  <button
-                    onClick={() => setIsWithdrawModalOpen(true)}
-                    style={{ height: 44, padding: '0 20px', borderRadius: 10, background: '#fff', border: '2px solid #7c3aed', fontSize: 13, fontWeight: 800, color: '#7c3aed', display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', boxShadow: '0 2px 8px rgba(124,58,237,0.15)' }}
-                  >
-                    <MinusCircle size={16} /> Retirar saldo
-                  </button>
-                </div>
-
-                {/* Search */}
+          {/* Search */}
+          <div className="card" style={{ padding: '12px 18px', display: 'flex', justifyContent: 'flex-end', alignItems: 'center', marginBottom: 16 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: '#f8fafc', padding: '6px 12px', borderRadius: 8, border: '1px solid var(--border)', width: 250 }}>
                   <Search size={14} style={{ color: '#94a3b8' }} />
                   <input
@@ -1046,7 +1009,7 @@ export function BankAccountsPage() {
                         </div>
 
                         {/* Bottom Action bar */}
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 14, paddingTop: 10, borderTop: '1px solid var(--border)' }}>
+                        <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', marginTop: 14, paddingTop: 10, borderTop: '1px solid var(--border)' }}>
                           <button
                             onClick={() => setSelectedAccountForMovements(acc)}
                             style={{
@@ -1063,16 +1026,6 @@ export function BankAccountsPage() {
                           >
                             Ver movimientos ↗
                           </button>
-
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                            <button
-                              onClick={() => handleOpenEditAccount(acc)}
-                              title="Editar cuenta"
-                              style={{ background: 'transparent', border: 'none', color: '#64748b', cursor: 'pointer', padding: 4 }}
-                            >
-                              <Edit3 size={14} />
-                            </button>
-                          </div>
                         </div>
                       </div>
                     );
@@ -1103,32 +1056,6 @@ export function BankAccountsPage() {
             </button>
 
             <div style={{ display: 'flex', gap: 8 }}>
-              {selectedAccountForMovements.status === 'Inactivo' || selectedAccountForMovements.status === 'Papelera' ? (
-                <>
-                  <button
-                    onClick={() => handleRestoreBankAccount(selectedAccountForMovements.id)}
-                    style={{ height: 34, padding: '0 12px', borderRadius: 8, background: '#7c3aed', color: '#fff', border: 'none', fontSize: 11, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer' }}
-                  >
-                    <Check size={13} /> Reactivar cuenta
-                  </button>
-
-                  <button
-                    onClick={() => handlePurgeBankAccount(selectedAccountForMovements)}
-                    style={{ height: 34, padding: '0 12px', borderRadius: 8, background: '#ef4444', color: 'white', border: 'none', fontSize: 11, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer' }}
-                  >
-                    <Trash2 size={13} /> Eliminar definitiva
-                  </button>
-                </>
-              ) : (
-                <>
-                  <button
-                    onClick={() => handleOpenEditAccount(selectedAccountForMovements)}
-                    style={{ height: 34, padding: '0 12px', borderRadius: 8, border: '1px solid #7c3aed', background: '#fff', fontSize: 11, fontWeight: 700, color: '#7c3aed', display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer' }}
-                  >
-                    <Edit3 size={13} /> Editar cuenta
-                  </button>
-                </>
-              )}
             </div>
           </div>
 
