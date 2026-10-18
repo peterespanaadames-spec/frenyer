@@ -1186,7 +1186,7 @@ export function OrdersPage() {
                 </div>
               </div>
 
-              {/* Información de Pago y Auditoría */}
+              {/* Información de Pago */}
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 16 }}>
                 {/* Pago */}
                 <div style={{ background: 'var(--canvas)', padding: 14, borderRadius: 'var(--radius-md)', border: '1px solid var(--border)' }}>

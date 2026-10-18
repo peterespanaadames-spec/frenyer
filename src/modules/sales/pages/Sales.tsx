@@ -247,6 +247,13 @@ export function Sales() {
   const [currentPaymentAmountUSD, setCurrentPaymentAmountUSD] = useState('');
   const [currentPaymentAmountVES, setCurrentPaymentAmountVES] = useState('');
 
+  // Abono inicial de capital para Cuentas por Cobrar (Crédito)
+  const [hasInitialCapitalDownPayment, setHasInitialCapitalDownPayment] = useState(false);
+  const [initialCapitalBankId, setInitialCapitalBankId] = useState('');
+  const [initialCapitalAmountUSD, setInitialCapitalAmountUSD] = useState('');
+  const [initialCapitalAmountVES, setInitialCapitalAmountVES] = useState('');
+  const [initialCapitalReference, setInitialCapitalReference] = useState('');
+
   // Step 3: Document Type & Emission
   const [documentType, setDocumentType] = useState<'FACTURA' | 'NOTA' | 'ESPERA'>('FACTURA');
   const [invoiceNumber, setInvoiceNumber] = useState('');
@@ -315,6 +322,10 @@ export function Sales() {
     }
     const activeAccs = (rawAccounts || []).filter((a: any) => a.status === 'Activo');
     setDbAccounts(activeAccs);
+    if (activeAccs.length > 0) {
+      setInitialCapitalBankId(prev => prev || activeAccs[0].id);
+      setCurrentPaymentMethod(prev => prev || activeAccs[0].id);
+    }
 
     try {
       setInvoiceNumber(
@@ -836,13 +847,52 @@ export function Sales() {
         };
       });
 
-      const paymentsPayload = payments.map(p => ({
-        method: p.method,
-        amount_usd: p.amountUSD,
-        amount_ves: p.amountVES,
-        exchange_rate: activeRate,
-        bank_account_id: p.bank_account_id || null
-      }));
+      // Build paymentsPayload: for CONTADO use multi-abonos; for CREDITO use initial capital down payment if activated
+      let paymentsPayload: Array<{
+        method: string;
+        amount_usd: number;
+        amount_ves: number;
+        exchange_rate: number;
+        bank_account_id?: string | null;
+        reference?: string | null;
+      }> = [];
+
+      let creditInitialAbonoUSD = 0;
+      let creditInitialAbonoVES = 0;
+      let targetBankForCredit: any = null;
+
+      if (paymentType === 'CONTADO') {
+        paymentsPayload = payments.map(p => ({
+          method: p.method,
+          amount_usd: p.amountUSD,
+          amount_ves: p.amountVES,
+          exchange_rate: activeRate,
+          bank_account_id: p.bank_account_id || null,
+          reference: docCorrelative
+        }));
+      } else if (paymentType === 'CREDITO' && hasInitialCapitalDownPayment) {
+        targetBankForCredit = dbAccounts.find(a => a.id === (initialCapitalBankId || dbAccounts[0]?.id));
+        const numUSD = parseFloat(initialCapitalAmountUSD) || 0;
+        const numVES = parseFloat(initialCapitalAmountVES) || convertUSDtoVES(numUSD, activeRate);
+
+        if (numUSD > grandTotalUSD + 0.01) {
+          showToast(`El abono de capital ($${numUSD.toFixed(2)}) no puede exceder el total de la venta ($${grandTotalUSD.toFixed(2)}).`, 'info');
+          return;
+        }
+
+        if (numUSD > 0) {
+          creditInitialAbonoUSD = numUSD;
+          creditInitialAbonoVES = numVES;
+          paymentsPayload = [{
+            method: targetBankForCredit ? `${targetBankForCredit.bank_name} (${targetBankForCredit.currency})` : 'Abono Inicial de Capital',
+            amount_usd: numUSD,
+            amount_ves: numVES,
+            exchange_rate: activeRate,
+            bank_account_id: targetBankForCredit?.id || null,
+            reference: initialCapitalReference.trim() || docCorrelative
+          }];
+        }
+      }
 
       const currentRateSource = localStorage.getItem('frenyer_bcv_rate_source') || 'BCV_DIRECT';
       const isFutureRateActive = localStorage.getItem('frenyer_bcv_is_future') === 'true';
@@ -876,10 +926,10 @@ export function Sales() {
         return;
       }
 
-      // 2. Adjust Bank Accounts and log Bank Movements for Contado payments
+      // 2. Adjust Bank Accounts and log Bank Movements for payments (CONTADO or CREDITO initial capital abono)
       const bankMovementErrors: string[] = [];
-      if (paymentType === 'CONTADO') {
-        for (const p of payments) {
+      if (paymentsPayload.length > 0) {
+        for (const p of paymentsPayload) {
           let bankId = p.bank_account_id;
           // Si no tiene bank_account_id o es un placeholder genérico, resolver a la cuenta de efectivo o primera cuenta activa
           if (!bankId || bankId === 'ACC-CASH-DEFAULT') {
@@ -890,7 +940,11 @@ export function Sales() {
           if (bankId) {
             const acc = dbAccounts.find(a => a.id === bankId);
             // If VES account, take original VES amount, else take USD amount
-            const originalAmount = acc && acc.currency === 'VES' ? p.amountVES : p.amountUSD;
+            const originalAmount = acc && acc.currency === 'VES' ? p.amount_ves : p.amount_usd;
+            const concept = paymentType === 'CREDITO'
+              ? `Abono de Capital inicial - Venta a Crédito ${docCorrelative} (${clientName})`
+              : `Abono de Venta POS - ${docCorrelative} (${clientName})`;
+            const movementRef = p.reference || docCorrelative;
 
             try {
               const response = await authenticatedFetch('/api/bank-movements', {
@@ -899,8 +953,8 @@ export function Sales() {
                 body: JSON.stringify({
                   bank_account_id: bankId,
                   type: 'ENTRADA',
-                  concept: `Abono de Venta POS - ${docCorrelative} (${clientName})`,
-                  reference: docCorrelative,
+                  concept,
+                  reference: movementRef,
                   user_name: 'Cajero POS',
                   rate: activeRate,
                   commission: 0,
@@ -922,8 +976,8 @@ export function Sales() {
                   id: 'mov-' + Date.now() + '-' + Math.random().toString(36).substring(2, 6),
                   bank_account_id: bankId,
                   type: 'ENTRADA',
-                  concept: `Abono de Venta POS - ${docCorrelative} (${clientName})`,
-                  reference: docCorrelative,
+                  concept,
+                  reference: movementRef,
                   user_name: 'Cajero POS',
                   rate: activeRate,
                   commission: 0,
@@ -959,6 +1013,13 @@ export function Sales() {
       );
 
       // 3. Set Print Document view
+      const remainingCredUSD = Math.max(0, Math.round((grandTotalUSD - creditInitialAbonoUSD) * 100) / 100);
+      const paymentMethodLabel = paymentType === 'CREDITO'
+        ? (creditInitialAbonoUSD > 0
+            ? `Crédito (CxC) con Abono Inicial de Capital: $${creditInitialAbonoUSD.toFixed(2)} (${targetBankForCredit?.bank_name || 'Cuenta Bancaria'}) · Saldo Restante CxC: $${remainingCredUSD.toFixed(2)}`
+            : 'Cuenta por Cobrar (Crédito)')
+        : payments.map(p => `${p.method} [$${p.amountUSD.toFixed(2)} / Bs.${p.amountVES.toFixed(2)}]`).join(' | ');
+
       setPrintDocument({
         docType: documentType,
         correlative: docCorrelative,
@@ -975,12 +1036,16 @@ export function Sales() {
         totalUSD: grandTotalUSD,
         totalVES: grandTotalVES,
         rate: activeRate,
-        paymentMethod: paymentType === 'CREDITO' ? 'Cuenta por Cobrar (Crédito)' : payments.map(p => `${p.method} [$${p.amountUSD.toFixed(2)} / Bs.${p.amountVES.toFixed(2)}]`).join(' | ')
+        paymentMethod: paymentMethodLabel
       });
 
       // Reset cart and checkout
       setCart([]);
       setCheckoutStep(null);
+      setHasInitialCapitalDownPayment(false);
+      setInitialCapitalAmountUSD('');
+      setInitialCapitalAmountVES('');
+      setInitialCapitalReference('');
       showToast(
         bankMovementErrors.length > 0
           ? `La venta se registró, pero falló un movimiento bancario: ${bankMovementErrors[0]}`
@@ -2057,32 +2122,331 @@ export function Sales() {
                         Boolean(clientAddress && clientAddress.trim() !== '');
 
                       return isCustomerValid ? (
-                        <div style={{ background: '#f8fafc', padding: 16, borderRadius: 8, border: '1px solid #cbd5e1', display: 'flex', flexDirection: 'column', gap: 10 }}>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                            <b style={{ fontSize: 13, color: '#1e293b' }}>Autorización de Cuenta por Cobrar (CxC)</b>
-                            <Badge tone="brand">Crédito 15 días</Badge>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                          {/* 1. Resumen del Cliente Deudor */}
+                          <div style={{ background: '#f8fafc', padding: 16, borderRadius: 8, border: '1px solid #cbd5e1', display: 'flex', flexDirection: 'column', gap: 10 }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                              <b style={{ fontSize: 13, color: '#1e293b' }}>Autorización de Cuenta por Cobrar (CxC)</b>
+                              <Badge tone="brand">Crédito Comercial</Badge>
+                            </div>
+                            <div style={{ fontSize: 12, color: '#334155', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, background: '#fff', padding: 12, borderRadius: 6, border: '1px solid #e2e8f0' }}>
+                              <div>
+                                <span className="muted small" style={{ display: 'block' }}>Cliente Deudor:</span>
+                                <b>{clientName}</b>
+                              </div>
+                              <div>
+                                <span className="muted small" style={{ display: 'block' }}>Cédula / RIF:</span>
+                                <b>{clientRif}</b>
+                              </div>
+                              <div>
+                                <span className="muted small" style={{ display: 'block' }}>Teléfono:</span>
+                                <span>{clientPhone}</span>
+                              </div>
+                              <div>
+                                <span className="muted small" style={{ display: 'block' }}>Dirección:</span>
+                                <span>{clientAddress}</span>
+                              </div>
+                            </div>
                           </div>
-                          <div style={{ fontSize: 12, color: '#334155', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, background: '#fff', padding: 12, borderRadius: 6, border: '1px solid #e2e8f0' }}>
-                            <div>
-                              <span className="muted small" style={{ display: 'block' }}>Cliente Deudor:</span>
-                              <b>{clientName}</b>
-                            </div>
-                            <div>
-                              <span className="muted small" style={{ display: 'block' }}>Cédula / RIF:</span>
-                              <b>{clientRif}</b>
-                            </div>
-                            <div>
-                              <span className="muted small" style={{ display: 'block' }}>Teléfono:</span>
-                              <span>{clientPhone}</span>
-                            </div>
-                            <div>
-                              <span className="muted small" style={{ display: 'block' }}>Dirección:</span>
-                              <span>{clientAddress}</span>
-                            </div>
+
+                          {/* 2. Sección: ¿El cliente desea abonar algo de capital inicial? */}
+                          <div style={{ background: '#fff', border: '1px solid #cbd5e1', borderRadius: 8, padding: 14, display: 'flex', flexDirection: 'column', gap: 12 }}>
+                            <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer', margin: 0 }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                                <input
+                                  type="checkbox"
+                                  checked={hasInitialCapitalDownPayment}
+                                  onChange={(e) => {
+                                    const checked = e.target.checked;
+                                    setHasInitialCapitalDownPayment(checked);
+                                    if (checked) {
+                                      if (!initialCapitalBankId && dbAccounts.length > 0) {
+                                        setInitialCapitalBankId(dbAccounts[0].id);
+                                      }
+                                    } else {
+                                      setInitialCapitalAmountUSD('');
+                                      setInitialCapitalAmountVES('');
+                                      setInitialCapitalReference('');
+                                    }
+                                  }}
+                                  style={{ width: 18, height: 18, accentColor: 'var(--brand-600)', cursor: 'pointer' }}
+                                />
+                                <div>
+                                  <b style={{ fontSize: 13, color: '#0f172a' }}>¿El cliente desea abonar algo de capital inicial?</b>
+                                  <span className="muted small" style={{ display: 'block', fontSize: 11, color: '#64748b' }}>
+                                    El abono se cargará directamente a una cuenta bancaria existente y el saldo restante quedará en Cuenta por Cobrar.
+                                  </span>
+                                </div>
+                              </div>
+                              <span style={{
+                                fontSize: 11,
+                                fontWeight: 700,
+                                padding: '2px 8px',
+                                borderRadius: 6,
+                                background: hasInitialCapitalDownPayment ? '#ecfdf5' : '#f1f5f9',
+                                color: hasInitialCapitalDownPayment ? '#047857' : '#64748b',
+                                border: hasInitialCapitalDownPayment ? '1px solid #a7f3d0' : '1px solid #e2e8f0'
+                              }}>
+                                {hasInitialCapitalDownPayment ? 'Abono Activado' : 'Sin Abono Inicial'}
+                              </span>
+                            </label>
+
+                            {hasInitialCapitalDownPayment && (
+                              <div style={{ borderTop: '1px dashed #e2e8f0', paddingTop: 12, display: 'flex', flexDirection: 'column', gap: 12 }}>
+                                {/* Selector de Cuenta Bancaria Existente */}
+                                <div className="field">
+                                  <label style={{ fontSize: 12, fontWeight: 700, color: '#334155' }}>
+                                    Cuenta Bancaria de Destino (donde ingresa el capital abonado) *
+                                  </label>
+                                  {dbAccounts.length === 0 ? (
+                                    <div style={{ color: '#b91c1c', background: '#fef2f2', border: '1px solid #fca5a5', padding: '8px 12px', borderRadius: 6, fontSize: 11, fontWeight: 700 }}>
+                                      ⚠️ No hay cuentas bancarias activas registradas. Vaya a "Cuentas Bancarias" para registrar una.
+                                    </div>
+                                  ) : (
+                                    <select
+                                      className="input"
+                                      value={initialCapitalBankId || (dbAccounts[0]?.id || '')}
+                                      onChange={(e) => {
+                                        const newId = e.target.value;
+                                        setInitialCapitalBankId(newId);
+                                        const acc = dbAccounts.find(a => a.id === newId);
+                                        if (acc) {
+                                          const curUSD = parseFloat(initialCapitalAmountUSD) || 0;
+                                          if (curUSD > 0) {
+                                            if (acc.currency === 'VES') {
+                                              setInitialCapitalAmountVES(convertUSDtoVES(curUSD, activeRate).toFixed(2));
+                                            } else {
+                                              setInitialCapitalAmountUSD(curUSD.toFixed(2));
+                                            }
+                                          }
+                                        }
+                                      }}
+                                    >
+                                      {dbAccounts.map(acc => (
+                                        <option key={acc.id} value={acc.id}>
+                                          {acc.bank_name} ({acc.currency}) — Saldo actual: {acc.currency === 'VES' ? formatVES(acc.balance) : formatUSD(acc.balance, '$ ')}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  )}
+                                </div>
+
+                                {/* Monto a Abonar (Bimonetario según la moneda de la cuenta bancaria seleccionada) */}
+                                {(() => {
+                                  const curAcc = dbAccounts.find(a => a.id === (initialCapitalBankId || dbAccounts[0]?.id));
+                                  const isVES = curAcc?.currency === 'VES';
+                                  const numUSD = parseFloat(initialCapitalAmountUSD) || 0;
+                                  const isExceeding = numUSD > grandTotalUSD + 0.01;
+
+                                  return (
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                                      <div className="form-grid" style={{ gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                                        {isVES ? (
+                                          <>
+                                            <div className="field">
+                                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                                <label style={{ fontSize: 12, fontWeight: 700 }}>Monto a Abonar en Bolívares (Bs. VES) *</label>
+                                                <button
+                                                  type="button"
+                                                  onClick={() => {
+                                                    const maxVES = convertUSDtoVES(grandTotalUSD, activeRate);
+                                                    setInitialCapitalAmountVES(maxVES.toFixed(2));
+                                                    setInitialCapitalAmountUSD(grandTotalUSD.toFixed(2));
+                                                  }}
+                                                  style={{ background: 'none', border: 'none', color: 'var(--brand-700)', fontSize: 11, fontWeight: 700, cursor: 'pointer', textDecoration: 'underline' }}
+                                                >
+                                                  Total (Bs. {convertUSDtoVES(grandTotalUSD, activeRate).toFixed(2)})
+                                                </button>
+                                              </div>
+                                              <input
+                                                className="input"
+                                                type="number"
+                                                step="0.01"
+                                                placeholder="0.00"
+                                                value={initialCapitalAmountVES}
+                                                onChange={(e) => {
+                                                  const val = e.target.value;
+                                                  setInitialCapitalAmountVES(val);
+                                                  const n = parseFloat(val) || 0;
+                                                  const calcUSD = Math.round((n / activeRate) * 100) / 100;
+                                                  setInitialCapitalAmountUSD(calcUSD.toFixed(2));
+                                                }}
+                                              />
+                                              <span className="muted small" style={{ fontSize: 11, marginTop: 2 }}>
+                                                Equivale a: <b>${numUSD.toFixed(2)} USD</b> (Tasa oficial BCV: Bs. {activeRate.toFixed(2)})
+                                              </span>
+                                            </div>
+
+                                            <div className="field">
+                                              <label style={{ fontSize: 12, fontWeight: 700 }}>Equivalente en Dólares ($ USD)</label>
+                                              <input
+                                                className="input"
+                                                type="number"
+                                                step="0.01"
+                                                placeholder="0.00"
+                                                value={initialCapitalAmountUSD}
+                                                onChange={(e) => {
+                                                  const val = e.target.value;
+                                                  setInitialCapitalAmountUSD(val);
+                                                  const n = parseFloat(val) || 0;
+                                                  const calcVES = convertUSDtoVES(n, activeRate);
+                                                  setInitialCapitalAmountVES(calcVES.toFixed(2));
+                                                }}
+                                              />
+                                            </div>
+                                          </>
+                                        ) : (
+                                          <>
+                                            <div className="field">
+                                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                                <label style={{ fontSize: 12, fontWeight: 700 }}>Monto a Abonar en Dólares ($ USD) *</label>
+                                                <button
+                                                  type="button"
+                                                  onClick={() => {
+                                                    setInitialCapitalAmountUSD(grandTotalUSD.toFixed(2));
+                                                    setInitialCapitalAmountVES(convertUSDtoVES(grandTotalUSD, activeRate).toFixed(2));
+                                                  }}
+                                                  style={{ background: 'none', border: 'none', color: 'var(--brand-700)', fontSize: 11, fontWeight: 700, cursor: 'pointer', textDecoration: 'underline' }}
+                                                >
+                                                  Total (${grandTotalUSD.toFixed(2)})
+                                                </button>
+                                              </div>
+                                              <input
+                                                className="input"
+                                                type="number"
+                                                step="0.01"
+                                                placeholder="0.00"
+                                                value={initialCapitalAmountUSD}
+                                                onChange={(e) => {
+                                                  const val = e.target.value;
+                                                  setInitialCapitalAmountUSD(val);
+                                                  const n = parseFloat(val) || 0;
+                                                  const calcVES = convertUSDtoVES(n, activeRate);
+                                                  setInitialCapitalAmountVES(calcVES.toFixed(2));
+                                                }}
+                                              />
+                                              <span className="muted small" style={{ fontSize: 11, marginTop: 2 }}>
+                                                Equivale a: <b>Bs. {convertUSDtoVES(numUSD, activeRate).toFixed(2)}</b>
+                                              </span>
+                                            </div>
+
+                                            <div className="field">
+                                              <label style={{ fontSize: 12, fontWeight: 700 }}>Equivalente en Bolívares (Bs. VES)</label>
+                                              <input
+                                                className="input"
+                                                type="number"
+                                                step="0.01"
+                                                placeholder="0.00"
+                                                value={initialCapitalAmountVES}
+                                                onChange={(e) => {
+                                                  const val = e.target.value;
+                                                  setInitialCapitalAmountVES(val);
+                                                  const n = parseFloat(val) || 0;
+                                                  const calcUSD = Math.round((n / activeRate) * 100) / 100;
+                                                  setInitialCapitalAmountUSD(calcUSD.toFixed(2));
+                                                }}
+                                              />
+                                            </div>
+                                          </>
+                                        )}
+                                      </div>
+
+                                      {/* Atajos rápidos de porcentaje */}
+                                      <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                                        <span style={{ fontSize: 10, fontWeight: 700, color: '#64748b', textTransform: 'uppercase' }}>Atajos de abono:</span>
+                                        {[0.25, 0.5, 0.75].map(pct => {
+                                          const amt = Math.round(grandTotalUSD * pct * 100) / 100;
+                                          return (
+                                            <button
+                                              key={pct}
+                                              type="button"
+                                              onClick={() => {
+                                                setInitialCapitalAmountUSD(amt.toFixed(2));
+                                                setInitialCapitalAmountVES(convertUSDtoVES(amt, activeRate).toFixed(2));
+                                              }}
+                                              style={{
+                                                background: '#f1f5f9',
+                                                border: '1px solid #cbd5e1',
+                                                borderRadius: 4,
+                                                padding: '2px 8px',
+                                                fontSize: 11,
+                                                fontWeight: 600,
+                                                cursor: 'pointer',
+                                                color: '#334155'
+                                              }}
+                                            >
+                                              {pct * 100}% (${amt.toFixed(2)})
+                                            </button>
+                                          );
+                                        })}
+                                      </div>
+
+                                      {/* Referencia bancaria opcional */}
+                                      <div className="field">
+                                        <label style={{ fontSize: 11, fontWeight: 600, color: '#475569' }}>
+                                          Referencia Bancaria / N° de Operación (Opcional)
+                                        </label>
+                                        <input
+                                          className="input"
+                                          placeholder="Ej: 054129 o REF-ABONO"
+                                          value={initialCapitalReference}
+                                          onChange={(e) => setInitialCapitalReference(e.target.value)}
+                                        />
+                                      </div>
+
+                                      {/* Advertencia si supera el total */}
+                                      {isExceeding && (
+                                        <div style={{ color: '#b91c1c', background: '#fef2f2', border: '1px solid #fca5a5', padding: '8px 12px', borderRadius: 6, fontSize: 11, fontWeight: 600 }}>
+                                          ⚠️ El abono (${numUSD.toFixed(2)}) no puede exceder el total a pagar de la venta (${grandTotalUSD.toFixed(2)}).
+                                        </div>
+                                      )}
+                                    </div>
+                                  );
+                                })()}
+                              </div>
+                            )}
                           </div>
-                          <div style={{ fontSize: 12, color: '#475569', background: '#eef2ff', padding: 10, borderRadius: 6, border: '1px solid #c7d2fe' }}>
-                            El saldo total de <b>{formatUSD(grandTotalUSD)}</b> ({formatVES(grandTotalVES)}) quedará asentado en la tabla de <b>Cuentas por Cobrar (CxC)</b> con estado <b>PENDIENTE</b>. Al momento de cobrar en Bolívares se liquidará a la tasa oficial BCV del día del abono.
-                          </div>
+
+                          {/* 3. Resumen del Crédito y Abono */}
+                          {(() => {
+                            const abonoUSD = hasInitialCapitalDownPayment ? (parseFloat(initialCapitalAmountUSD) || 0) : 0;
+                            const abonoVES = convertUSDtoVES(abonoUSD, activeRate);
+                            const remUSD = Math.max(0, Math.round((grandTotalUSD - abonoUSD) * 100) / 100);
+                            const remVES = convertUSDtoVES(remUSD, activeRate);
+                            const targetBank = dbAccounts.find(a => a.id === (initialCapitalBankId || dbAccounts[0]?.id));
+
+                            return (
+                              <div style={{ fontSize: 12, color: '#1e293b', background: hasInitialCapitalDownPayment && abonoUSD > 0 ? '#f0fdf4' : '#eef2ff', padding: 12, borderRadius: 6, border: hasInitialCapitalDownPayment && abonoUSD > 0 ? '1px solid #bbf7d0' : '1px solid #c7d2fe', display: 'flex', flexDirection: 'column', gap: 6 }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                  <span style={{ fontWeight: 600, color: '#475569' }}>Total de la Venta:</span>
+                                  <b>{formatUSD(grandTotalUSD)} <span className="muted small">({formatVES(grandTotalVES)})</span></b>
+                                </div>
+                                {hasInitialCapitalDownPayment && abonoUSD > 0 && (
+                                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', color: '#059669' }}>
+                                    <span>Abono de Capital inicial a cargar en {targetBank ? `${targetBank.bank_name} (${targetBank.currency})` : 'cuenta bancaria'}:</span>
+                                    <b>-{formatUSD(abonoUSD)} <span className="muted small">(-{formatVES(abonoVES)})</span></b>
+                                  </div>
+                                )}
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '1px dashed #cbd5e1', paddingTop: 6, fontSize: 13, fontWeight: 800 }}>
+                                  <span style={{ color: remUSD > 0 ? '#1e293b' : '#059669' }}>Saldo Restante en Cuenta por Cobrar (CxC):</span>
+                                  <span style={{ color: remUSD > 0 ? 'var(--brand-700)' : '#059669' }}>
+                                    {formatUSD(remUSD)} <span style={{ fontSize: 11, fontWeight: 700, color: '#059669' }}>({formatVES(remVES)})</span>
+                                  </span>
+                                </div>
+                                <div style={{ fontSize: 11, color: '#475569', marginTop: 2 }}>
+                                  {remUSD > 0 ? (
+                                    <>
+                                      El saldo restante de <b>{formatUSD(remUSD)}</b> quedará registrado en <b>Cuentas por Cobrar</b> con estado <b>{abonoUSD > 0 ? 'PARCIAL' : 'PENDIENTE'}</b>. Al cobrar en Bolívares se liquidará a la tasa oficial BCV del día del cobro.
+                                    </>
+                                  ) : (
+                                    <b style={{ color: '#15803d' }}>
+                                      ✓ El abono cubre el total de la venta. Se asentará la CxC con saldo $0.00 y estado PAGADA.
+                                    </b>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })()}
                         </div>
                       ) : (
                         <div style={{ background: '#fef2f2', border: '1px solid #fca5a5', padding: 16, borderRadius: 8, display: 'flex', flexDirection: 'column', gap: 10 }}>
@@ -2171,6 +2535,19 @@ export function Sales() {
                             return;
                           }
                         }
+                      } else if (paymentType === 'CREDITO') {
+                        // Validaciones de abono inicial de capital en Crédito
+                        if (hasInitialCapitalDownPayment) {
+                          const numUSD = parseFloat(initialCapitalAmountUSD) || 0;
+                          if (numUSD <= 0) {
+                            showToast('Por favor ingrese el monto a abonar de capital o desactive la casilla de abono.', 'info');
+                            return;
+                          }
+                          if (numUSD > grandTotalUSD + 0.01) {
+                            showToast(`El abono ($${numUSD.toFixed(2)}) no puede exceder el total a pagar ($${grandTotalUSD.toFixed(2)}).`, 'info');
+                            return;
+                          }
+                        }
                       }
                       setCheckoutStep(3);
                       updateCorrelativeForDocType(documentType === 'ESPERA' ? 'FACTURA' : documentType);
@@ -2178,7 +2555,13 @@ export function Sales() {
                     disabled={
                       paymentType === 'CONTADO' 
                         ? (payments.length === 0 && (!currentPaymentMethod || (parseFloat(currentPaymentAmountUSD) <= 0 && parseFloat(currentPaymentAmountVES) <= 0)))
-                        : !(clientName && clientName.trim() !== '' && clientName.trim() !== 'Consumidor final' && clientRif && clientRif.trim() !== '' && clientPhone && clientPhone.trim() !== '' && clientAddress && clientAddress.trim() !== '')
+                        : !(
+                            clientName && clientName.trim() !== '' && clientName.trim() !== 'Consumidor final' &&
+                            clientRif && clientRif.trim() !== '' &&
+                            clientPhone && clientPhone.trim() !== '' &&
+                            clientAddress && clientAddress.trim() !== '' &&
+                            (!hasInitialCapitalDownPayment || ((parseFloat(initialCapitalAmountUSD) || 0) > 0 && (parseFloat(initialCapitalAmountUSD) || 0) <= grandTotalUSD + 0.01))
+                          )
                     }
                   >
                     Siguiente &gt;
@@ -2380,8 +2763,14 @@ export function Sales() {
                   </div>
 
                   <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                    <span className="muted">Total pagado:</span>
-                    <b>{formatUSD(paymentType === 'CONTADO' ? totalPaidUSD : 0)}</b>
+                    <span className="muted">Total pagado / abonado:</span>
+                    <b>
+                      {formatUSD(
+                        paymentType === 'CONTADO'
+                          ? totalPaidUSD
+                          : (hasInitialCapitalDownPayment ? (parseFloat(initialCapitalAmountUSD) || 0) : 0)
+                      )}
+                    </b>
                   </div>
 
                   {paymentType === 'CONTADO' && payments.length > 0 && (
@@ -2396,6 +2785,38 @@ export function Sales() {
                           <b>{formatUSD(p.amountUSD)} <span className="muted small">({formatVES(p.amountVES)})</span></b>
                         </div>
                       ))}
+                    </div>
+                  )}
+
+                  {paymentType === 'CREDITO' && (
+                    <div style={{ background: '#f8fafc', padding: '10px 12px', borderRadius: 6, border: '1px solid #e2e8f0', display: 'flex', flexDirection: 'column', gap: 4, marginTop: 4, fontSize: 11 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 700, color: '#334155' }}>
+                        <span>Modalidad de Cobro:</span>
+                        <span style={{ color: 'var(--brand-700)' }}>Crédito (Cuenta por Cobrar)</span>
+                      </div>
+                      {hasInitialCapitalDownPayment && (parseFloat(initialCapitalAmountUSD) || 0) > 0 ? (
+                        <>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', color: '#059669' }}>
+                            <span>Abono de Capital inicial:</span>
+                            <b>{formatUSD(parseFloat(initialCapitalAmountUSD) || 0)}</b>
+                          </div>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', color: '#475569' }}>
+                            <span>Cuenta bancaria destino:</span>
+                            <span>{dbAccounts.find(a => a.id === (initialCapitalBankId || dbAccounts[0]?.id))?.bank_name || 'Cuenta Bancaria'}</span>
+                          </div>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px dashed #cbd5e1', paddingTop: 4, fontWeight: 800 }}>
+                            <span>Saldo Restante en CxC:</span>
+                            <span style={{ color: (grandTotalUSD - (parseFloat(initialCapitalAmountUSD) || 0)) > 0 ? 'var(--brand-700)' : '#059669' }}>
+                              {formatUSD(Math.max(0, grandTotalUSD - (parseFloat(initialCapitalAmountUSD) || 0)))}
+                            </span>
+                          </div>
+                        </>
+                      ) : (
+                        <div style={{ display: 'flex', justifyContent: 'space-between', color: '#64748b' }}>
+                          <span>Saldo en CxC (100%):</span>
+                          <b>{formatUSD(grandTotalUSD)} (PENDIENTE)</b>
+                        </div>
+                      )}
                     </div>
                   )}
 

@@ -19,7 +19,9 @@ import {
   CheckCircle,
   ArrowRight,
   ShieldCheck,
-  Percent
+  Percent,
+  ChevronDown,
+  ChevronUp
 } from 'lucide-react';
 import { Card } from '../../../components/ui/Card';
 import { Button } from '../../../components/ui/Button';
@@ -465,6 +467,80 @@ export function AccountsPayable() {
     });
   }, [payables, searchTerm, selectedSupplierFilter, selectedStatusFilter]);
 
+  // Agrupación y consolidación por Proveedor
+  const groupedSuppliers = useMemo(() => {
+    const map = new Map<string, {
+      supplierName: string;
+      supplierDoc?: string;
+      supplierPhone?: string;
+      payables: PayableRecord[];
+      totalAmount: number;
+      totalPending: number;
+      pendingCount: number;
+      status: PayableRecord['status'];
+    }>();
+
+    filteredPayables.forEach((pay) => {
+      const name = pay.supplier_name || 'Proveedor sin nombre';
+      if (!map.has(name)) {
+        map.set(name, {
+          supplierName: name,
+          supplierDoc: pay.supplier_doc,
+          supplierPhone: pay.supplier_phone,
+          payables: [],
+          totalAmount: 0,
+          totalPending: 0,
+          pendingCount: 0,
+          status: 'Pagada'
+        });
+      }
+      const group = map.get(name)!;
+      group.payables.push(pay);
+      group.totalAmount += pay.total_amount;
+      group.totalPending += pay.remaining_amount;
+      if (pay.remaining_amount > 0.01) {
+        group.pendingCount++;
+      }
+    });
+
+    const result = Array.from(map.values()).map(group => {
+      let status: PayableRecord['status'] = 'Pagada';
+      const hasOverdue = group.payables.some(p => p.status === 'Vencida');
+      const hasPending = group.totalPending > 0.01;
+      const hasPartial = group.payables.some(p => p.status === 'Parcial' || (p.paid_amount > 0 && p.remaining_amount > 0));
+
+      if (hasOverdue) status = 'Vencida';
+      else if (hasPending && hasPartial) status = 'Parcial';
+      else if (hasPending) status = 'Pendiente';
+      else status = 'Pagada';
+
+      return {
+        ...group,
+        status
+      };
+    });
+
+    return result.sort((a, b) => {
+      if (a.totalPending > 0.01 && b.totalPending <= 0.01) return -1;
+      if (a.totalPending <= 0.01 && b.totalPending > 0.01) return 1;
+      return a.supplierName.localeCompare(b.supplierName);
+    });
+  }, [filteredPayables]);
+
+  const [expandedSuppliers, setExpandedSuppliers] = useState<Set<string>>(new Set());
+
+  const toggleSupplierAccordion = (supplierName: string) => {
+    setExpandedSuppliers(prev => {
+      const next = new Set(prev);
+      if (next.has(supplierName)) {
+        next.delete(supplierName);
+      } else {
+        next.add(supplierName);
+      }
+      return next;
+    });
+  };
+
   // Cálculos de métricas globales (KPIs)
   const totalCartera = useMemo(() => {
     return payables.reduce((acc, curr) => acc + curr.total_amount, 0);
@@ -691,56 +767,159 @@ export function AccountsPayable() {
     }
   };
 
-  // Exportar reporte a PDF / Imprimir
+  // Exportar reporte a PDF
   const handleExportPDF = () => {
     setIsExportDropdownOpen(false);
-    window.print();
+    if (filteredPayables.length === 0) {
+      showToast('No hay cuentas por pagar para exportar.', 'info');
+      return;
+    }
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) {
+      showToast('Permite las ventanas emergentes para generar el PDF.', 'info');
+      return;
+    }
+    const htmlContent = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <title>Reporte de Cuentas por Pagar - Frenyer ERP</title>
+        <style>
+          body { font-family: Arial, sans-serif; margin: 20px; background: #ffffff; color: #111827; }
+          .header-banner { background-color: #4b5563; color: #ffffff; padding: 16px; border-radius: 6px; margin-bottom: 20px; }
+          .header-banner h2 { color: #ffffff; margin: 0 0 4px; font-size: 18px; }
+          .header-banner p { color: #e5e7eb; font-size: 12px; margin: 0; }
+          table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 11px; }
+          th { background-color: #4b5563; color: #ffffff; font-weight: bold; border: 1px solid #d1d5db; padding: 10px; text-align: left; }
+          td { background-color: #ffffff; color: #111827; border: 1px solid #d1d5db; padding: 8px 10px; text-align: left; }
+          tr:nth-child(even) td { background-color: #f9fafb; }
+          .footer { margin-top: 20px; font-size: 10px; color: #6b7280; text-align: right; }
+          @media print {
+            body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+          }
+        </style>
+      </head>
+      <body>
+        <div class="header-banner">
+          <h2>Frenyer ERP - Reporte Consolidado de Cuentas por Pagar</h2>
+          <p>Generado el: ${new Date().toLocaleString()} | Proveedores: ${groupedSuppliers.length} | Documentos: ${filteredPayables.length}</p>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>Documento</th>
+              <th>Proveedor</th>
+              <th>RIF/Doc</th>
+              <th>Concepto</th>
+              <th>Emisión</th>
+              <th>Vencimiento</th>
+              <th>Total ($)</th>
+              <th>Abonado ($)</th>
+              <th>Pendiente ($)</th>
+              <th>Estado</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${filteredPayables.map(p => `
+              <tr>
+                <td>${p.doc_number}</td>
+                <td>${p.supplier_name}</td>
+                <td>${p.supplier_doc || ''}</td>
+                <td>${p.concept}</td>
+                <td>${p.issue_date}</td>
+                <td>${p.due_date}</td>
+                <td>$${p.total_amount.toFixed(2)}</td>
+                <td>$${p.paid_amount.toFixed(2)}</td>
+                <td>$${p.remaining_amount.toFixed(2)}</td>
+                <td>${p.status}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+        <div class="footer">Frenyer ERP Bimonetario · Sistema de Gestión Empresarial</div>
+        <script>
+          window.onload = function() {
+            window.print();
+          }
+        </script>
+      </body>
+      </html>
+    `;
+    printWindow.document.write(htmlContent);
+    printWindow.document.close();
+    showToast('Reporte PDF listo para impresión / descarga.');
   };
 
-  // Exportar reporte a XLS / CSV
+  // Exportar reporte a XLS
   const handleExportXLS = () => {
     setIsExportDropdownOpen(false);
-    const headers = [
-      'Documento',
-      'Proveedor',
-      'RIF/Doc',
-      'Concepto',
-      'Origen',
-      'Fecha Emisión',
-      'Fecha Vencimiento',
-      'Total USD',
-      'Total VES',
-      'Abonado USD',
-      'Pendiente USD',
-      'Pendiente VES',
-      'Estado'
-    ];
-
-    const rows = filteredPayables.map((p) => [
-      `"${p.doc_number}"`,
-      `"${p.supplier_name}"`,
-      `"${p.supplier_doc || ''}"`,
-      `"${p.concept.replace(/"/g, '""')}"`,
-      `"${p.origin}"`,
-      `"${p.issue_date}"`,
-      `"${p.due_date}"`,
-      p.total_amount.toFixed(2),
-      (p.total_amount * activeRate).toFixed(2),
-      p.paid_amount.toFixed(2),
-      p.remaining_amount.toFixed(2),
-      (p.remaining_amount * activeRate).toFixed(2),
-      `"${p.status}"`
-    ]);
-
-    const csvContent = 'data:text/csv;charset=utf-8,\uFEFF' + [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
-    const encodedUri = encodeURI(csvContent);
+    if (filteredPayables.length === 0) {
+      showToast('No hay cuentas por pagar para exportar.', 'info');
+      return;
+    }
+    const htmlTable = `
+      <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
+      <head>
+        <meta charset="UTF-8">
+        <style>
+          body { font-family: Arial, sans-serif; }
+          .header-banner { background-color: #4b5563; color: #ffffff; padding: 12px; margin-bottom: 15px; }
+          table { border-collapse: collapse; width: 100%; font-family: Arial, sans-serif; }
+          th { background-color: #4b5563; color: #ffffff; font-weight: bold; border: 1px solid #d1d5db; padding: 10px; text-align: left; }
+          td { background-color: #ffffff; color: #111827; border: 1px solid #d1d5db; padding: 8px 10px; text-align: left; }
+          tr:nth-child(even) td { background-color: #f9fafb; }
+        </style>
+      </head>
+      <body>
+        <div class="header-banner">
+          <h2 style="margin:0; color:#ffffff;">Reporte de Cuentas por Pagar - Frenyer ERP</h2>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>Documento</th>
+              <th>Proveedor</th>
+              <th>RIF/Doc</th>
+              <th>Concepto</th>
+              <th>Origen</th>
+              <th>Fecha Emisión</th>
+              <th>Fecha Vencimiento</th>
+              <th>Total USD</th>
+              <th>Abonado USD</th>
+              <th>Saldo Pendiente USD</th>
+              <th>Estado</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${filteredPayables.map(p => `
+              <tr>
+                <td>${p.doc_number}</td>
+                <td>${p.supplier_name}</td>
+                <td>${p.supplier_doc || ''}</td>
+                <td>${p.concept}</td>
+                <td>${p.origin}</td>
+                <td>${p.issue_date}</td>
+                <td>${p.due_date}</td>
+                <td>$${p.total_amount.toFixed(2)}</td>
+                <td>$${p.paid_amount.toFixed(2)}</td>
+                <td>$${p.remaining_amount.toFixed(2)}</td>
+                <td>${p.status}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </body>
+      </html>
+    `;
+    const blob = new Blob([htmlTable], { type: 'application/vnd.ms-excel;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
-    link.setAttribute('href', encodedUri);
-    link.setAttribute('download', `Reporte_Cuentas_Por_Pagar_${new Date().toISOString().slice(0, 10)}.csv`);
+    link.href = url;
+    link.setAttribute('download', `cuentas_por_pagar_${new Date().toISOString().slice(0, 10)}.xls`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
-    showToast('Reporte descargado exitosamente.', 'success');
+    showToast('Archivo Excel (.xls) generado con éxito.');
   };
 
   const now = new Date();
@@ -775,12 +954,9 @@ export function AccountsPayable() {
       {/* Header Section */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
         <div>
-          <h1 style={{ fontSize: 22, fontWeight: 800, color: '#0f172a', margin: '0 0 4px' }}>
+          <h1 style={{ fontSize: 22, fontWeight: 800, color: '#0f172a', margin: '0' }}>
             Cuentas por pagar
           </h1>
-          <p style={{ margin: 0, color: '#64748b', fontSize: 13 }}>
-            Saldos, vencimientos e historial de pagos a proveedores (Bimonetario USD / VES — Tasa BCV: {activeRate.toFixed(2)} Bs/$)
-          </p>
         </div>
         <div style={{ display: 'flex', gap: 10 }}>
           <button
@@ -1042,152 +1218,274 @@ export function AccountsPayable() {
             </h3>
           </div>
 
-          {filteredPayables.length === 0 ? (
+          {groupedSuppliers.length === 0 ? (
             <div className="empty" style={{ padding: '48px 0', textAlign: 'center', color: '#94a3b8', fontSize: 13 }}>
               No se encontraron cuentas por pagar que coincidan con los filtros aplicados.
             </div>
           ) : (
-            <div className="table-wrap">
-              <table className="table" style={{ fontSize: 12 }}>
-                <thead>
-                  <tr>
-                    <th>Documento / Proveedor</th>
-                    <th>Concepto</th>
-                    <th>Vencimiento</th>
-                    <th className="num">Pendiente</th>
-                    <th style={{ textAlign: 'center' }}>Estado</th>
-                    <th style={{ textAlign: 'right' }}>Acción</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filteredPayables.map((pay) => {
-                    const isSelected = selectedPayable?.id === pay.id;
-                    const isOverdue = pay.status === 'Vencida' || (pay.remaining_amount > 0 && pay.due_date && new Date(pay.due_date) < now);
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              {groupedSuppliers.map((sup) => {
+                const isExpanded = expandedSuppliers.has(sup.supplierName);
+                const now = new Date();
 
-                    return (
-                      <tr
-                        key={pay.id}
-                        onClick={() => setSelectedPayable(pay)}
-                        style={{ cursor: 'pointer', background: isSelected ? '#f5f3ff' : 'transparent' }}
+                return (
+                  <div
+                    key={sup.supplierName}
+                    style={{
+                      border: '1px solid var(--border)',
+                      borderRadius: 12,
+                      overflow: 'hidden',
+                      background: '#fff'
+                    }}
+                  >
+                    {/* Supplier Header Row */}
+                    <div
+                      style={{
+                        padding: '14px 18px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        background: isExpanded ? '#faf5ff' : '#fff',
+                        borderBottom: isExpanded ? '1px solid #ede9fe' : 'none'
+                      }}
+                    >
+                      <div
+                        onClick={() => {
+                          if (sup.payables.length > 0) {
+                            setSelectedPayable(sup.payables[0]);
+                          }
+                        }}
+                        style={{ display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer' }}
+                        title="Toca para ver transacción en el panel lateral"
                       >
-                        <td>
+                        <div
+                          style={{
+                            width: 38,
+                            height: 38,
+                            borderRadius: 10,
+                            background: isExpanded ? '#7c3aed' : '#f1f5f9',
+                            color: isExpanded ? '#fff' : '#475569',
+                            display: 'grid',
+                            placeItems: 'center',
+                            fontWeight: 800,
+                            fontSize: 14,
+                            flexShrink: 0
+                          }}
+                        >
+                          <Truck size={18} />
+                        </div>
+                        <div>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                            <div
-                              style={{
-                                width: 28,
-                                height: 28,
-                                borderRadius: 6,
-                                background: '#f1f5f9',
-                                color: '#475569',
-                                display: 'grid',
-                                placeItems: 'center',
-                                flexShrink: 0
-                              }}
-                            >
-                              <Truck size={14} />
-                            </div>
-                            <div>
-                              <div style={{ fontWeight: 800, color: '#0f172a' }}>{pay.supplier_name}</div>
-                              <span style={{ fontSize: 11, fontFamily: 'monospace', color: '#7c3aed', fontWeight: 600 }}>
-                                {pay.doc_number}
-                              </span>
-                            </div>
-                          </div>
-                        </td>
-
-                        <td>
-                          <div style={{ fontWeight: 600, color: '#334155', maxWidth: 220, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                            {pay.concept}
-                          </div>
-                          <span style={{ fontSize: 10, color: '#94a3b8' }}>
-                            {pay.origin}
-                          </span>
-                        </td>
-
-                        <td>
-                          <div style={{ fontWeight: 600, color: '#334155' }}>
-                            {pay.due_date ? pay.due_date : 'Sin vencimiento'}
-                          </div>
-                          {isOverdue && pay.remaining_amount > 0 && (
-                            <span style={{ fontSize: 10, color: '#b91c1c', fontWeight: 700 }}>
-                              ⚠️ Vencida
+                            <span style={{ fontSize: 15, fontWeight: 800, color: '#0f172a' }}>
+                              {sup.supplierName}
                             </span>
-                          )}
-                        </td>
-
-                        <td className="num">
-                          <div style={{ fontWeight: 800, color: pay.remaining_amount > 0 ? '#b91c1c' : '#059669' }}>
-                            {formatUSD(pay.remaining_amount, '$ ')}
+                            {sup.supplierDoc && (
+                              <span style={{ fontSize: 11, fontFamily: 'monospace', color: '#64748b' }}>
+                                ({sup.supplierDoc})
+                              </span>
+                            )}
                           </div>
-                          <span style={{ fontSize: 11, color: '#64748b', display: 'block' }}>
-                            {formatVES(pay.remaining_amount * activeRate)}
-                          </span>
-                        </td>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 2 }}>
+                            <span style={{ fontSize: 12, color: '#64748b', fontWeight: 500 }}>
+                              {sup.payables.length} {sup.payables.length === 1 ? 'documento' : 'documentos'}
+                            </span>
+                            <span style={{ fontSize: 11, color: '#cbd5e1' }}>•</span>
+                            {sup.pendingCount > 0 ? (
+                              <span style={{ fontSize: 11, color: '#b91c1c', fontWeight: 700 }}>
+                                {sup.pendingCount} pendiente{sup.pendingCount > 1 ? 's' : ''}
+                              </span>
+                            ) : (
+                              <span style={{ fontSize: 11, color: '#059669', fontWeight: 700 }}>
+                                Todas canceladas (al día)
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
 
-                        <td style={{ textAlign: 'center' }}>
-                          <span
+                      {/* Financial Totals & Accordion Chevron */}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 20 }}>
+                        <div style={{ textAlign: 'right' }}>
+                          <div style={{ fontSize: 14, fontWeight: 800, color: sup.totalPending > 0 ? '#0f172a' : '#059669' }}>
+                            Saldo: {formatUSD(sup.totalPending, '$ ')}
+                          </div>
+                          <div style={{ fontSize: 11, color: '#64748b' }}>
+                            {formatVES(sup.totalPending * activeRate)}
+                          </div>
+                        </div>
+
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <Badge
+                            tone={
+                              sup.status === 'Pagada'
+                                ? 'success'
+                                : sup.status === 'Parcial'
+                                ? 'warning'
+                                : sup.status === 'Vencida'
+                                ? 'danger'
+                                : 'brand'
+                            }
+                          >
+                            {sup.status}
+                          </Badge>
+
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              toggleSupplierAccordion(sup.supplierName);
+                            }}
+                            aria-label={isExpanded ? 'Contraer documentos del proveedor' : 'Desplegar documentos del proveedor'}
+                            title={isExpanded ? 'Clic en la flecha para contraer' : 'Clic en la flecha para desplegar'}
                             style={{
-                              display: 'inline-block',
-                              padding: '2px 8px',
-                              borderRadius: 6,
-                              fontSize: 11,
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: 6,
+                              padding: '6px 10px',
+                              borderRadius: 8,
+                              background: isExpanded ? '#ede9fe' : '#f1f5f9',
+                              color: isExpanded ? '#7c3aed' : '#475569',
+                              border: '1px solid',
+                              borderColor: isExpanded ? '#c4b5fd' : '#cbd5e1',
+                              cursor: 'pointer',
+                              fontSize: 12,
                               fontWeight: 700,
-                              background:
-                                pay.status === 'Pagada'
-                                  ? '#dcfce7'
-                                  : pay.status === 'Vencida'
-                                  ? '#fee2e2'
-                                  : pay.status === 'Parcial'
-                                  ? '#dbeafe'
-                                  : '#fef3c7',
-                              color:
-                                pay.status === 'Pagada'
-                                  ? '#166534'
-                                  : pay.status === 'Vencida'
-                                  ? '#991b1b'
-                                  : pay.status === 'Parcial'
-                                  ? '#1e40af'
-                                  : '#92400e'
+                              transition: 'all 0.15s ease'
                             }}
                           >
-                            {pay.status.toUpperCase()}
-                          </span>
-                        </td>
+                            <span style={{ fontSize: 11 }}>{isExpanded ? 'Ocultar' : 'Desplegar'}</span>
+                            {isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
 
-                        <td style={{ textAlign: 'right' }}>
-                          {pay.remaining_amount > 0 ? (
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setSelectedPayable(pay);
-                                setPayAmount(pay.remaining_amount.toString());
-                                setIsPayModalOpen(true);
-                              }}
-                              style={{
-                                height: 28,
-                                padding: '0 10px',
-                                borderRadius: 6,
-                                background: '#7c3aed',
-                                color: '#fff',
-                                border: 'none',
-                                fontSize: 11,
-                                fontWeight: 700,
-                                cursor: 'pointer'
-                              }}
-                            >
-                              Abonar
-                            </button>
-                          ) : (
-                            <span style={{ fontSize: 11, fontWeight: 700, color: '#059669' }}>
-                              ✓ Cancelada
-                            </span>
-                          )}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+                    {/* Expanded Payables of this Supplier */}
+                    {isExpanded && (
+                      <div style={{ background: '#f8fafc', padding: '12px 16px', borderTop: '1px solid #ede9fe' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8, padding: '0 4px' }}>
+                          <span style={{ fontSize: 11, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                            Facturas y documentos de {sup.supplierName}:
+                          </span>
+                          <span style={{ fontSize: 11, color: '#7c3aed', fontWeight: 600 }}>
+                            Toca un documento para inspeccionar su historial de pagos ➔
+                          </span>
+                        </div>
+
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                          {sup.payables.map((pay) => {
+                            const isSelected = selectedPayable?.id === pay.id;
+
+                            return (
+                              <div
+                                key={pay.id}
+                                onClick={() => setSelectedPayable(pay)}
+                                style={{
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'space-between',
+                                  padding: '12px 14px',
+                                  borderRadius: 10,
+                                  background: isSelected ? '#f5f3ff' : '#fff',
+                                  border: isSelected ? '2px solid #7c3aed' : '1px solid var(--border)',
+                                  cursor: 'pointer',
+                                  boxShadow: isSelected ? '0 4px 12px rgba(124,58,237,0.12)' : 'none',
+                                  transition: 'all 0.15s ease'
+                                }}
+                              >
+                                <div>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                    <span style={{ fontSize: 12, fontFamily: 'monospace', fontWeight: 800, color: '#7c3aed', background: '#f3e8ff', padding: '2px 6px', borderRadius: 4 }}>
+                                      {pay.doc_number}
+                                    </span>
+                                    <span style={{ fontSize: 13, fontWeight: 700, color: '#0f172a' }}>
+                                      {pay.concept}
+                                    </span>
+                                  </div>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 4, fontSize: 11, color: '#64748b' }}>
+                                    <span>Vence: <b>{pay.due_date || 'Sin fecha'}</b></span>
+                                    <span>•</span>
+                                    <span>Total: <b>{formatUSD(pay.total_amount)}</b></span>
+                                  </div>
+                                </div>
+
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+                                  <div style={{ textAlign: 'right' }}>
+                                    <div style={{ fontSize: 13, fontWeight: 800, color: pay.remaining_amount > 0 ? '#b91c1c' : '#059669' }}>
+                                      Pendiente: {formatUSD(pay.remaining_amount, '$ ')}
+                                    </div>
+                                    <span style={{ fontSize: 10, color: '#64748b' }}>
+                                      {formatVES(pay.remaining_amount * activeRate)}
+                                    </span>
+                                  </div>
+
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                    <span
+                                      style={{
+                                        display: 'inline-block',
+                                        padding: '2px 8px',
+                                        borderRadius: 6,
+                                        fontSize: 10,
+                                        fontWeight: 700,
+                                        background:
+                                          pay.status === 'Pagada'
+                                            ? '#dcfce7'
+                                            : pay.status === 'Vencida'
+                                            ? '#fee2e2'
+                                            : pay.status === 'Parcial'
+                                            ? '#dbeafe'
+                                            : '#fef3c7',
+                                        color:
+                                          pay.status === 'Pagada'
+                                            ? '#166534'
+                                            : pay.status === 'Vencida'
+                                            ? '#991b1b'
+                                            : pay.status === 'Parcial'
+                                            ? '#1e40af'
+                                            : '#92400e'
+                                      }}
+                                    >
+                                      {pay.status.toUpperCase()}
+                                    </span>
+
+                                    {pay.remaining_amount > 0 ? (
+                                      <button
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          setSelectedPayable(pay);
+                                          setPayAmount(pay.remaining_amount.toString());
+                                          setIsPayModalOpen(true);
+                                        }}
+                                        style={{
+                                          height: 28,
+                                          padding: '0 10px',
+                                          borderRadius: 6,
+                                          background: '#7c3aed',
+                                          color: '#fff',
+                                          border: 'none',
+                                          fontSize: 11,
+                                          fontWeight: 700,
+                                          cursor: 'pointer'
+                                        }}
+                                      >
+                                        Abonar
+                                      </button>
+                                    ) : (
+                                      <span style={{ fontSize: 11, fontWeight: 700, color: '#059669' }}>
+                                        ✓ Cancelada
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>

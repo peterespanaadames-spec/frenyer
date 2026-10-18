@@ -222,9 +222,8 @@ export function Accounts() {
 
       setAccounts(mapped);
 
-      // Auto-expandir todos los clientes reales encontrados en Supabase
-      const allClientNames = Array.from(new Set(mapped.map(m => m.customer_name)));
-      setExpandedClients(new Set(allClientNames));
+      // Los clientes inician contraídos por defecto; solo se despliegan al hacer clic en la flecha
+      setExpandedClients(new Set());
 
       setSelectedAccount(prev => {
         if (!prev) {
@@ -325,13 +324,6 @@ export function Accounts() {
       return a.clientName.localeCompare(b.clientName);
     });
   }, [filteredAccounts]);
-
-  // Auto-expand on search
-  useEffect(() => {
-    if (searchTerm.trim().length > 1) {
-      setExpandedClients(new Set(groupedClients.map(g => g.clientName)));
-    }
-  }, [searchTerm, groupedClients]);
 
   // Toggle client accordion
   const toggleClientAccordion = (clientName: string) => {
@@ -609,7 +601,7 @@ export function Accounts() {
         </style>
       </head>
       <body>
-        <h2>Frenyer ERP - Resumen Consolidado de Cuentas por Cobrar</h2>
+        <h2>Frenyer ERP - Cuentas por Cobrar</h2>
         <p>Generado el: ${new Date().toLocaleString()} | Total de clientes: ${groupedClients.length} | Órdenes: ${filteredAccounts.length}</p>
         <table>
           <thead>
@@ -697,9 +689,7 @@ export function Accounts() {
           <h1 style={{ fontSize: 22, fontWeight: 800, color: '#0f172a', margin: '0 0 4px' }}>
             Cuentas por cobrar
           </h1>
-          <p style={{ margin: 0, color: '#64748b', fontSize: 13 }}>
-            Resumen consolidado por cliente, desglose de órdenes y trazabilidad exacta de cancelación en Supabase.
-          </p>
+
         </div>
         <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
           <button
@@ -1047,9 +1037,7 @@ export function Accounts() {
                   )}
                 </h3>
                 <span style={{ fontSize: 12, color: '#64748b' }}>
-                  {viewMode === 'grouped'
-                    ? 'Haz clic en cualquier cliente para desplegar sus órdenes específicas; toca una orden para inspeccionar cómo se canceló.'
-                    : 'Listado plano de todas las órdenes por cobrar registradas.'}
+                  {viewMode === 'flat' ? 'Listado plano de todas las órdenes por cobrar registradas.' : ''}
                 </span>
               </div>
             </div>
@@ -1080,18 +1068,24 @@ export function Accounts() {
                     >
                       {/* Client Header Row */}
                       <div
-                        onClick={() => toggleClientAccordion(client.clientName)}
                         style={{
                           padding: '14px 18px',
                           display: 'flex',
                           alignItems: 'center',
                           justifyContent: 'space-between',
-                          cursor: 'pointer',
                           background: isExpanded ? '#faf5ff' : '#fff',
                           borderBottom: isExpanded ? '1px solid #ede9fe' : 'none'
                         }}
                       >
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                        <div
+                          onClick={() => {
+                            if (client.orders.length > 0) {
+                              setSelectedAccount(client.orders[0]);
+                            }
+                          }}
+                          title="Toca para ver orden en el panel lateral"
+                          style={{ display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer' }}
+                        >
                           {/* Client Avatar / Initial */}
                           <div
                             style={{
@@ -1165,21 +1159,32 @@ export function Accounts() {
                               {client.status}
                             </Badge>
 
+                            {/* Botón flecha de desplegar - Despliega u oculta las órdenes */}
                             <button
                               type="button"
-                              aria-label="Alternar despliegue de órdenes"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                toggleClientAccordion(client.clientName);
+                              }}
+                              aria-label={isExpanded ? 'Contraer órdenes del cliente' : 'Desplegar órdenes del cliente'}
+                              title={isExpanded ? 'Clic en la flecha para contraer' : 'Clic en la flecha para desplegar'}
                               style={{
-                                width: 28,
-                                height: 28,
-                                borderRadius: 6,
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: 6,
+                                padding: '6px 10px',
+                                borderRadius: 8,
                                 background: isExpanded ? '#ede9fe' : '#f1f5f9',
-                                color: isExpanded ? '#7c3aed' : '#64748b',
-                                border: 'none',
-                                display: 'grid',
-                                placeItems: 'center',
-                                cursor: 'pointer'
+                                color: isExpanded ? '#7c3aed' : '#475569',
+                                border: '1px solid',
+                                borderColor: isExpanded ? '#c4b5fd' : '#cbd5e1',
+                                cursor: 'pointer',
+                                fontSize: 12,
+                                fontWeight: 700,
+                                transition: 'all 0.15s ease'
                               }}
                             >
+                              <span style={{ fontSize: 11 }}>{isExpanded ? 'Ocultar' : 'Desplegar'}</span>
                               {isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
                             </button>
                           </div>
@@ -1469,14 +1474,9 @@ export function Accounts() {
             }}
           >
             <Clock size={18} style={{ color: '#7c3aed' }} />
-            <div>
-              <h3 style={{ margin: 0, fontSize: 15, fontWeight: 800, color: '#0f172a' }}>
-                Historial tal cual se canceló
-              </h3>
-              <span style={{ fontSize: 11, color: '#64748b' }}>
-                Auditoría detallada de pagos, abonos y bancos
-              </span>
-            </div>
+            <h3 style={{ margin: 0, fontSize: 15, fontWeight: 800, color: '#0f172a' }}>
+              Historial tal cual se canceló
+            </h3>
           </div>
 
           {!selectedAccount ? (
@@ -1725,9 +1725,6 @@ export function Accounts() {
                   <div>
                     <div style={{ fontSize: 13, fontWeight: 800, color: '#065f46' }}>
                       Orden completamente liquidada
-                    </div>
-                    <div style={{ fontSize: 11, color: '#047857' }}>
-                      No existe saldo pendiente por cobrar para este documento.
                     </div>
                   </div>
                 </div>

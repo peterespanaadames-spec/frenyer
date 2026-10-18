@@ -1058,7 +1058,7 @@ export async function updateProductStockInSupabase(sku: string, newStock: number
 export async function recordSaleInSupabase(
   sale: DbSale,
   items: DbSaleItem[],
-  payments: Array<{ method: string; amount_usd: number; amount_ves: number; exchange_rate: number }>
+  payments: Array<{ method: string; amount_usd: number; amount_ves: number; exchange_rate: number; bank_account_id?: string | null; reference?: string | null }>
 ): Promise<{ success: boolean; saleId?: string; error?: string }> {
   try {
     const organizationId = sale.organization_id || await getActiveOrgId();
@@ -1274,18 +1274,53 @@ export async function recordSaleInSupabase(
       }
     }
 
-    // 5. If Crédito, insert into accounts_receivable
+    // 5. If Crédito, insert into accounts_receivable with support for initial capital abono
     if (sale.payment_type === 'CREDITO' && sale.customer_id) {
-      await supabase
+      const isValidUuid = (val?: string | null) => typeof val === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val);
+      const totalPaidUsd = (payments || []).reduce((sum, p) => sum + (Number(p.amount_usd) || 0), 0);
+      const remainingBalanceUsd = Math.max(0, Math.round(((Number(sale.total_usd) || 0) - totalPaidUsd) * 100) / 100);
+      const cxcStatus = remainingBalanceUsd <= 0.01 ? 'PAGADA' : (totalPaidUsd > 0.01 ? 'PARCIAL' : 'PENDIENTE');
+
+      const { data: recDataRows, error: recError } = await supabase
         .from('accounts_receivable')
         .insert([{
+          organization_id: organizationId,
           customer_id: sale.customer_id,
           sale_id: saleId,
           doc_number: sale.doc_number,
           total_usd: sale.total_usd,
-          balance_usd: sale.total_usd,
-          status: 'PENDIENTE'
-        }]);
+          balance_usd: remainingBalanceUsd,
+          status: cxcStatus
+        }])
+        .select();
+
+      if (recError) {
+        console.warn('Aviso insertando en accounts_receivable:', recError.message);
+      }
+
+      const recData = Array.isArray(recDataRows) ? recDataRows[0] : recDataRows;
+
+      // Si el cliente abonó algo de capital inicial, registrarlo de inmediato en receivable_payments
+      if (recData?.id && totalPaidUsd > 0) {
+        for (const p of payments) {
+          try {
+            await supabase
+              .from('receivable_payments')
+              .insert([{
+                receivable_id: recData.id,
+                bank_account_id: isValidUuid((p as any).bank_account_id) ? (p as any).bank_account_id : null,
+                amount_usd: p.amount_usd,
+                amount_ves: p.amount_ves,
+                exchange_rate: p.exchange_rate,
+                payment_method: p.method,
+                reference: (p as any).reference || sale.doc_number,
+                payment_date: new Date().toISOString()
+              }]);
+          } catch (rPayErr: any) {
+            console.warn('Aviso registrando abono inicial en receivable_payments:', rPayErr?.message);
+          }
+        }
+      }
     }
 
     return { success: true, saleId };

@@ -121,7 +121,6 @@ export function Sidebar({ isMobileOpen = false, onNavigate }: SidebarProps) {
       icon: Landmark,
       permissionKey: 'finanzas',
       children: [
-        { label: 'Caja', icon: Banknote, to: '/cuentas/caja' },
         { label: 'Cuentas bancarias', icon: Building, to: '/cuentas/bancos' },
         { label: 'Cuentas por cobrar', icon: Receipt, to: '/cuentas/cobrar' },
         { label: 'Cuentas por pagar', icon: CreditCard, to: '/cuentas/pagar' },
@@ -141,11 +140,6 @@ export function Sidebar({ isMobileOpen = false, onNavigate }: SidebarProps) {
         { label: 'Clientes', icon: User, to: '/contactos/clientes' },
         { label: 'Proveedores', icon: Truck, to: '/contactos/proveedores' },
       ],
-    },
-    {
-      label: 'Marketing',
-      icon: Megaphone,
-      to: '/marketing',
     },
     {
       label: 'Finanzas',
