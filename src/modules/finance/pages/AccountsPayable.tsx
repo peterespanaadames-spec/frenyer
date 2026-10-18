@@ -28,6 +28,7 @@ import { Button } from '../../../components/ui/Button';
 import { Badge } from '../../../components/ui/Badge';
 import { formatUSD, formatVES, getActiveExchangeRate } from '../../../lib/currency';
 import { authenticatedFetch } from '../../../lib/supabase/api';
+import { getReportHeaderHtml } from '../../../lib/reportUtils';
 import {
   fetchSuppliersFromSupabase,
   createSupplierInSupabase,
@@ -779,6 +780,7 @@ export function AccountsPayable() {
       showToast('Permite las ventanas emergentes para generar el PDF.', 'info');
       return;
     }
+
     const htmlContent = `
       <!DOCTYPE html>
       <html>
@@ -800,10 +802,9 @@ export function AccountsPayable() {
         </style>
       </head>
       <body>
-        <div class="header-banner">
-          <h2>Frenyer ERP - Reporte Consolidado de Cuentas por Pagar</h2>
-          <p>Generado el: ${new Date().toLocaleString()} | Proveedores: ${groupedSuppliers.length} | Documentos: ${filteredPayables.length}</p>
-        </div>
+        ${getReportHeaderHtml()}
+        <h3 style="margin-top:0;">Reporte Consolidado de Cuentas por Pagar</h3>
+        <p>Generado el: ${new Date().toLocaleString()} | Proveedores: ${groupedSuppliers.length} | Documentos: ${filteredPayables.length}</p>
         <table>
           <thead>
             <tr>

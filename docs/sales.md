@@ -15,3 +15,4 @@ Módulo encargado de la gestión de ventas del comercio, incluyendo ventas rápi
 ## Guía de Reestructuración / Mantenimiento
 - Para modificar la lógica de emisión, actualizar `handleFinalizeSale` en `Sales.tsx`.
 - Las consultas a la base de datos se manejan mediante `src/lib/supabase/db.ts`. Asegurar siempre el uso de RLS.
+- **Reportes**: Los exportes (Excel/PDF) siguen el estándar: encabezados gris oscuro con letras blancas, datos en celdas blancas/transparentes con texto oscuro. Membrete dinámico con datos del negocio.

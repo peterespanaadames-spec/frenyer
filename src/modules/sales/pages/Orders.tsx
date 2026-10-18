@@ -318,37 +318,72 @@ export function OrdersPage() {
   };
 
   // --- ACTION: EXPORT TO EXCEL (SECCIÓN 11) ---
+  // --- ACTION: EXPORT TO EXCEL (SECCIÓN 11) ---
   const handleExportExcel = () => {
-    try {
-      const dataToExport = filteredOrders.map(o => ({
-        'N.º Pedido': o.order_number,
-        'Fecha': new Date(o.created_at).toLocaleString('es-VE'),
-        'Cliente': o.customer_name,
-        'Teléfono': o.customer_phone || '—',
-        'Cédula/RIF': o.customer_doc || '—',
-        'Método de Entrega': o.delivery_method === 'DOMICILIO' ? 'Entrega a Domicilio' : 'Retiro en Tienda',
-        'Dirección / Sede': o.delivery_address || '—',
-        'Método de Pago': o.payment_method,
-        'Referencia de Pago': o.payment_reference || '—',
-        'Estado de Entrega': o.delivery_status,
-        'Estado del Pago': o.payment_status,
-        'Moneda': o.currency,
-        'Total USD': Number(o.total_usd) || 0,
-        'Total VES': Number(o.total_ves) || 0,
-        'Tasa BCV': Number(o.exchange_rate) || 0,
-        'Fecha Finalización': o.completed_at ? new Date(o.completed_at).toLocaleString('es-VE') : '—'
-      }));
-
-      const ws = XLSX.utils.json_to_sheet(dataToExport);
-      const wb = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(wb, ws, 'Pedidos');
-
-      const dateStr = new Date().toISOString().split('T')[0];
-      XLSX.writeFile(wb, `Frenyer_Control_Pedidos_${dateStr}.xlsx`);
-      showToast('Archivo Excel generado y descargado exitosamente.');
-    } catch (err: any) {
-      showToast(err?.message || 'Error exportando a Excel.', 'info');
+    if (filteredOrders.length === 0) {
+      showToast('No hay pedidos para exportar.', 'info');
+      return;
     }
+    const htmlTable = `
+      <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
+      <head>
+        <meta charset="UTF-8">
+        <style>
+          table { border-collapse: collapse; width: 100%; font-family: Arial, sans-serif; }
+          th { background-color: #4b5563; color: #ffffff; font-weight: bold; border: 1px solid #d1d5db; padding: 10px; text-align: left; }
+          td { color: #000000; border: 1px solid #d1d5db; padding: 8px 10px; text-align: left; }
+        </style>
+      </head>
+      <body>
+        <h2>Reporte de Pedidos - Frenyer ERP</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>N.º Pedido</th>
+              <th>Fecha</th>
+              <th>Cliente</th>
+              <th>Teléfono</th>
+              <th>Cédula/RIF</th>
+              <th>Método de Entrega</th>
+              <th>Dirección / Sede</th>
+              <th>Método de Pago</th>
+              <th>Referencia</th>
+              <th>Estado Entrega</th>
+              <th>Estado Pago</th>
+              <th>Total USD</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${filteredOrders.map(o => `
+              <tr>
+                <td>${o.order_number}</td>
+                <td>${new Date(o.created_at).toLocaleString('es-VE')}</td>
+                <td>${o.customer_name}</td>
+                <td>${o.customer_phone || '—'}</td>
+                <td>${o.customer_doc || '—'}</td>
+                <td>${o.delivery_method === 'DOMICILIO' ? 'Entrega a Domicilio' : 'Retiro en Tienda'}</td>
+                <td>${o.delivery_address || '—'}</td>
+                <td>${o.payment_method}</td>
+                <td>${o.payment_reference || '—'}</td>
+                <td>${o.delivery_status}</td>
+                <td>${o.payment_status}</td>
+                <td>$${Number(o.total_usd).toFixed(2)}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </body>
+      </html>
+    `;
+    const blob = new Blob([htmlTable], { type: 'application/vnd.ms-excel;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', `Pedidos_Control_${new Date().toISOString().slice(0, 10)}.xls`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    showToast('Archivo Excel (.xls) generado con estilo personalizado.');
   };
 
   // --- ACTION: CREATE MANUAL ORDER ---

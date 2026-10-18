@@ -555,12 +555,52 @@ export function Accounts() {
       showToast('No hay cuentas para exportar.', 'info');
       return;
     }
-    const headers = 'Cliente,Orden / Documento,Concepto,Monto Total (USD),Pagado (USD),Saldo Pendiente (USD),Fecha Emisión,Fecha Vencimiento,Estado\n';
-    const rows = filteredAccounts.map(acc =>
-      `"${acc.customer_name}","${acc.doc_number}","${acc.concept}",${acc.total_amount},${acc.paid_amount},${acc.remaining_amount},"${acc.issue_date}","${acc.due_date}","${acc.status}"`
-    ).join('\n');
-
-    const blob = new Blob([headers + rows], { type: 'application/vnd.ms-excel;charset=utf-8;' });
+    const htmlTable = `
+      <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
+      <head>
+        <meta charset="UTF-8">
+        <style>
+          table { border-collapse: collapse; width: 100%; font-family: Arial, sans-serif; }
+          th { background-color: #4b5563; color: #ffffff; font-weight: bold; border: 1px solid #d1d5db; padding: 10px; text-align: left; }
+          td { color: #000000; border: 1px solid #d1d5db; padding: 8px 10px; text-align: left; }
+        </style>
+      </head>
+      <body>
+        <h2>Reporte de Cuentas por Cobrar - Frenyer ERP</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>Cliente</th>
+              <th>Orden / Doc</th>
+              <th>Concepto</th>
+              <th>Total ($)</th>
+              <th>Pagado ($)</th>
+              <th>Saldo Pendiente ($)</th>
+              <th>Fecha Emisión</th>
+              <th>Fecha Vencimiento</th>
+              <th>Estado</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${filteredAccounts.map(acc => `
+              <tr>
+                <td>${acc.customer_name}</td>
+                <td>${acc.doc_number}</td>
+                <td>${acc.concept}</td>
+                <td>$${acc.total_amount.toFixed(2)}</td>
+                <td>$${acc.paid_amount.toFixed(2)}</td>
+                <td>$${acc.remaining_amount.toFixed(2)}</td>
+                <td>${acc.issue_date}</td>
+                <td>${acc.due_date}</td>
+                <td>${acc.status}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </body>
+      </html>
+    `;
+    const blob = new Blob([htmlTable], { type: 'application/vnd.ms-excel;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
@@ -568,7 +608,7 @@ export function Accounts() {
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
-    showToast('Reporte XLS exportado con éxito.');
+    showToast('Archivo Excel (.xls) generado con estilo personalizado.');
   };
 
   const handleExportPDF = () => {

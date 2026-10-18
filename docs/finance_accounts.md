@@ -15,3 +15,4 @@ Gestión de cuentas bancarias, cuentas por cobrar (CxC) y cuentas por pagar (CxP
 ## Guía de Reestructuración / Mantenimiento
 - Las operaciones de pago deben ser transaccionales para asegurar la integridad con `bank_movements`.
 - Para personalizar exportes, modificar `handleExportPDF` y `handleExportXLS` en los archivos correspondientes.
+- **Reportes**: Los exportes (Excel/PDF) siguen el estándar: encabezados gris oscuro con letras blancas, datos en celdas blancas/transparentes con texto oscuro. Membrete dinámico con datos del negocio.
