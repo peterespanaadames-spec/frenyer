@@ -36,6 +36,8 @@ import {
 import { Card } from '../../../components/ui/Card';
 import { Button } from '../../../components/ui/Button';
 import { Badge } from '../../../components/ui/Badge';
+import { getReportHeaderHtml } from '../../../lib/reportUtils';
+import { getBusinessProfile } from '../../../lib/businessProfile';
 import { EmptyState } from '../../../components/ui/EmptyState';
 import {
   getActiveExchangeRate,
@@ -324,18 +326,27 @@ export function OrdersPage() {
       showToast('No hay pedidos para exportar.', 'info');
       return;
     }
+    const business = getBusinessProfile();
     const htmlTable = `
       <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
       <head>
         <meta charset="UTF-8">
         <style>
-          table { border-collapse: collapse; width: 100%; font-family: Arial, sans-serif; }
-          th { background-color: #4b5563; color: #ffffff; font-weight: bold; border: 1px solid #d1d5db; padding: 10px; text-align: left; }
-          td { color: #000000; border: 1px solid #d1d5db; padding: 8px 10px; text-align: left; }
+          body { font-family: Arial, sans-serif; color: #000000; background-color: #ffffff; }
+          .header-banner { background-color: #f1f5f9; color: #000000; padding: 14px; margin-bottom: 15px; border: 1px solid #cbd5e1; }
+          .header-banner h2 { color: #000000; margin: 0 0 4px; font-size: 18px; font-weight: bold; }
+          .header-banner p { color: #000000; font-size: 12px; margin: 0 0 2px; }
+          table { border-collapse: collapse; width: 100%; font-family: Arial, sans-serif; color: #000000; }
+          th { background-color: #e2e8f0; color: #000000; font-weight: bold; border: 1px solid #cbd5e1; padding: 10px; text-align: left; }
+          td { color: #000000; border: 1px solid #cbd5e1; padding: 8px 10px; text-align: left; background-color: #ffffff; }
         </style>
       </head>
       <body>
-        <h2>Reporte de Pedidos - Frenyer ERP</h2>
+        <div class="header-banner">
+          <h2>${business.businessName}</h2>
+          <p>RIF: ${business.rif} | Tel: ${business.phone}${business.address ? ` | Dirección: ${business.address}` : ''}</p>
+          <p><b>Reporte de Pedidos</b> | Generado el: ${new Date().toLocaleString('es-VE')}</p>
+        </div>
         <table>
           <thead>
             <tr>
@@ -383,7 +394,7 @@ export function OrdersPage() {
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
-    showToast('Archivo Excel (.xls) generado con estilo personalizado.');
+    showToast('Archivo Excel (.xls) generado con texto en color negro.');
   };
 
   // --- ACTION: CREATE MANUAL ORDER ---

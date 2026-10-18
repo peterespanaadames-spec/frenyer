@@ -14,8 +14,9 @@ import {
 import { Card } from '../../../components/ui/Card';
 import { Button } from '../../../components/ui/Button';
 import { Badge } from '../../../components/ui/Badge';
-import { supabase } from '../../../lib/supabase/client';
 import { formatUSD, formatVES, getActiveExchangeRate } from '../../../lib/currency';
+import { getBusinessProfile } from '../../../lib/businessProfile';
+import { supabase } from '../../../lib/supabase/client';
 
 interface SaleItemDetail {
   id: string;
@@ -285,6 +286,25 @@ export function SaleDetailPage({ saleId: propSaleId, onBack }: SaleDetailPagePro
         </Card>
       ) : data ? (
         <div className="space-y-6">
+          {/* Membrete del Negocio Registrado */}
+          {(() => {
+            const business = getBusinessProfile();
+            return (
+              <div style={{ background: '#4b5563', color: '#ffffff', padding: '16px 20px', borderRadius: 'var(--radius-lg)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
+                <div>
+                  <div style={{ fontSize: 18, fontWeight: 800 }}>{business.businessName}</div>
+                  <div style={{ fontSize: 12, color: '#e5e7eb', marginTop: 2 }}>
+                    RIF: {business.rif} | Tel: {business.phone}{business.address ? ` | Dirección: ${business.address}` : ''}
+                  </div>
+                </div>
+                <div style={{ textAlign: 'right' }}>
+                  <div style={{ fontSize: 14, fontWeight: 700 }}>{docInfo.label} #{displayDocNum}</div>
+                  <div style={{ fontSize: 11, color: '#d1d5db' }}>{data.created_at ? new Date(data.created_at).toLocaleString() : ''}</div>
+                </div>
+              </div>
+            );
+          })()}
+
           {/* Ficha 1: Información General y Datos Fiscales */}
           <Card>
             <div className="section-head mb-4">

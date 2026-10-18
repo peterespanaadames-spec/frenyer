@@ -27,14 +27,15 @@ import { Card } from '../../../components/ui/Card';
 import { Button } from '../../../components/ui/Button';
 import { Badge } from '../../../components/ui/Badge';
 import { formatUSD, formatVES, getActiveExchangeRate } from '../../../lib/currency';
-import { authenticatedFetch } from '../../../lib/supabase/api';
-import { getReportHeaderHtml } from '../../../lib/reportUtils';
+import { getReportHeaderHtml, getReportFooterHtml } from '../../../lib/reportUtils';
+import { getBusinessProfile } from '../../../lib/businessProfile';
 import {
   fetchSuppliersFromSupabase,
   createSupplierInSupabase,
   getActiveOrgId,
   DbSupplier
 } from '../../../lib/supabase/db';
+import { authenticatedFetch } from '../../../lib/supabase/api';
 
 export interface PayablePayment {
   id: string;
@@ -781,11 +782,12 @@ export function AccountsPayable() {
       return;
     }
 
+    const business = getBusinessProfile();
     const htmlContent = `
       <!DOCTYPE html>
       <html>
       <head>
-        <title>Reporte de Cuentas por Pagar - Frenyer ERP</title>
+        <title>Reporte de Cuentas por Pagar - ${business.businessName}</title>
         <style>
           body { font-family: Arial, sans-serif; margin: 20px; background: #ffffff; color: #111827; }
           .header-banner { background-color: #4b5563; color: #ffffff; padding: 16px; border-radius: 6px; margin-bottom: 20px; }
@@ -802,9 +804,7 @@ export function AccountsPayable() {
         </style>
       </head>
       <body>
-        ${getReportHeaderHtml()}
-        <h3 style="margin-top:0;">Reporte Consolidado de Cuentas por Pagar</h3>
-        <p>Generado el: ${new Date().toLocaleString()} | Proveedores: ${groupedSuppliers.length} | Documentos: ${filteredPayables.length}</p>
+        ${getReportHeaderHtml('Reporte Consolidado de Cuentas por Pagar', `Generado el: ${new Date().toLocaleString()} | Proveedores: ${groupedSuppliers.length} | Documentos: ${filteredPayables.length}`)}
         <table>
           <thead>
             <tr>
@@ -837,7 +837,7 @@ export function AccountsPayable() {
             `).join('')}
           </tbody>
         </table>
-        <div class="footer">Frenyer ERP Bimonetario · Sistema de Gestión Empresarial</div>
+        ${getReportFooterHtml()}
         <script>
           window.onload = function() {
             window.print();
@@ -872,9 +872,7 @@ export function AccountsPayable() {
         </style>
       </head>
       <body>
-        <div class="header-banner">
-          <h2 style="margin:0; color:#ffffff;">Reporte de Cuentas por Pagar - Frenyer ERP</h2>
-        </div>
+        ${getReportHeaderHtml('Reporte Consolidado de Cuentas por Pagar')}
         <table>
           <thead>
             <tr>

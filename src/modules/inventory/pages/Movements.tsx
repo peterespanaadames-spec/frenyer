@@ -42,6 +42,8 @@ import {
   formatUSD,
   formatVES
 } from '../../../lib/currency';
+import { createWorksheetWithBusinessHeader, getReportHeaderHtml, getReportFooterHtml } from '../../../lib/reportUtils';
+import { getBusinessProfile } from '../../../lib/businessProfile';
 import {
   fetchInventoryMovementsFromSupabase,
   recordInventoryAdjustmentInSupabase,
@@ -702,7 +704,7 @@ export function MovementsPage() {
         };
       });
 
-      const worksheet = XLSX.utils.json_to_sheet(exportData);
+      const worksheet = createWorksheetWithBusinessHeader('Kardex de Movimientos de Inventario', exportData);
       const workbook = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(workbook, worksheet, 'Kardex Movimientos');
 
@@ -715,14 +717,103 @@ export function MovementsPage() {
     }
   };
 
-  // Imprimir vista
+  // Imprimir vista / PDF
   const handlePrint = () => {
     setIsExportMenuOpen(false);
     if (filteredMovements.length === 0) {
       showToast('No hay movimientos para imprimir.', 'info');
       return;
     }
-    window.print();
+
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) {
+      showToast('Permite las ventanas emergentes para generar el reporte.', 'error');
+      return;
+    }
+
+    const business = getBusinessProfile();
+    const rowsHtml = filteredMovements.map((m, index) => {
+      const dt = new Date(m.created_at);
+      const fecha = isNaN(dt.getTime()) ? '—' : dt.toLocaleDateString('es-VE');
+      const hora = isNaN(dt.getTime()) ? '—' : dt.toLocaleTimeString('es-VE', { hour: '2-digit', minute: '2-digit' });
+      const unitVal = m.unit_price_usd > 0 ? m.unit_price_usd : m.unit_cost_usd;
+      const rate = Number(m.exchange_rate) || activeRate;
+      const totalUsd = Number(m.total_usd) || 0;
+      const totalVes = Number(m.total_ves) || (totalUsd * rate);
+
+      return `
+        <tr>
+          <td style="text-align: center;">${index + 1}</td>
+          <td>${fecha} ${hora}</td>
+          <td><b>${m.doc_number || '—'}</b></td>
+          <td>${m.movement_type || '—'}</td>
+          <td>${m.sku || '—'}</td>
+          <td>${m.product_name || '—'}</td>
+          <td style="text-align: center; font-weight: bold;">${m.quantity}</td>
+          <td style="text-align: right;">$${Number(unitVal || 0).toFixed(2)}</td>
+          <td style="text-align: right; font-weight: bold;">$${totalUsd.toFixed(2)}</td>
+          <td style="text-align: right;">Bs. ${totalVes.toFixed(2)}</td>
+          <td>${m.warehouseName || 'Almacén Principal'}</td>
+          <td>${m.responsable || 'Sistema'}</td>
+        </tr>
+      `;
+    }).join('');
+
+    const htmlContent = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <title>Kárdex de Movimientos de Inventario - ${business.businessName}</title>
+        <style>
+          body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; color: #000000; padding: 25px; margin: 0; background: #ffffff; }
+          .header-banner { background-color: #4b5563; color: #ffffff; padding: 16px; border-radius: 6px; margin-bottom: 20px; }
+          .header-banner h2 { color: #ffffff; margin: 0 0 4px; font-size: 18px; font-weight: bold; }
+          .header-banner p { color: #e5e7eb; font-size: 12px; margin: 0; }
+          table { width: 100%; border-collapse: collapse; margin-top: 15px; font-size: 11px; }
+          th { background: #4b5563; color: #ffffff; font-weight: bold; border: 1px solid #cbd5e1; padding: 9px 8px; text-align: left; }
+          td { color: #000000; border: 1px solid #cbd5e1; padding: 7px 8px; text-align: left; background-color: #ffffff; }
+          tr:nth-child(even) td { background-color: #f8fafc; }
+          .footer { margin-top: 30px; font-size: 11px; color: #6b7280; text-align: right; }
+          @media print {
+            body { -webkit-print-color-adjust: exact; print-color-adjust: exact; padding: 0; }
+          }
+        </style>
+      </head>
+      <body>
+        ${getReportHeaderHtml('Kárdex de Movimientos de Inventario', `Generado el: ${new Date().toLocaleString()} | Total Registros: ${filteredMovements.length} | Tasa BCV: ${activeRate.toFixed(2)} Bs/USD`)}
+        <table>
+          <thead>
+            <tr>
+              <th style="text-align: center; width: 30px;">#</th>
+              <th>Fecha / Hora</th>
+              <th>Documento</th>
+              <th>Tipo</th>
+              <th>SKU</th>
+              <th>Producto</th>
+              <th style="text-align: center;">Cantidad</th>
+              <th style="text-align: right;">Costo U.</th>
+              <th style="text-align: right;">Total USD</th>
+              <th style="text-align: right;">Total VES</th>
+              <th>Almacén</th>
+              <th>Responsable</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rowsHtml}
+          </tbody>
+        </table>
+        ${getReportFooterHtml()}
+        <script>
+          window.onload = function() {
+            window.print();
+          }
+        </script>
+      </body>
+      </html>
+    `;
+
+    printWindow.document.write(htmlContent);
+    printWindow.document.close();
   };
 
   // Enviar formulario de Ajuste Manual

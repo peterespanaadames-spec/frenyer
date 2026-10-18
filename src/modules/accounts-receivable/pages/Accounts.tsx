@@ -28,6 +28,8 @@ import { Badge } from '../../../components/ui/Badge';
 import { formatUSD, formatVES, getActiveExchangeRate } from '../../../lib/currency';
 import { supabase } from '../../../lib/supabase/client';
 import { authenticatedFetch } from '../../../lib/supabase/api';
+import { getReportHeaderHtml, getReportFooterHtml } from '../../../lib/reportUtils';
+import { getBusinessProfile } from '../../../lib/businessProfile';
 
 interface ReceivableRecord {
   id: string;
@@ -555,18 +557,21 @@ export function Accounts() {
       showToast('No hay cuentas para exportar.', 'info');
       return;
     }
+    const business = getBusinessProfile();
     const htmlTable = `
       <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
       <head>
         <meta charset="UTF-8">
         <style>
+          body { font-family: Arial, sans-serif; }
+          .header-banner { background-color: #4b5563; color: #ffffff; padding: 14px; margin-bottom: 15px; }
           table { border-collapse: collapse; width: 100%; font-family: Arial, sans-serif; }
           th { background-color: #4b5563; color: #ffffff; font-weight: bold; border: 1px solid #d1d5db; padding: 10px; text-align: left; }
           td { color: #000000; border: 1px solid #d1d5db; padding: 8px 10px; text-align: left; }
         </style>
       </head>
       <body>
-        <h2>Reporte de Cuentas por Cobrar - Frenyer ERP</h2>
+        ${getReportHeaderHtml('Reporte de Cuentas por Cobrar')}
         <table>
           <thead>
             <tr>
@@ -624,25 +629,29 @@ export function Accounts() {
       return;
     }
 
+    const business = getBusinessProfile();
     const htmlContent = `
       <!DOCTYPE html>
       <html>
       <head>
-        <title>Reporte de Cuentas por Cobrar - Frenyer ERP</title>
+        <title>Reporte de Cuentas por Cobrar - ${business.businessName}</title>
         <style>
-          body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; color: #1e293b; padding: 30px; margin: 0; }
-          h2 { color: #7c3aed; margin-bottom: 5px; }
-          p { color: #64748b; font-size: 13px; margin-top: 0; }
-          table { width: 100%; border-collapse: collapse; margin-top: 20px; font-size: 12px; }
+          body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; color: #1e293b; padding: 25px; margin: 0; background: #ffffff; }
+          .header-banner { background-color: #4b5563; color: #ffffff; padding: 16px; border-radius: 6px; margin-bottom: 20px; }
+          .header-banner h2 { color: #ffffff; margin: 0 0 4px; font-size: 18px; font-weight: 800; }
+          .header-banner p { color: #e5e7eb; font-size: 12px; margin: 0; }
+          table { width: 100%; border-collapse: collapse; margin-top: 15px; font-size: 12px; }
           th, td { border: 1px solid #cbd5e1; padding: 8px 12px; text-align: left; }
-          th { background: #f1f5f9; color: #334155; font-weight: bold; }
+          th { background: #4b5563; color: #ffffff; font-weight: bold; }
           tr:nth-child(even) { background: #f8fafc; }
           .footer { margin-top: 30px; font-size: 11px; color: #94a3b8; text-align: right; }
+          @media print {
+            body { -webkit-print-color-adjust: exact; print-color-adjust: exact; padding: 0; }
+          }
         </style>
       </head>
       <body>
-        <h2>Frenyer ERP - Cuentas por Cobrar</h2>
-        <p>Generado el: ${new Date().toLocaleString()} | Total de clientes: ${groupedClients.length} | Órdenes: ${filteredAccounts.length}</p>
+        ${getReportHeaderHtml('Reporte de Cuentas por Cobrar', `Generado el: ${new Date().toLocaleString()} | Total de clientes: ${groupedClients.length} | Órdenes: ${filteredAccounts.length}`)}
         <table>
           <thead>
             <tr>
@@ -671,9 +680,7 @@ export function Accounts() {
             `).join('')}
           </tbody>
         </table>
-        <div class="footer">
-          Frenyer ERP Bimonetario · Sistema de Gestión Empresarial
-        </div>
+        ${getReportFooterHtml()}
         <script>
           window.onload = function() {
             window.print();

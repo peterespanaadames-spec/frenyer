@@ -33,6 +33,8 @@ import {
   convertUSDtoVES,
   formatUSD
 } from '../../../lib/currency';
+import { getBusinessProfile } from '../../../lib/businessProfile';
+import { createWorksheetWithBusinessHeader } from '../../../lib/reportUtils';
 import {
   fetchInventoryMovementsFromSupabase,
   fetchProductsFromSupabase,
@@ -395,7 +397,7 @@ export function DailyInventoryReportPage() {
         };
       });
 
-      const worksheet = XLSX.utils.json_to_sheet(dataToExport);
+      const worksheet = createWorksheetWithBusinessHeader('Reporte Diario de Movimientos de Inventario', dataToExport);
       const workbook = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(workbook, worksheet, 'Reporte Diario Inventario');
       const filename = `Reporte_Diario_${periodFilter}_${new Date().toISOString().slice(0, 10)}.xlsx`;
@@ -470,6 +472,7 @@ export function DailyInventoryReportPage() {
 
   // Generador de documento HTML formateado profesional para impresión y PDF
   const buildReportHTML = () => {
+    const business = getBusinessProfile();
     const issueDate = new Date().toLocaleString('es-VE', { dateStyle: 'long', timeStyle: 'short' });
     const periodLabel = periodFilter === 'HOY' ? 'Hoy' : periodFilter === 'SEMANA' ? 'Esta Semana' : periodFilter === 'MES' ? 'Este Mes' : 'Histórico';
     
@@ -511,7 +514,7 @@ export function DailyInventoryReportPage() {
 <html lang="es">
 <head>
   <meta charset="UTF-8">
-  <title>Reporte Diario de Inventario - Frenyer ERP</title>
+  <title>Reporte Diario de Inventario - ${business.businessName}</title>
   <style>
     @page { size: letter landscape; margin: 12mm; }
     * { box-sizing: border-box; }
@@ -601,8 +604,8 @@ export function DailyInventoryReportPage() {
 <body>
   <div class="header">
     <div class="brand">
-      <h1>FRENYER <span>ERP</span></h1>
-      <p>Reporte Diario de Movimientos de Inventario y Kárdex Operativo</p>
+      <h1>${business.businessName}</h1>
+      <p>RIF: ${business.rif} &bull; Tel: ${business.phone}${business.address ? ` &bull; Dirección: ${business.address}` : ''}</p>
     </div>
     <div class="meta">
       <div><b>Fecha de Emisión:</b> ${issueDate}</div>
@@ -658,7 +661,7 @@ export function DailyInventoryReportPage() {
   </table>
 
   <div class="footer">
-    <div>Frenyer ERP · Sistema Bimonetario de Gestión Empresarial</div>
+    <div>${business.businessName} · RIF: ${business.rif} · Tel: ${business.phone}${business.address ? ` · ${business.address}` : ''}</div>
     <div>Documento oficial generado para auditoría y control de existencias</div>
   </div>
 </body>
@@ -708,12 +711,24 @@ export function DailyInventoryReportPage() {
       showToast('No hay movimientos en el reporte para generar o imprimir.', 'info');
       return;
     }
-    // Abre el modal de vista previa del reporte
     setIsPrintModalOpen(true);
-    showToast('Generando reporte diario para impresión / PDF...', 'info');
     const html = buildReportHTML();
-    // Intenta disparar la ventana nativa de impresión
-    printViaHiddenIframe(html);
+    const win = window.open('', '_blank');
+    if (win) {
+      win.document.open();
+      win.document.write(html);
+      win.document.close();
+      win.focus();
+      setTimeout(() => {
+        try {
+          win.print();
+        } catch {
+          // ignore
+        }
+      }, 400);
+    } else {
+      showToast('Permite las ventanas emergentes para generar el reporte.', 'info');
+    }
   };
 
   const handleDownloadReportHTML = () => {
@@ -1571,7 +1586,25 @@ export function DailyInventoryReportPage() {
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <Button
                   variant="primary"
-                  onClick={() => printViaHiddenIframe(buildReportHTML())}
+                  onClick={() => {
+                    const html = buildReportHTML();
+                    const win = window.open('', '_blank');
+                    if (win) {
+                      win.document.open();
+                      win.document.write(html);
+                      win.document.close();
+                      win.focus();
+                      setTimeout(() => {
+                        try {
+                          win.print();
+                        } catch {
+                          // ignore
+                        }
+                      }, 400);
+                    } else {
+                      showToast('Permite las ventanas emergentes para imprimir.', 'info');
+                    }
+                  }}
                   style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
                   title="Abrir cuadro de diálogo de impresión / Guardar como PDF"
                 >
@@ -1626,7 +1659,7 @@ export function DailyInventoryReportPage() {
                 }}>
                   <div>
                     <h2 style={{ margin: '0 0 4px', fontSize: 22, fontWeight: 800, color: '#1e1b4b' }}>
-                      FRENYER <span style={{ color: 'var(--brand-500, #8b78e8)' }}>ERP</span>
+                      {getBusinessProfile().businessName}
                     </h2>
                     <p style={{ margin: 0, fontSize: 13, color: 'var(--muted)' }}>
                       Reporte Diario de Movimientos de Inventario y Kárdex Operativo
@@ -1756,7 +1789,7 @@ export function DailyInventoryReportPage() {
                   fontSize: 11,
                   color: 'var(--muted)'
                 }}>
-                  <div>Frenyer ERP · Módulo de Control de Inventario y Auditoría</div>
+                  <div>{getBusinessProfile().businessName} · RIF: {getBusinessProfile().rif} · Módulo de Control de Inventario</div>
                   <div>Documento oficial generado para registro de operaciones</div>
                 </div>
               </div>

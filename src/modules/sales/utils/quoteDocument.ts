@@ -1,4 +1,5 @@
 import { formatUSD, formatVES } from '../../../lib/currency';
+import { getBusinessProfile } from '../../../lib/businessProfile';
 
 export interface QuoteDocumentData {
   docNumber: string;
@@ -34,6 +35,7 @@ export interface QuoteDocumentData {
  * Genera el HTML formateado profesional de la cotización para impresión o archivo descargable
  */
 export function buildQuoteHTML(data: QuoteDocumentData): string {
+  const business = getBusinessProfile();
   const issueDate = data.createdAt ? new Date(data.createdAt).toLocaleDateString('es-VE', { year: 'numeric', month: 'long', day: 'numeric' }) : new Date().toLocaleDateString('es-VE');
   const validUntil = data.expiresAt ? new Date(data.expiresAt).toLocaleDateString('es-VE', { year: 'numeric', month: 'long', day: 'numeric' }) : `${data.validityDays || 7} días continuos`;
 
@@ -53,7 +55,7 @@ export function buildQuoteHTML(data: QuoteDocumentData): string {
 <html lang="es">
 <head>
   <meta charset="UTF-8">
-  <title>Cotización ${data.docNumber} - Frenyer ERP</title>
+  <title>Cotización ${data.docNumber} - ${business.businessName}</title>
   <style>
     @page { size: letter; margin: 15mm; }
     body {
@@ -248,8 +250,8 @@ export function buildQuoteHTML(data: QuoteDocumentData): string {
   <div class="quote-container">
     <div class="header">
       <div class="brand">
-        <h1>FRENYER <span>ERP</span></h1>
-        <p>Sistema Integral de Gestión Comercial & Bimonetaria</p>
+        <h1>${business.businessName}</h1>
+        <p>RIF: ${business.rif} &bull; Tel: ${business.phone}${business.address ? ` &bull; Dirección: ${business.address}` : ''}</p>
       </div>
       <div class="doc-badge">
         <div class="tag">Presupuesto Proforma</div>
@@ -339,7 +341,7 @@ export function buildQuoteHTML(data: QuoteDocumentData): string {
 
     <div class="signatures">
       <div class="sign-box">
-        <b>Frenyer ERP — Departamento de Ventas</b><br/>
+        <b>${business.businessName} — Departamento de Ventas</b><br/>
         Firma autorizada
       </div>
       <div class="sign-box">

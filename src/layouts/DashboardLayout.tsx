@@ -8,6 +8,7 @@ import { AuthScreen } from '../components/auth/AuthScreen';
 import { getActiveExchangeRate, setActiveExchangeRate, isFutureExchangeRate } from '../lib/currency';
 import { isSupabaseConfigured, supabase } from '../lib/supabase/client';
 import { getActiveOrgId } from '../lib/supabase/db';
+import { getBusinessProfile, BusinessProfile } from '../lib/businessProfile';
 
 const isAuthenticationRequired = import.meta.env.VITE_AUTH_REQUIRED === 'true';
 
@@ -39,6 +40,21 @@ export function DashboardLayout() {
       permissions: ['ventas', 'inventario', 'finanzas', 'reportes', 'usuarios']
     };
   });
+
+  // Business Profile State (Nombre del negocio, RIF, etc.)
+  const [businessProfile, setBusinessProfile] = useState<BusinessProfile>(() => getBusinessProfile());
+
+  useEffect(() => {
+    const handleProfileSync = () => {
+      setBusinessProfile(getBusinessProfile());
+    };
+    window.addEventListener('frenyer:business-profile-updated', handleProfileSync);
+    window.addEventListener('storage', handleProfileSync);
+    return () => {
+      window.removeEventListener('frenyer:business-profile-updated', handleProfileSync);
+      window.removeEventListener('storage', handleProfileSync);
+    };
+  }, []);
 
   useEffect(() => {
     const handleUserChange = () => {
@@ -267,7 +283,7 @@ export function DashboardLayout() {
           >
             {isMobileMenuOpen ? <X size={20} /> : <Menu size={20} />}
           </button>
-          <div className="topbar-title">Frenyer · Gestión empresarial</div>
+          <div className="topbar-title">{businessProfile.businessName || 'Frenyer'}</div>
 
           {/* Right Header Area with BCV Pill & Actions */}
           <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>

@@ -27,6 +27,8 @@ import { Card } from '../../../components/ui/Card';
 import { Button } from '../../../components/ui/Button';
 import { Badge } from '../../../components/ui/Badge';
 import { getActiveExchangeRate, convertUSDtoVES, formatVES } from '../../../lib/currency';
+import { getBusinessProfile } from '../../../lib/businessProfile';
+import { createWorksheetWithBusinessHeader } from '../../../lib/reportUtils';
 import {
   fetchProductsFromSupabase,
   createProductInSupabase,
@@ -250,7 +252,8 @@ export function Inventory() {
   };
 
   const handleDownloadTemplate = () => {
-    triggerExcelTemplateDownload('plantilla_inventario_Frenyer.xlsx');
+    const bName = getBusinessProfile().businessName.replace(/[^a-zA-Z0-9]/g, '_');
+    triggerExcelTemplateDownload(`plantilla_inventario_${bName}.xlsx`);
   };
   
   // Product Creation/Edition Modal
@@ -714,7 +717,7 @@ export function Inventory() {
         'Ubicación': p.location
       }));
 
-      const worksheet = XLSX.utils.json_to_sheet(dataForExcel);
+      const worksheet = createWorksheetWithBusinessHeader('Catálogo Maestro de Inventario', dataForExcel);
       const workbook = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(workbook, worksheet, 'Inventario');
       XLSX.writeFile(workbook, fileName);

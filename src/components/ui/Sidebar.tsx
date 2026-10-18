@@ -28,6 +28,7 @@ import {
   ChevronDown,
   Store
 } from 'lucide-react';
+import { getBusinessProfile, BusinessProfile } from '../../lib/businessProfile';
 
 interface SidebarItem {
   label: string;
@@ -85,6 +86,20 @@ export function Sidebar({ isMobileOpen = false, onNavigate }: SidebarProps) {
 
     window.addEventListener('frenyer:active-user-changed', handleUserChange);
     return () => window.removeEventListener('frenyer:active-user-changed', handleUserChange);
+  }, []);
+
+  const [businessProfile, setBusinessProfile] = useState<BusinessProfile>(() => getBusinessProfile());
+
+  useEffect(() => {
+    const handleProfileSync = () => {
+      setBusinessProfile(getBusinessProfile());
+    };
+    window.addEventListener('frenyer:business-profile-updated', handleProfileSync);
+    window.addEventListener('storage', handleProfileSync);
+    return () => {
+      window.removeEventListener('frenyer:business-profile-updated', handleProfileSync);
+      window.removeEventListener('storage', handleProfileSync);
+    };
   }, []);
 
   // Define the menu structure exactly as shown in the image with RBAC keys
@@ -291,8 +306,9 @@ export function Sidebar({ isMobileOpen = false, onNavigate }: SidebarProps) {
         )}
         
         <div style={{ padding: '12px 12px 4px 12px', fontSize: 11, color: '#9298a5' }}>
-          Gestión empresarial
-          <br />
+          <div style={{ fontWeight: 600, color: 'var(--text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+            {businessProfile.businessName}
+          </div>
           Bs. / USD
         </div>
       </div>

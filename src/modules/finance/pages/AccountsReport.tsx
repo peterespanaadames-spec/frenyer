@@ -17,6 +17,7 @@ import { Button } from '../../../components/ui/Button';
 import { Badge } from '../../../components/ui/Badge';
 import { supabase } from '../../../lib/supabase/client';
 import { formatUSD, formatVES, getActiveExchangeRate } from '../../../lib/currency';
+import { createWorksheetWithBusinessHeader } from '../../../lib/reportUtils';
 
 interface PaymentReportRow {
   id: string;
@@ -164,7 +165,7 @@ export function AccountsReportPage() {
       'Monto (VES)': p.amount_ves
     }));
 
-    const ws = XLSX.utils.json_to_sheet(exportData);
+    const ws = createWorksheetWithBusinessHeader('Reporte de Pagos y Recaudaciones', exportData);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Reporte de Pagos');
     XLSX.writeFile(wb, `Reporte_Pagos_${new Date().toISOString().split('T')[0]}.xlsx`);

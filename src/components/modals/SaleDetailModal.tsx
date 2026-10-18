@@ -18,6 +18,7 @@ import { formatUSD, formatVES } from '../../lib/currency';
 import { Card } from '../ui/Card';
 import { Button } from '../ui/Button';
 import { Badge } from '../ui/Badge';
+import { getBusinessProfile } from '../../lib/businessProfile';
 
 interface SaleItemDetail {
   id: string;
@@ -335,6 +336,25 @@ export function SaleDetailModal({ isOpen, onClose, saleId }: { isOpen: boolean; 
             </div>
           ) : data ? (
             <>
+              {/* Membrete del Negocio Registrado */}
+              {(() => {
+                const business = getBusinessProfile();
+                return (
+                  <div style={{ background: '#4b5563', color: '#ffffff', padding: '14px 18px', borderRadius: 'var(--radius-lg)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
+                    <div>
+                      <div style={{ fontSize: 16, fontWeight: 800 }}>{business.businessName}</div>
+                      <div style={{ fontSize: 11, color: '#e5e7eb', marginTop: 2 }}>
+                        RIF: {business.rif} | Tel: {business.phone}{business.address ? ` | Dirección: ${business.address}` : ''}
+                      </div>
+                    </div>
+                    <div style={{ textAlign: 'right' }}>
+                      <div style={{ fontSize: 13, fontWeight: 700 }}>{docInfo.label} #{displayDocNum}</div>
+                      <div style={{ fontSize: 10, color: '#d1d5db' }}>{data.created_at ? new Date(data.created_at).toLocaleString() : ''}</div>
+                    </div>
+                  </div>
+                );
+              })()}
+
               {/* Sección 1: Ficha de Identificación del Comprobante y Cliente */}
               <Card>
                 <div className="section-head">

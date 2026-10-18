@@ -17,6 +17,8 @@ import { Badge } from '../../../components/ui/Badge';
 import { SaleDetailModal } from '../../../components/modals/SaleDetailModal';
 import { supabase } from '../../../lib/supabase/client';
 import { getActiveExchangeRate, formatUSD, formatVES } from '../../../lib/currency';
+import { getBusinessProfile } from '../../../lib/businessProfile';
+import { createWorksheetWithBusinessHeader, getReportHeaderHtml, getReportFooterHtml } from '../../../lib/reportUtils';
 
 interface SaleItemRecord {
   sku: string;
@@ -413,7 +415,7 @@ export const SalesReportPage = () => {
         'Total VES': (p.totalUsd * exchangeRate).toFixed(2),
         '% Participación': totalIncome > 0 ? `${((p.totalUsd / totalIncome) * 100).toFixed(1)}%` : '0%'
       }));
-      const worksheet = XLSX.utils.json_to_sheet(rows);
+      const worksheet = createWorksheetWithBusinessHeader('Reporte de Productos Más Vendidos', rows);
       const workbook = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(workbook, worksheet, 'Productos Más Vendidos');
       XLSX.writeFile(workbook, `Reporte_Productos_Mas_Vendidos_${new Date().toISOString().slice(0, 10)}.xlsx`);
@@ -430,7 +432,7 @@ export const SalesReportPage = () => {
         'Ticket Promedio USD': (m.transactionsCount > 0 ? (m.totalUsd / m.transactionsCount).toFixed(2) : '0.00'),
         '% Participación': totalIncome > 0 ? `${((m.totalUsd / totalIncome) * 100).toFixed(1)}%` : '0%'
       }));
-      const worksheet = XLSX.utils.json_to_sheet(rows);
+      const worksheet = createWorksheetWithBusinessHeader('Reporte de Métodos de Pago', rows);
       const workbook = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(workbook, worksheet, 'Metodos de Pago');
       XLSX.writeFile(workbook, `Reporte_Metodos_Pago_${new Date().toISOString().slice(0, 10)}.xlsx`);
@@ -451,7 +453,7 @@ export const SalesReportPage = () => {
       'Estado': s.status
     }));
 
-    const worksheet = XLSX.utils.json_to_sheet(rows);
+    const worksheet = createWorksheetWithBusinessHeader('Reporte General de Ventas', rows);
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, 'Reporte de Ventas');
     XLSX.writeFile(workbook, `Reporte_Ventas_${new Date().toISOString().slice(0, 10)}.xlsx`);
@@ -543,7 +545,13 @@ export const SalesReportPage = () => {
       ].join(',');
     });
 
-    const csvContent = '\uFEFF' + [headers.join(','), ...rows].join('\r\n');
+    const business = getBusinessProfile();
+    const metaHeader = [
+      `# ${business.businessName}`,
+      `# RIF: ${business.rif} | Tel: ${business.phone}${business.address ? ` | Dirección: ${business.address}` : ''}`,
+      `# Fecha de Emisión: ${new Date().toLocaleString('es-VE')}`
+    ];
+    const csvContent = '\uFEFF' + [...metaHeader, headers.join(','), ...rows].join('\r\n');
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
@@ -556,7 +564,147 @@ export const SalesReportPage = () => {
 
   const handlePrint = () => {
     setIsExportMenuOpen(false);
-    window.print();
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) {
+      alert('Permite las ventanas emergentes para generar el reporte de impresión.');
+      return;
+    }
+
+    const business = getBusinessProfile();
+    let title = 'Reporte General de Ventas';
+    let tableHtml = '';
+
+    if (reportView === 'PRODUCTOS') {
+      title = 'Reporte de Productos Más Vendidos';
+      tableHtml = `
+        <table>
+          <thead>
+            <tr>
+              <th>Ranking</th>
+              <th>Producto</th>
+              <th>SKU</th>
+              <th style="text-align: center;">Cantidad Vendida</th>
+              <th style="text-align: right;">Precio Prom. USD</th>
+              <th style="text-align: right;">Total USD</th>
+              <th style="text-align: right;">Total VES</th>
+              <th style="text-align: right;">% Part.</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${topProductsList.map((p, idx) => `
+              <tr>
+                <td>#${idx + 1}</td>
+                <td><b>${p.name}</b></td>
+                <td>${p.sku}</td>
+                <td style="text-align: center;">${p.totalQuantity}</td>
+                <td style="text-align: right;">$${p.totalQuantity > 0 ? (p.totalUsd / p.totalQuantity).toFixed(2) : '0.00'}</td>
+                <td style="text-align: right;">$${p.totalUsd.toFixed(2)}</td>
+                <td style="text-align: right;">Bs. ${(p.totalUsd * exchangeRate).toFixed(2)}</td>
+                <td style="text-align: right;">${totalIncome > 0 ? `${((p.totalUsd / totalIncome) * 100).toFixed(1)}%` : '0%'}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      `;
+    } else if (reportView === 'METODOS_PAGO') {
+      title = 'Reporte de Métodos de Pago';
+      tableHtml = `
+        <table>
+          <thead>
+            <tr>
+              <th>Método de Pago</th>
+              <th style="text-align: center;">N° Transacciones</th>
+              <th style="text-align: right;">Total Recaudado USD</th>
+              <th style="text-align: right;">Total Recaudado VES</th>
+              <th style="text-align: right;">Ticket Promedio USD</th>
+              <th style="text-align: right;">% Part.</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${paymentMethodsList.map(m => `
+              <tr>
+                <td><b>${m.method}</b></td>
+                <td style="text-align: center;">${m.transactionsCount}</td>
+                <td style="text-align: right;">$${m.totalUsd.toFixed(2)}</td>
+                <td style="text-align: right;">Bs. ${(m.totalUsd * exchangeRate).toFixed(2)}</td>
+                <td style="text-align: right;">$${m.transactionsCount > 0 ? (m.totalUsd / m.transactionsCount).toFixed(2) : '0.00'}</td>
+                <td style="text-align: right;">${totalIncome > 0 ? `${((m.totalUsd / totalIncome) * 100).toFixed(1)}%` : '0%'}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      `;
+    } else {
+      title = 'Reporte General de Ventas';
+      tableHtml = `
+        <table>
+          <thead>
+            <tr>
+              <th>Fecha</th>
+              <th>N° Comprobante</th>
+              <th>Tipo</th>
+              <th>Cliente</th>
+              <th>RIF / C.I.</th>
+              <th>Métodos de Pago</th>
+              <th style="text-align: right;">Monto USD</th>
+              <th style="text-align: right;">Monto VES</th>
+              <th>Estado</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${filteredSales.map(s => `
+              <tr>
+                <td>${new Date(s.created_at).toLocaleDateString()}</td>
+                <td><b>${s.display_number}</b></td>
+                <td>${s.doc_type}</td>
+                <td>${s.customer_name}</td>
+                <td>${s.customer_doc || 'N/A'}</td>
+                <td>${s.payment_method}</td>
+                <td style="text-align: right;">$${Number(s.total_usd).toFixed(2)}</td>
+                <td style="text-align: right;">Bs. ${(Number(s.total_usd) * exchangeRate).toFixed(2)}</td>
+                <td>${s.status}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      `;
+    }
+
+    const htmlContent = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <title>${title} - ${business.businessName}</title>
+        <style>
+          body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; color: #1e293b; padding: 25px; margin: 0; background: #ffffff; }
+          .header-banner { background-color: #4b5563; color: #ffffff; padding: 16px; border-radius: 6px; margin-bottom: 20px; }
+          .header-banner h2 { color: #ffffff; margin: 0 0 4px; font-size: 18px; font-weight: 800; }
+          .header-banner p { color: #e5e7eb; font-size: 12px; margin: 0; }
+          table { width: 100%; border-collapse: collapse; margin-top: 15px; font-size: 11.5px; }
+          th, td { border: 1px solid #cbd5e1; padding: 8px 10px; text-align: left; }
+          th { background: #4b5563; color: #ffffff; font-weight: bold; }
+          tr:nth-child(even) { background: #f8fafc; }
+          .footer { margin-top: 30px; font-size: 11px; color: #94a3b8; text-align: right; }
+          @media print {
+            body { -webkit-print-color-adjust: exact; print-color-adjust: exact; padding: 0; }
+          }
+        </style>
+      </head>
+      <body>
+        ${getReportHeaderHtml(title, `Generado el: ${new Date().toLocaleString()} | Tasa BCV: ${exchangeRate.toFixed(2)} Bs/USD`)}
+        ${tableHtml}
+        ${getReportFooterHtml()}
+        <script>
+          window.onload = function() {
+            window.print();
+          }
+        </script>
+      </body>
+      </html>
+    `;
+
+    printWindow.document.write(htmlContent);
+    printWindow.document.close();
   };
 
   const renderDocTypeBadge = (type: string) => {

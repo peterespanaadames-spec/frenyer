@@ -23,6 +23,8 @@ import { Card } from '../../../components/ui/Card';
 import { Button } from '../../../components/ui/Button';
 import { Badge } from '../../../components/ui/Badge';
 import { getActiveExchangeRate, convertUSDtoVES, formatVES } from '../../../lib/currency';
+import { getBusinessProfile } from '../../../lib/businessProfile';
+import { createWorksheetWithBusinessHeader } from '../../../lib/reportUtils';
 import {
   fetchSuppliersFromSupabase,
   updateSupplierInSupabase,
@@ -139,7 +141,7 @@ export function SuppliersPage() {
       'Fecha Registro': s.created_at ? new Date(s.created_at).toLocaleDateString('es-VE') : '-'
     }));
 
-    const worksheet = XLSX.utils.json_to_sheet(exportData);
+    const worksheet = createWorksheetWithBusinessHeader('Reporte General de Proveedores', exportData);
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, 'Proveedores');
     XLSX.writeFile(workbook, `Reporte_Proveedores_${new Date().toISOString().slice(0, 10)}.xlsx`);
@@ -149,6 +151,7 @@ export function SuppliersPage() {
 
   // Exportar a PDF / Impresión oficial
   const handleExportPDF = () => {
+    const business = getBusinessProfile();
     const printWindow = window.open('', '_blank');
     if (!printWindow) {
       showToast('⚠️ No se pudo abrir la ventana de impresión.');
@@ -178,7 +181,7 @@ export function SuppliersPage() {
       <!DOCTYPE html>
       <html>
       <head>
-        <title>Reporte de Proveedores — Frenyer ERP</title>
+        <title>Reporte de Proveedores — ${business.businessName}</title>
         <style>
           body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif; padding: 25px; color: #0f172a; margin: 0; }
           .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #7c3aed; padding-bottom: 12px; margin-bottom: 20px; }
@@ -200,8 +203,8 @@ export function SuppliersPage() {
       <body>
         <div class="header">
           <div>
-            <div class="title">FRENYER ERP — REPORTE DE PROVEEDORES</div>
-            <div class="subtitle">Directorio comercial y saldos de cuentas por pagar en Supabase</div>
+            <div class="title">${business.businessName.toUpperCase()} — REPORTE DE PROVEEDORES</div>
+            <div class="subtitle">RIF: ${business.rif} &bull; Tel: ${business.phone}${business.address ? ` &bull; Dirección: ${business.address}` : ''}</div>
           </div>
           <div style="text-align: right; font-size: 12px; color: #475569;">
             <div><b>Fecha:</b> ${new Date().toLocaleDateString('es-VE')}</div>
@@ -247,7 +250,7 @@ export function SuppliersPage() {
         </table>
 
         <div class="footer">
-          Documento generado por Frenyer ERP &bull; ${new Date().toLocaleString('es-VE')}
+          Documento emitido por ${business.businessName} &bull; RIF: ${business.rif} &bull; ${new Date().toLocaleString('es-VE')}
         </div>
 
         <script>

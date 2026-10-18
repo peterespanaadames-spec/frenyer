@@ -38,6 +38,7 @@ import {
 import { Card } from '../../../components/ui/Card';
 import { Button } from '../../../components/ui/Button';
 import { Badge } from '../../../components/ui/Badge';
+import { getBusinessProfile } from '../../../lib/businessProfile';
 import { EmptyState } from '../../../components/ui/EmptyState';
 import { getActiveExchangeRate, setActiveExchangeRate, convertUSDtoVES, formatUSD, formatVES } from '../../../lib/currency';
 import {
@@ -530,7 +531,7 @@ ${itemsText}
 *TOTAL USD:* $${docData.totalUSD.toFixed(2)}
 *TOTAL VES:* Bs. ${docData.totalVES.toLocaleString('es-VE')}
 
-_Válida por ${docData.validityDays || 7} días. Cotizado con Frenyer ERP._`;
+_Válida por ${docData.validityDays || 7} días. Cotizado con ${getBusinessProfile().businessName}._`;
   };
 
   const handleShareWhatsApp = (q: DbQuote) => {

@@ -39,6 +39,7 @@ import {
 } from '../../../lib/supabase/db';
 import { supabase } from '../../../lib/supabase/client';
 import { authenticatedFetch } from '../../../lib/supabase/api';
+import { getBusinessProfile } from '../../../lib/businessProfile';
 
 interface CartItem {
   id: string;
@@ -3155,22 +3156,27 @@ export function Sales() {
               </div>
             </div>
 
-            {/* Document Header as in Image 1 */}
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', borderBottom: '2px solid #0f172a', paddingBottom: 12, marginBottom: 16 }}>
-              <div>
-                <h2 style={{ margin: 0, fontSize: 20, fontWeight: 900, color: 'var(--brand-700)' }}>
-                  FRENYER, C.A.
-                </h2>
-                <span style={{ fontSize: 12, fontWeight: 700, color: '#334155' }}>
-                  {printDocument.docType === 'FACTURA' ? 'FACTURA DE VENTA' : 'NOTA DE ENTREGA'}: {printDocument.correlative}
-                </span>
-              </div>
-              <div style={{ textAlign: 'right', fontSize: 11, color: '#475569', lineHeight: 1.4 }}>
-                <b>RIF:</b> J-50987654-3<br />
-                Av. Francisco de Miranda, Centro Financiero, Caracas<br />
-                <b>Telf:</b> +58 412-5551212
-              </div>
-            </div>
+            {/* Document Header */}
+            {(() => {
+              const business = getBusinessProfile();
+              return (
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', borderBottom: '2px solid #0f172a', paddingBottom: 12, marginBottom: 16 }}>
+                  <div>
+                    <h2 style={{ margin: 0, fontSize: 20, fontWeight: 900, color: 'var(--brand-700)' }}>
+                      {business.businessName}
+                    </h2>
+                    <span style={{ fontSize: 12, fontWeight: 700, color: '#334155' }}>
+                      {printDocument.docType === 'FACTURA' ? 'FACTURA DE VENTA' : 'NOTA DE ENTREGA'}: {printDocument.correlative}
+                    </span>
+                  </div>
+                  <div style={{ textAlign: 'right', fontSize: 11, color: '#475569', lineHeight: 1.4 }}>
+                    <b>RIF:</b> {business.rif}<br />
+                    {business.address ? <>{business.address}<br /></> : null}
+                    <b>Telf:</b> {business.phone}
+                  </div>
+                </div>
+              );
+            })()}
 
             {/* Client Info Grid as in Image 1 */}
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, background: '#f8fafc', padding: 12, borderRadius: 6, marginBottom: 18, fontSize: 11 }}>
@@ -3252,7 +3258,7 @@ export function Sales() {
 
             <div style={{ textAlign: 'center', fontSize: 10, color: '#94a3b8' }}>
               *** GRACIAS POR SU COMPRA ***<br />
-              Este documento es una representación digital del comprobante de venta emitido por Frenyer ERP.
+              Este documento es una representación digital del comprobante de venta emitido por {getBusinessProfile().businessName}.
             </div>
           </div>
         </div>

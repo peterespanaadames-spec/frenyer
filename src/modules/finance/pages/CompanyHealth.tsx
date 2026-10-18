@@ -34,6 +34,7 @@ import { Card } from '../../../components/ui/Card';
 import { Button } from '../../../components/ui/Button';
 import { supabase, isSupabaseConfigured } from '../../../lib/supabase/client';
 import { getActiveExchangeRate, formatUSD, formatVES } from '../../../lib/currency';
+import { getBusinessProfile } from '../../../lib/businessProfile';
 
 interface MonthlyEvolutionItem {
   month: string;
@@ -386,9 +387,19 @@ export const CompanyHealthPage = () => {
     return hasValues ? rawData : [{ name: 'Sin movimientos', value: 1, color: '#e2e8f0' }];
   }, [financialMetrics]);
 
+  const business = getBusinessProfile();
+
   return (
     <div className="content">
-      {/* Cabecera Estándar Frenyer */}
+      {/* Membrete Oficial del Negocio */}
+      <div style={{ background: '#4b5563', color: '#ffffff', padding: '16px 20px', borderRadius: 'var(--radius-lg)', marginBottom: 20 }}>
+        <h2 style={{ margin: 0, fontSize: 18, color: '#ffffff', fontWeight: 800 }}>{business.businessName}</h2>
+        <p style={{ margin: '3px 0 0', fontSize: 12, color: '#e5e7eb' }}>
+          RIF: {business.rif} | Tel: {business.phone}{business.address ? ` | Dirección: ${business.address}` : ''}
+        </p>
+      </div>
+
+      {/* Cabecera Estándar */}
       <div className="page-head">
         <div>
           <h1>Salud del Negocio</h1>

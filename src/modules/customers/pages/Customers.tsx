@@ -23,8 +23,10 @@ import {
   Calendar,
   ExternalLink
 } from 'lucide-react';
-import { Button } from '../../../components/ui/Button';
 import { getActiveExchangeRate, convertUSDtoVES, formatVES } from '../../../lib/currency';
+import { Button } from '../../../components/ui/Button';
+import { getBusinessProfile } from '../../../lib/businessProfile';
+import { createWorksheetWithBusinessHeader } from '../../../lib/reportUtils';
 import {
   fetchCustomersFromSupabase,
   createCustomerInSupabase,
@@ -334,10 +336,12 @@ export function Customers() {
       'Última Orden': c.last_order_date || '—'
     }));
 
-    const ws = XLSX.utils.json_to_sheet(dataForExport);
+    const business = getBusinessProfile();
+    const ws = createWorksheetWithBusinessHeader('Directorio y Cartera de Clientes', dataForExport);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Clientes');
-    XLSX.writeFile(wb, 'directorio_clientes_Frenyer.xlsx');
+    const safeName = business.businessName.replace(/[^a-zA-Z0-9]/g, '_');
+    XLSX.writeFile(wb, `directorio_clientes_${safeName}.xlsx`);
     showToast('Archivo Excel de clientes descargado.');
   };
 

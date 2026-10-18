@@ -14,6 +14,7 @@ import { Card } from '../../../components/ui/Card';
 import { Button } from '../../../components/ui/Button';
 import { supabase } from '../../../lib/supabase/client';
 import { getActiveExchangeRate, formatUSD, formatVES } from '../../../lib/currency';
+import { getBusinessProfile } from '../../../lib/businessProfile';
 
 interface PnLData {
   totalSales: number;
@@ -172,8 +173,18 @@ export function ProfitLossPage() {
   const grossMarginPercent = data.totalSales > 0 ? (data.grossProfit / data.totalSales) * 100 : 0;
   const netMarginPercent = data.totalSales > 0 ? (data.netProfit / data.totalSales) * 100 : 0;
 
+  const business = getBusinessProfile();
+
   return (
     <div className="content">
+      {/* Membrete Oficial del Negocio */}
+      <div style={{ background: '#4b5563', color: '#ffffff', padding: '16px 20px', borderRadius: 'var(--radius-lg)', marginBottom: 20 }}>
+        <h2 style={{ margin: 0, fontSize: 18, color: '#ffffff', fontWeight: 800 }}>{business.businessName}</h2>
+        <p style={{ margin: '3px 0 0', fontSize: 12, color: '#e5e7eb' }}>
+          RIF: {business.rif} | Tel: {business.phone}{business.address ? ` | Dirección: ${business.address}` : ''}
+        </p>
+      </div>
+
       {/* Cabecera */}
       <div className="page-head">
         <div>

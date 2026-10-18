@@ -28,6 +28,7 @@ import {
   type DbPurchase
 } from '../../../lib/supabase/db';
 import { getActiveExchangeRate, formatUSD, formatVES } from '../../../lib/currency';
+import { getBusinessProfile } from '../../../lib/businessProfile';
 
 export function InternalPurchasesPage() {
   const [purchases, setPurchases] = useState<DbPurchase[]>([]);
@@ -103,6 +104,7 @@ export function InternalPurchasesPage() {
   }, [purchases]);
 
   const handlePrintVoucher = (purchase: DbPurchase) => {
+    const business = getBusinessProfile();
     const win = window.open('', '_blank', 'width=800,height=900');
     if (!win) {
       window.print();
@@ -124,7 +126,7 @@ export function InternalPurchasesPage() {
       <!DOCTYPE html>
       <html>
       <head>
-        <title>Comprobante de Compra - ${purchase.doc_number}</title>
+        <title>Comprobante de Compra - ${purchase.doc_number} - ${business.businessName}</title>
         <style>
           body { font-family: Inter, system-ui, sans-serif; padding: 30px; color: #0f172a; margin: 0; }
           .header { display: flex; justify-content: space-between; border-bottom: 2px solid #0f172a; padding-bottom: 16px; margin-bottom: 20px; }
@@ -141,8 +143,9 @@ export function InternalPurchasesPage() {
       <body>
         <div class="header">
           <div>
-            <h1 class="title">COMPROBANTE DE COMPRA E INGRESO</h1>
-            <p style="margin: 4px 0 0; color: #64748b; font-size: 13px;">Sistema Frenyer ERP • Control de Inventarios</p>
+            <h1 class="title">${business.businessName}</h1>
+            <p style="margin: 4px 0 0; color: #64748b; font-size: 12px;">RIF: ${business.rif} | Tel: ${business.phone}${business.address ? ` | Dirección: ${business.address}` : ''}</p>
+            <div style="font-weight: 700; color: #6d28d9; font-size: 13px; margin-top: 6px;">COMPROBANTE DE COMPRA E INGRESO</div>
           </div>
           <div style="text-align: right;">
             <div style="font-size: 18px; font-weight: 800; color: #6d28d9;">${purchase.doc_number}</div>
@@ -204,7 +207,7 @@ export function InternalPurchasesPage() {
         ` : ''}
 
         <div style="margin-top: 50px; text-align: center; font-size: 11px; color: #94a3b8; border-top: 1px dashed #cbd5e1; padding-top: 16px;">
-          Documento generado automáticamente por Frenyer ERP • Operación ingresada con incremento directo de stock.
+          Documento emitido por ${business.businessName} • RIF: ${business.rif} • Operación ingresada con incremento directo de stock.
         </div>
       </body>
       </html>

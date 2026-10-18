@@ -27,6 +27,7 @@ import {
 } from '../../../lib/supabase/db';
 import { authenticatedFetch } from '../../../lib/supabase/api';
 import { getActiveExchangeRate, convertUSDtoVES, formatUSD, formatVES } from '../../../lib/currency';
+import { getBusinessProfile } from '../../../lib/businessProfile';
 
 export interface SupplierDetailModalProps {
   isOpen: boolean;
@@ -273,6 +274,7 @@ export function SupplierDetailModal({
 
   // Imprimir ficha y estado de cuenta
   const handlePrint = () => {
+    const business = getBusinessProfile();
     const printWindow = window.open('', '_blank');
     if (!printWindow) {
       showToast('⚠️ Habilita las ventanas emergentes para imprimir.');
@@ -323,8 +325,8 @@ export function SupplierDetailModal({
       <body>
         <div class="header">
           <div>
-            <div class="title">FRENYER ERP — FICHA Y ESTADO DE CUENTA DE PROVEEDOR</div>
-            <div class="subtitle">Directorio de Proveedores y Control Financiero &bull; Emisión de Auditoría</div>
+            <div class="title">${business.businessName.toUpperCase()} — FICHA Y ESTADO DE CUENTA DE PROVEEDOR</div>
+            <div class="subtitle">RIF: ${business.rif} &bull; Tel: ${business.phone}${business.address ? ` &bull; Dirección: ${business.address}` : ''}</div>
           </div>
           <div style="text-align: right; font-size: 12px; color: #475569;">
             <div><b>Fecha de Emisión:</b> ${new Date().toLocaleDateString('es-VE')}</div>
@@ -382,7 +384,7 @@ export function SupplierDetailModal({
         </table>
 
         <div class="footer">
-          <span>Generado automáticamente por Frenyer ERP &bull; Soporte administrativo</span>
+          <span>Documento emitido por ${business.businessName} &bull; RIF: ${business.rif} &bull; Tel: ${business.phone}</span>
           <span>Página 1 de 1</span>
         </div>
 
