@@ -72,6 +72,15 @@ interface BankAccountRecord {
   created_at?: string;
 }
 
+interface PaymentMethodRecord {
+  id: string;
+  name: string;
+  currency: string;
+  type: string;
+  bank_account_id: string | null;
+  code?: string;
+}
+
 export function ConfigPage() {
   const [activeTab, setActiveTab] = useState<'negocio' | 'almacen' | 'usuarios' | 'auditoria'>('negocio');
   const [isDbModalOpen, setIsDbModalOpen] = useState(false);
@@ -232,6 +241,201 @@ export function ConfigPage() {
     account: null,
     action: 'inactivar'
   });
+
+  // --- MODALS FOR CREAR CUENTA & METODO DE PAGO (AUDITORIA TAB) ---
+  const [isCreateAccountModalOpen, setIsCreateAccountModalOpen] = useState(false);
+  const [isPaymentMethodsModalOpen, setIsPaymentMethodsModalOpen] = useState(false);
+  const [auditPaymentMethods, setAuditPaymentMethods] = useState<PaymentMethodRecord[]>([]);
+  const [isSubmittingAccount, setIsSubmittingAccount] = useState(false);
+  const [isSubmittingPm, setIsSubmittingPm] = useState(false);
+
+  // Form states - New Account
+  const [newAccName, setNewAccountName] = useState('');
+  const [newAccBank, setNewAccountBank] = useState('');
+  const [newAccNum, setNewAccountNumber] = useState('');
+  const [newAccType, setNewAccountType] = useState('Corriente');
+  const [newAccCurrency, setNewAccountCurrency] = useState('VES');
+  const [newAccInitialBalance, setNewAccountInitialBalance] = useState('');
+
+  // Form states - New Payment Method
+  const [newPmName, setNewPmName] = useState('');
+  const [newPmCurrency, setNewPmCurrency] = useState('VES');
+  const [newPmType, setNewPmType] = useState('Pago Móvil');
+  const [newPmAccountId, setNewPmAccountId] = useState('');
+
+  // Form states - Edit Account (Audit)
+  const [isEditAccountModalOpen, setIsEditAccountModalOpen] = useState(false);
+  const [editingBankAccount, setEditingBankAccount] = useState<BankAccountRecord | null>(null);
+  const [editAccName, setEditAccName] = useState('');
+  const [editAccNum, setEditAccNum] = useState('');
+  const [editAccType, setEditAccType] = useState('Corriente');
+  const [editAccCurrency, setEditAccCurrency] = useState('VES');
+  const [editAccStatus, setEditAccStatus] = useState('Activo');
+  const [isSubmittingEditAccount, setIsSubmittingEditAccount] = useState(false);
+
+  const handleOpenEditBankAccount = (acc: BankAccountRecord) => {
+    setEditingBankAccount(acc);
+    setEditAccName(acc.bank_name);
+    setEditAccNum(acc.account_number);
+    setEditAccType(acc.account_type || 'Corriente');
+    setEditAccCurrency(acc.currency || 'VES');
+    setEditAccStatus(acc.status || 'Activo');
+    setIsEditAccountModalOpen(true);
+  };
+
+  const handleUpdateAuditBankAccount = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingBankAccount) return;
+    setIsSubmittingEditAccount(true);
+    const updates = {
+      bank_name: editAccName.trim(),
+      account_number: editAccNum.trim(),
+      account_type: editAccType,
+      currency: editAccCurrency,
+      status: editAccStatus
+    };
+    try {
+      const res = await authenticatedFetch(`/api/bank-accounts/${editingBankAccount.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updates)
+      });
+      const json = await res.json();
+      if (json.success) {
+        showNotification('Cuenta actualizada con éxito.');
+        setIsEditAccountModalOpen(false);
+        setEditingBankAccount(null);
+        await loadAuditAccounts();
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('frenyer:bank-updated'));
+        }
+      } else {
+        showNotification(json.error || 'No se pudo actualizar la cuenta.', 'info');
+      }
+    } catch {
+      showNotification('Error al conectar con el servidor.', 'info');
+    } finally {
+      setIsSubmittingEditAccount(false);
+    }
+  };
+
+  const loadPaymentMethods = async () => {
+    try {
+      const ts = Date.now();
+      const res = await authenticatedFetch(`/api/payment-methods?t=${ts}`);
+      if (res.ok) {
+        const json = await res.json();
+        if (json.success && Array.isArray(json.data)) {
+          setAuditPaymentMethods(json.data);
+        }
+      }
+    } catch {
+      // ignore
+    }
+  };
+
+  const handleSaveBankAccount = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newAccName.trim() || !newAccBank.trim()) {
+      showNotification('Por favor, complete los campos obligatorios.', 'info');
+      return;
+    }
+
+    setIsSubmittingAccount(true);
+    const payload = {
+      bank_name: newAccName.trim(),
+      account_number: newAccNum.trim() || '—',
+      account_type: newAccType,
+      currency: newAccCurrency,
+      balance: parseFloat(newAccInitialBalance) || 0,
+      status: 'Activo'
+    };
+
+    try {
+      const res = await authenticatedFetch('/api/bank-accounts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const json = await res.json();
+      if (json.success) {
+        showNotification('Cuenta bancaria registrada con éxito.');
+        setIsCreateAccountModalOpen(false);
+        setNewAccountName('');
+        setNewAccountBank('');
+        setNewAccountNumber('');
+        setNewAccountInitialBalance('');
+        await loadAuditAccounts();
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('frenyer:bank-updated'));
+        }
+      } else {
+        showNotification(json.error || 'No se pudo guardar la cuenta.', 'info');
+      }
+    } catch {
+      showNotification('Error al conectar con el servidor.', 'info');
+    } finally {
+      setIsSubmittingAccount(false);
+    }
+  };
+
+  const handleSavePaymentMethod = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newPmName.trim()) {
+      showNotification('Ingrese el nombre del método de pago.', 'info');
+      return;
+    }
+
+    setIsSubmittingPm(true);
+    const payload = {
+      name: newPmName.trim(),
+      currency: newPmCurrency,
+      type: newPmType,
+      bank_account_id: newPmAccountId || null
+    };
+
+    try {
+      const res = await authenticatedFetch('/api/payment-methods', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const json = await res.json();
+      if (json.success) {
+        showNotification('Método de pago registrado exitosamente.');
+        setNewPmName('');
+        setNewPmAccountId('');
+        await loadPaymentMethods();
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('frenyer:bank-updated'));
+        }
+      } else {
+        showNotification(json.error || 'Error al guardar método de pago.', 'info');
+      }
+    } catch {
+      showNotification('Error de conexión.', 'info');
+    } finally {
+      setIsSubmittingPm(false);
+    }
+  };
+
+  const handleDeletePaymentMethod = async (id: string) => {
+    try {
+      const res = await authenticatedFetch(`/api/payment-methods/${id}`, { method: 'DELETE' });
+      const json = await res.json();
+      if (json.success) {
+        setAuditPaymentMethods(prev => prev.filter(pm => pm.id !== id));
+        showNotification('Método de pago eliminado.');
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('frenyer:bank-updated'));
+        }
+      } else {
+        showNotification(json.error || 'Error al eliminar método.', 'info');
+      }
+    } catch {
+      showNotification('Error de red.', 'info');
+    }
+  };
 
   const loadAuditAccounts = async () => {
     setIsAuditLoading(true);
@@ -633,7 +837,7 @@ export function ConfigPage() {
 
       if (editingUserId) {
         // Actualizar usuario existente
-        const res = await fetch(`/api/admin/users/${editingUserId}`, {
+        const res = await fetch(`/api/users/${editingUserId}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload)
@@ -648,7 +852,7 @@ export function ConfigPage() {
         }
       } else {
         // Crear nuevo usuario asociado
-        const res = await fetch('/api/admin/users/add', {
+        const res = await fetch('/api/users', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ ...payload, password: newUserPassword.trim() })
@@ -2552,6 +2756,49 @@ GRANT ALL ON TABLE public.branches TO anon;`}</pre>
                     <RefreshCw size={13} className={isAuditLoading ? 'animate-spin' : ''} />
                     <span>Sincronizar</span>
                   </button>
+
+                  <button
+                    onClick={() => setIsCreateAccountModalOpen(true)}
+                    style={{
+                      height: 36,
+                      padding: '0 14px',
+                      borderRadius: 8,
+                      border: 'none',
+                      background: '#7c3aed',
+                      color: '#fff',
+                      fontSize: 12,
+                      fontWeight: 700,
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 6,
+                      cursor: 'pointer',
+                      boxShadow: '0 2px 8px rgba(124,58,237,0.3)'
+                    }}
+                  >
+                    <Plus size={14} />
+                    <span>Incluir cuenta</span>
+                  </button>
+
+                  <button
+                    onClick={() => { loadPaymentMethods(); setIsPaymentMethodsModalOpen(true); }}
+                    style={{
+                      height: 36,
+                      padding: '0 14px',
+                      borderRadius: 8,
+                      border: '1px solid #7c3aed',
+                      background: '#fff',
+                      color: '#7c3aed',
+                      fontSize: 12,
+                      fontWeight: 700,
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 6,
+                      cursor: 'pointer'
+                    }}
+                  >
+                    <CreditCard size={14} />
+                    <span>Incluir método de pago</span>
+                  </button>
                 </div>
               </div>
             </Card>
@@ -2643,7 +2890,25 @@ GRANT ALL ON TABLE public.branches TO anon;`}</pre>
                             </td>
                             <td style={{ textAlign: 'right' }}>
                               {isInactive ? (
-                                <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
+                                <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+                                  <button
+                                    onClick={() => handleOpenEditBankAccount(acc)}
+                                    style={{
+                                      background: '#fff',
+                                      color: '#7c3aed',
+                                      border: '1px solid #7c3aed',
+                                      borderRadius: 6,
+                                      padding: '5px 10px',
+                                      fontSize: 11,
+                                      fontWeight: 700,
+                                      cursor: 'pointer',
+                                      display: 'flex',
+                                      alignItems: 'center',
+                                      gap: 4
+                                    }}
+                                  >
+                                    <Edit2 size={12} /> Modificar
+                                  </button>
                                   <button
                                     onClick={() => setAuditConfirmModal({ isOpen: true, account: acc, action: 'reactivar' })}
                                     style={{
@@ -2683,21 +2948,41 @@ GRANT ALL ON TABLE public.branches TO anon;`}</pre>
                                   </button>
                                 </div>
                               ) : (
-                                <button
-                                  onClick={() => setAuditConfirmModal({ isOpen: true, account: acc, action: 'inactivar' })}
-                                  style={{
-                                    background: '#fff',
-                                    color: '#64748b',
-                                    border: '1px solid #cbd5e1',
-                                    borderRadius: 6,
-                                    padding: '5px 12px',
-                                    fontSize: 11,
-                                    fontWeight: 700,
-                                    cursor: 'pointer'
-                                  }}
-                                >
-                                  Inactivar
-                                </button>
+                                <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+                                  <button
+                                    onClick={() => handleOpenEditBankAccount(acc)}
+                                    style={{
+                                      background: '#fff',
+                                      color: '#7c3aed',
+                                      border: '1px solid #7c3aed',
+                                      borderRadius: 6,
+                                      padding: '5px 10px',
+                                      fontSize: 11,
+                                      fontWeight: 700,
+                                      cursor: 'pointer',
+                                      display: 'flex',
+                                      alignItems: 'center',
+                                      gap: 4
+                                    }}
+                                  >
+                                    <Edit2 size={12} /> Modificar
+                                  </button>
+                                  <button
+                                    onClick={() => setAuditConfirmModal({ isOpen: true, account: acc, action: 'inactivar' })}
+                                    style={{
+                                      background: '#fff',
+                                      color: '#64748b',
+                                      border: '1px solid #cbd5e1',
+                                      borderRadius: 6,
+                                      padding: '5px 12px',
+                                      fontSize: 11,
+                                      fontWeight: 700,
+                                      cursor: 'pointer'
+                                    }}
+                                  >
+                                    Inactivar
+                                  </button>
+                                </div>
                               )}
                             </td>
                           </tr>
@@ -2800,6 +3085,269 @@ GRANT ALL ON TABLE public.branches TO anon;`}</pre>
                         {auditConfirmModal.action === 'reactivar' && 'Sí, Reactivar'}
                         {auditConfirmModal.action === 'eliminar_permanente' && 'Sí, Eliminar de Supabase'}
                       </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Modal Crear Cuenta Bancaria */}
+            {isCreateAccountModalOpen && (
+              <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(15,23,42,0.6)', backdropFilter: 'blur(4px)', display: 'grid', placeItems: 'center', zIndex: 1200, padding: 16 }}>
+                <div className="card" style={{ width: '100%', maxWidth: 480, padding: 0, background: '#fff', borderRadius: 12, overflow: 'hidden', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.25)' }}>
+                  <div style={{ padding: '16px 20px', background: '#7c3aed', color: '#fff', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <h3 style={{ margin: 0, fontSize: 14, fontWeight: 800, color: '#fff' }}>Incluir Nueva Cuenta Bancaria</h3>
+                    <button onClick={() => setIsCreateAccountModalOpen(false)} style={{ background: 'transparent', border: 'none', color: '#fff', cursor: 'pointer' }}><X size={20} /></button>
+                  </div>
+                  <form onSubmit={handleSaveBankAccount} style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 14 }}>
+                    <div>
+                      <label style={{ fontSize: 12, fontWeight: 700, color: '#334155', display: 'block', marginBottom: 4 }}>Banco / Institución *</label>
+                      <input
+                        required
+                        placeholder="Ej: Banesco, Mercantil, Zelle, Chase"
+                        value={newAccName}
+                        onChange={e => { setNewAccountName(e.target.value); if (!newAccBank) setNewAccountBank(e.target.value); }}
+                        style={{ width: '100%', padding: '8px 12px', borderRadius: 8, border: '1px solid var(--border)', fontSize: 13 }}
+                      />
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                      <div>
+                        <label style={{ fontSize: 12, fontWeight: 700, color: '#334155', display: 'block', marginBottom: 4 }}>Moneda *</label>
+                        <select
+                          value={newAccCurrency}
+                          onChange={e => setNewAccountCurrency(e.target.value)}
+                          style={{ width: '100%', padding: '8px 12px', borderRadius: 8, border: '1px solid var(--border)', fontSize: 13, background: '#fff' }}
+                        >
+                          <option value="VES">Bolívares (VES)</option>
+                          <option value="USD">Dólares (USD)</option>
+                          <option value="EUR">Euros (EUR)</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label style={{ fontSize: 12, fontWeight: 700, color: '#334155', display: 'block', marginBottom: 4 }}>Tipo de Cuenta</label>
+                        <select
+                          value={newAccType}
+                          onChange={e => setNewAccountType(e.target.value)}
+                          style={{ width: '100%', padding: '8px 12px', borderRadius: 8, border: '1px solid var(--border)', fontSize: 13, background: '#fff' }}
+                        >
+                          <option value="Corriente">Corriente</option>
+                          <option value="Ahorros">Ahorros</option>
+                          <option value="Divisas">Divisas</option>
+                          <option value="Zelle / Digital">Zelle / Digital</option>
+                          <option value="Efectivo Cta">Efectivo Cta</option>
+                        </select>
+                      </div>
+                    </div>
+                    <div>
+                      <label style={{ fontSize: 12, fontWeight: 700, color: '#334155', display: 'block', marginBottom: 4 }}>Número de Cuenta / Referencia</label>
+                      <input
+                        placeholder="Ej: 0134-XXXX-..."
+                        value={newAccNum}
+                        onChange={e => setNewAccountNumber(e.target.value)}
+                        style={{ width: '100%', padding: '8px 12px', borderRadius: 8, border: '1px solid var(--border)', fontSize: 13 }}
+                      />
+                    </div>
+                    <div>
+                      <label style={{ fontSize: 12, fontWeight: 700, color: '#334155', display: 'block', marginBottom: 4 }}>Saldo Inicial</label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        placeholder="0.00"
+                        value={newAccInitialBalance}
+                        onChange={e => setNewAccountInitialBalance(e.target.value)}
+                        style={{ width: '100%', padding: '8px 12px', borderRadius: 8, border: '1px solid var(--border)', fontSize: 13 }}
+                      />
+                    </div>
+                    <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 8, borderTop: '1px solid var(--border)', paddingTop: 14 }}>
+                      <button type="button" onClick={() => setIsCreateAccountModalOpen(false)} style={{ height: 36, padding: '0 14px', borderRadius: 6, border: '1px solid #cbd5e1', background: '#fff', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>
+                        Cancelar
+                      </button>
+                      <button type="submit" disabled={isSubmittingAccount} style={{ height: 36, padding: '0 16px', borderRadius: 6, background: '#7c3aed', color: '#fff', border: 'none', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>
+                        {isSubmittingAccount ? 'Guardando...' : 'Registrar Cuenta'}
+                      </button>
+                    </div>
+                  </form>
+                </div>
+              </div>
+            )}
+
+            {/* Modal Modificar Cuenta Bancaria (Auditoría) */}
+            {isEditAccountModalOpen && (
+              <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(15,23,42,0.6)', backdropFilter: 'blur(4px)', display: 'grid', placeItems: 'center', zIndex: 1200, padding: 16 }}>
+                <div className="card" style={{ width: '100%', maxWidth: 480, padding: 0, background: '#fff', borderRadius: 12, overflow: 'hidden', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.25)' }}>
+                  <div style={{ padding: '16px 20px', background: '#7c3aed', color: '#fff', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <h3 style={{ margin: 0, fontSize: 14, fontWeight: 800, color: '#fff' }}>Modificar Cuenta Bancaria</h3>
+                    <button onClick={() => setIsEditAccountModalOpen(false)} style={{ background: 'transparent', border: 'none', color: '#fff', cursor: 'pointer' }}><X size={20} /></button>
+                  </div>
+                  <form onSubmit={handleUpdateAuditBankAccount} style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 14 }}>
+                    <div>
+                      <label style={{ fontSize: 12, fontWeight: 700, color: '#334155', display: 'block', marginBottom: 4 }}>Banco / Institución *</label>
+                      <input
+                        required
+                        value={editAccName}
+                        onChange={e => setEditAccName(e.target.value)}
+                        style={{ width: '100%', padding: '8px 12px', borderRadius: 8, border: '1px solid var(--border)', fontSize: 13 }}
+                      />
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                      <div>
+                        <label style={{ fontSize: 12, fontWeight: 700, color: '#334155', display: 'block', marginBottom: 4 }}>Moneda *</label>
+                        <select
+                          value={editAccCurrency}
+                          onChange={e => setEditAccCurrency(e.target.value)}
+                          style={{ width: '100%', padding: '8px 12px', borderRadius: 8, border: '1px solid var(--border)', fontSize: 13, background: '#fff' }}
+                        >
+                          <option value="VES">Bolívares (VES)</option>
+                          <option value="USD">Dólares (USD)</option>
+                          <option value="EUR">Euros (EUR)</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label style={{ fontSize: 12, fontWeight: 700, color: '#334155', display: 'block', marginBottom: 4 }}>Tipo de Cuenta</label>
+                        <select
+                          value={editAccType}
+                          onChange={e => setEditAccType(e.target.value)}
+                          style={{ width: '100%', padding: '8px 12px', borderRadius: 8, border: '1px solid var(--border)', fontSize: 13, background: '#fff' }}
+                        >
+                          <option value="Corriente">Corriente</option>
+                          <option value="Ahorros">Ahorros</option>
+                          <option value="Divisas">Divisas</option>
+                          <option value="Zelle / Digital">Zelle / Digital</option>
+                          <option value="Efectivo Cta">Efectivo Cta</option>
+                        </select>
+                      </div>
+                    </div>
+                    <div>
+                      <label style={{ fontSize: 12, fontWeight: 700, color: '#334155', display: 'block', marginBottom: 4 }}>Número de Cuenta / Referencia</label>
+                      <input
+                        value={editAccNum}
+                        onChange={e => setEditAccNum(e.target.value)}
+                        style={{ width: '100%', padding: '8px 12px', borderRadius: 8, border: '1px solid var(--border)', fontSize: 13 }}
+                      />
+                    </div>
+                    <div>
+                      <label style={{ fontSize: 12, fontWeight: 700, color: '#334155', display: 'block', marginBottom: 4 }}>Estado</label>
+                      <select
+                        value={editAccStatus}
+                        onChange={e => setEditAccStatus(e.target.value)}
+                        style={{ width: '100%', padding: '8px 12px', borderRadius: 8, border: '1px solid var(--border)', fontSize: 13, background: '#fff' }}
+                      >
+                        <option value="Activo">Activo</option>
+                        <option value="Inactivo">Inactivo</option>
+                      </select>
+                    </div>
+                    <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 8, borderTop: '1px solid var(--border)', paddingTop: 14 }}>
+                      <button type="button" onClick={() => setIsEditAccountModalOpen(false)} style={{ height: 36, padding: '0 14px', borderRadius: 6, border: '1px solid #cbd5e1', background: '#fff', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>
+                        Cancelar
+                      </button>
+                      <button type="submit" disabled={isSubmittingEditAccount} style={{ height: 36, padding: '0 16px', borderRadius: 6, background: '#7c3aed', color: '#fff', border: 'none', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>
+                        {isSubmittingEditAccount ? 'Guardando...' : 'Guardar Cambios'}
+                      </button>
+                    </div>
+                  </form>
+                </div>
+              </div>
+            )}
+
+            {/* Modal Gestión Métodos de Pago */}
+            {isPaymentMethodsModalOpen && (
+              <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(15,23,42,0.6)', backdropFilter: 'blur(4px)', display: 'grid', placeItems: 'center', zIndex: 1200, padding: 16 }}>
+                <div className="card" style={{ width: '100%', maxWidth: 560, padding: 0, background: '#fff', borderRadius: 12, overflow: 'hidden', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.25)' }}>
+                  <div style={{ padding: '16px 20px', background: '#7c3aed', color: '#fff', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <CreditCard size={18} />
+                      <h3 style={{ margin: 0, fontSize: 14, fontWeight: 800, color: '#fff' }}>Gestión de Métodos de Pago</h3>
+                    </div>
+                    <button onClick={() => setIsPaymentMethodsModalOpen(false)} style={{ background: 'transparent', border: 'none', color: '#fff', cursor: 'pointer' }}><X size={20} /></button>
+                  </div>
+                  <div style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 16, maxHeight: '80vh', overflowY: 'auto' }}>
+                    <form onSubmit={handleSavePaymentMethod} style={{ background: '#f8fafc', padding: 14, borderRadius: 8, border: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: 10 }}>
+                      <h4 style={{ margin: 0, fontSize: 13, fontWeight: 800, color: '#0f172a' }}>Incluir Nuevo Método de Pago</h4>
+                      <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 10 }}>
+                        <div>
+                          <label style={{ fontSize: 11, fontWeight: 700, color: '#334155', display: 'block', marginBottom: 2 }}>Nombre *</label>
+                          <input
+                            required
+                            placeholder="Ej: Pago Móvil Banesco, Zelle, Efectivo USD"
+                            value={newPmName}
+                            onChange={e => setNewPmName(e.target.value)}
+                            style={{ width: '100%', padding: '6px 10px', borderRadius: 6, border: '1px solid var(--border)', fontSize: 12 }}
+                          />
+                        </div>
+                        <div>
+                          <label style={{ fontSize: 11, fontWeight: 700, color: '#334155', display: 'block', marginBottom: 2 }}>Moneda</label>
+                          <select
+                            value={newPmCurrency}
+                            onChange={e => setNewPmCurrency(e.target.value)}
+                            style={{ width: '100%', padding: '6px 10px', borderRadius: 6, border: '1px solid var(--border)', fontSize: 12, background: '#fff' }}
+                          >
+                            <option value="VES">VES</option>
+                            <option value="USD">USD</option>
+                            <option value="EUR">EUR</option>
+                          </select>
+                        </div>
+                      </div>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                        <div>
+                          <label style={{ fontSize: 11, fontWeight: 700, color: '#334155', display: 'block', marginBottom: 2 }}>Tipo</label>
+                          <select
+                            value={newPmType}
+                            onChange={e => setNewPmType(e.target.value)}
+                            style={{ width: '100%', padding: '6px 10px', borderRadius: 6, border: '1px solid var(--border)', fontSize: 12, background: '#fff' }}
+                          >
+                            <option value="Pago Móvil">Pago Móvil</option>
+                            <option value="Transferencia">Transferencia</option>
+                            <option value="Efectivo">Efectivo</option>
+                            <option value="Punto de Venta">Punto de Venta</option>
+                            <option value="Zelle">Zelle</option>
+                            <option value="Otro">Otro</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label style={{ fontSize: 11, fontWeight: 700, color: '#334155', display: 'block', marginBottom: 2 }}>Cuenta Bancaria Asociada</label>
+                          <select
+                            value={newPmAccountId}
+                            onChange={e => setNewPmAccountId(e.target.value)}
+                            style={{ width: '100%', padding: '6px 10px', borderRadius: 6, border: '1px solid var(--border)', fontSize: 12, background: '#fff' }}
+                          >
+                            <option value="">(Ninguna)</option>
+                            {auditAccounts.map(acc => (
+                              <option key={acc.id} value={acc.id}>
+                                {acc.bank_name} ({acc.currency})
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 4 }}>
+                        <button type="submit" disabled={isSubmittingPm} style={{ height: 32, padding: '0 14px', borderRadius: 6, background: '#7c3aed', color: '#fff', border: 'none', fontSize: 11, fontWeight: 700, cursor: 'pointer' }}>
+                          {isSubmittingPm ? 'Guardando...' : 'Guardar Método'}
+                        </button>
+                      </div>
+                    </form>
+
+                    <div>
+                      <h4 style={{ margin: '0 0 8px 0', fontSize: 13, fontWeight: 800, color: '#0f172a' }}>Métodos de Pago Existentes ({auditPaymentMethods.length})</h4>
+                      {auditPaymentMethods.length === 0 ? (
+                        <p style={{ fontSize: 12, color: '#94a3b8', margin: 0 }}>No hay métodos de pago configurados.</p>
+                      ) : (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                          {auditPaymentMethods.map(pm => (
+                            <div key={pm.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#fff', padding: '8px 12px', borderRadius: 6, border: '1px solid var(--border)' }}>
+                              <div>
+                                <span style={{ fontSize: 12, fontWeight: 700, color: '#0f172a', display: 'block' }}>{pm.name}</span>
+                                <span style={{ fontSize: 11, color: '#64748b' }}>{pm.type} • {pm.currency}</span>
+                              </div>
+                              <button
+                                onClick={() => handleDeletePaymentMethod(pm.id)}
+                                style={{ background: '#fff', color: '#b91c1c', border: '1px solid #fecaca', borderRadius: 4, padding: '4px 8px', fontSize: 11, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4 }}
+                              >
+                                <Trash2 size={11} /> Eliminar
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   </div>
                 </div>

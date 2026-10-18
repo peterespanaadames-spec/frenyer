@@ -2704,6 +2704,9 @@ app.post('/api/bank-movements', async (req, res: AuthenticatedResponse) => {
 
     // Persistir siempre en almacenamiento resiliente local
     savePersistedBankMovement(createdMovement);
+    try {
+      savePersistedBankAccount({ ...targetAccount, balance: newBalance });
+    } catch {}
 
     return res.json({
       success: true,
@@ -2832,6 +2835,26 @@ app.post('/api/bank-transfers', async (req, res: AuthenticatedResponse) => {
 
       savePersistedBankMovement(srcMov);
       savePersistedBankMovement(tgtMov);
+      try {
+        savePersistedBankAccount({ ...srcAcc, balance: newSrcBal });
+        savePersistedBankAccount({ ...tgtAcc, balance: newTgtBal });
+      } catch {}
+
+      // Insertar movimientos de transferencia en la base de datos de Supabase
+      try {
+        await authenticatedSupabaseRestRequest(res, 'bank_movements', {
+          method: 'POST',
+          headers: { 'Prefer': 'return=representation' },
+          body: srcMov
+        });
+        await authenticatedSupabaseRestRequest(res, 'bank_movements', {
+          method: 'POST',
+          headers: { 'Prefer': 'return=representation' },
+          body: tgtMov
+        });
+      } catch (insertErr) {
+        console.warn('Aviso insertando movimientos de transferencia en Supabase:', insertErr);
+      }
 
       transferData = {
         source_movement: srcMov,
@@ -4050,39 +4073,52 @@ app.post('/api/expenses/:id/pay', async (req, res: AuthenticatedResponse) => {
     // 2. Si se especificó cuenta bancaria, registrar movimiento de egreso
     if (bankAccountId) {
       try {
-        // A. Registrar movimiento
-        await authenticatedSupabaseRestRequest(res, 'bank_movements', {
-          method: 'POST',
-          body: {
-            organization_id: orgId,
-            bank_account_id: bankAccountId,
-            movement_type: 'EGRESO',
-            amount: numAmount,
-            currency: currency || 'USD',
-            exchange_rate: exchangeRate || 1.0,
-            reference_number: reference || `EXP-${id.slice(0, 8)}`,
-            concept: notes || `Pago de gasto operativo (${currency || 'USD'} ${numAmount.toFixed(2)})`,
-            source: 'GASTO_OPERATIVO'
-          }
-        });
-
-        // B. Actualizar balance de cuenta bancaria
-        const accRes = await authenticatedSupabaseRestRequest(res, `bank_accounts?id=eq.${encodeURIComponent(bankAccountId)}&select=balance,currency`);
-        if (accRes.data && accRes.data.length > 0) {
-          const acc = accRes.data[0];
+        const accRes = await authenticatedSupabaseRestRequest(res, `bank_accounts?id=eq.${encodeURIComponent(bankAccountId)}&select=balance,currency,organization_id,bank_name`);
+        const accList = (!accRes.error && Array.isArray(accRes.data) && accRes.data.length > 0) ? accRes.data : loadPersistedBankAccounts().filter((a: any) => a.id === bankAccountId);
+        
+        if (accList.length > 0) {
+          const acc = accList[0];
           let deductionAmount = numAmount;
           if (currency && acc.currency && currency !== acc.currency) {
              deductionAmount = (currency === 'USD' && acc.currency === 'VES')
                ? numAmount * (exchangeRate || 1.0)
                : numAmount / (exchangeRate || 1.0);
           }
+          deductionAmount = Math.round(deductionAmount * 100) / 100;
           const currentBalance = Number(acc.balance) || 0;
           const newBalance = Math.round((currentBalance - deductionAmount) * 100) / 100;
           
           await authenticatedSupabaseRestRequest(res, `bank_accounts?id=eq.${encodeURIComponent(bankAccountId)}`, {
             method: 'PATCH',
+            headers: { Prefer: 'return=representation' },
             body: { balance: newBalance }
           });
+
+          savePersistedBankAccount({ ...acc, balance: newBalance });
+
+          const mov = {
+            id: typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : 'mov-' + Date.now(),
+            organization_id: acc.organization_id || orgId || '00000000-0000-0000-0000-000000000001',
+            bank_account_id: bankAccountId,
+            type: 'SALIDA',
+            concept: notes || `Pago de gasto operativo (${currency || 'USD'} ${numAmount.toFixed(2)})`,
+            reference: reference || `EXP-${id.slice(0, 8)}`,
+            user_name: 'Administración / Gastos',
+            rate: exchangeRate || 1.0,
+            commission: 0,
+            commission_type: 'Fija',
+            amount: deductionAmount,
+            created_at: new Date().toISOString()
+          };
+
+          savePersistedBankMovement(mov);
+          try {
+            await authenticatedSupabaseRestRequest(res, 'bank_movements', {
+              method: 'POST',
+              headers: { Prefer: 'return=representation' },
+              body: mov
+            });
+          } catch {}
         }
       } catch (bmErr) {
         console.warn('Aviso registrando movimiento bancario de gasto:', bmErr);
@@ -4514,6 +4550,9 @@ app.post('/api/accounts-receivable/:id/payments', async (req, res: Authenticated
           headers: { 'Prefer': 'return=representation' },
           body: { balance: newBal }
         });
+        try {
+          savePersistedBankAccount({ ...bAcc, balance: newBal });
+        } catch {}
 
         const refMatch = reference || `COBRO-${Date.now().toString().slice(-6)}`;
         const mov = {

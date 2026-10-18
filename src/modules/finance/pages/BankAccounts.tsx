@@ -602,8 +602,23 @@ export function BankAccountsPage() {
         } catch {}
       }
 
+      setBankMovements(prev => [newMov, ...prev.filter(m => m.id !== newMov.id)]);
+      setAccounts(prev => prev.map(a => a.id === accountId ? {
+        ...a,
+        balance: Math.round(((a.balance || 0) + (type === 'ENTRADA' ? amt : -amt)) * 100) / 100
+      } : a));
+      if (selectedAccountForMovements && selectedAccountForMovements.id === accountId) {
+        setSelectedAccountForMovements(prev => prev ? {
+          ...prev,
+          balance: Math.round(((prev.balance || 0) + (type === 'ENTRADA' ? amt : -amt)) * 100) / 100
+        } : null);
+      }
+
       showToast(type === 'ENTRADA' ? 'Ingreso procesado con éxito.' : 'Retiro procesado con éxito.');
       loadAllData();
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('frenyer:bank-updated'));
+      }
       return true;
     } catch {
       const newMov: BankMovement = {
@@ -626,8 +641,22 @@ export function BankAccountsPage() {
           localStorage.setItem('frenyer_local_bank_movements', JSON.stringify(local));
         } catch {}
       }
+      setBankMovements(prev => [newMov, ...prev.filter(m => m.id !== newMov.id)]);
+      setAccounts(prev => prev.map(a => a.id === accountId ? {
+        ...a,
+        balance: Math.round(((a.balance || 0) + (type === 'ENTRADA' ? amt : -amt)) * 100) / 100
+      } : a));
+      if (selectedAccountForMovements && selectedAccountForMovements.id === accountId) {
+        setSelectedAccountForMovements(prev => prev ? {
+          ...prev,
+          balance: Math.round(((prev.balance || 0) + (type === 'ENTRADA' ? amt : -amt)) * 100) / 100
+        } : null);
+      }
       showToast(type === 'ENTRADA' ? 'Ingreso procesado localmente.' : 'Retiro procesado localmente.');
       loadAllData();
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('frenyer:bank-updated'));
+      }
       return true;
     }
   };
@@ -682,6 +711,68 @@ export function BankAccountsPage() {
       });
       const result = await response.json();
       if (response.ok && result.success) {
+        setAccounts(prev => prev.map(a => {
+          if (a.id === tfSourceId) {
+            return { ...a, balance: Math.round(((a.balance || 0) - (amt + comm)) * 100) / 100 };
+          }
+          if (a.id === tfTargetId) {
+            return { ...a, balance: Math.round(((a.balance || 0) + depositAmount) * 100) / 100 };
+          }
+          return a;
+        }));
+
+        if (selectedAccountForMovements) {
+          if (selectedAccountForMovements.id === tfSourceId) {
+            setSelectedAccountForMovements(prev => prev ? {
+              ...prev,
+              balance: Math.round(((prev.balance || 0) - (amt + comm)) * 100) / 100
+            } : null);
+          } else if (selectedAccountForMovements.id === tfTargetId) {
+            setSelectedAccountForMovements(prev => prev ? {
+              ...prev,
+              balance: Math.round(((prev.balance || 0) + depositAmount) * 100) / 100
+            } : null);
+          }
+        }
+
+        const srcMov = result.data?.source_movement || {
+          id: 'mov-' + Date.now() + '-src',
+          bank_account_id: tfSourceId,
+          type: 'SALIDA',
+          concept: `Transferencia enviada a ${tgtAccount.bank_name}: ${tfNotes.trim() || 'Transferencia'}`,
+          reference: tfReference.trim() || 'Transferencia',
+          user_name: userRole === 'Gerente General' ? 'Gerente General' : 'Cajero',
+          rate,
+          commission: comm,
+          commission_type: tfCommissionType,
+          amount: amt,
+          created_at: new Date().toISOString()
+        };
+
+        const tgtMov = result.data?.target_movement || {
+          id: 'mov-' + Date.now() + '-tgt',
+          bank_account_id: tfTargetId,
+          type: 'ENTRADA',
+          concept: `Transferencia recibida de ${srcAccount.bank_name}: ${tfNotes.trim() || 'Transferencia'}`,
+          reference: tfReference.trim() || 'Transferencia',
+          user_name: userRole === 'Gerente General' ? 'Gerente General' : 'Cajero',
+          rate,
+          commission: 0,
+          commission_type: 'Fija',
+          amount: depositAmount,
+          created_at: new Date().toISOString()
+        };
+
+        setBankMovements(prev => [srcMov, tgtMov, ...prev.filter(m => m.id !== srcMov.id && m.id !== tgtMov.id)]);
+
+        if (typeof window !== 'undefined') {
+          try {
+            const local = JSON.parse(localStorage.getItem('frenyer_local_bank_movements') || '[]');
+            local.unshift(srcMov, tgtMov);
+            localStorage.setItem('frenyer_local_bank_movements', JSON.stringify(local));
+          } catch {}
+        }
+
         showToast('Transferencia realizada con éxito.');
         setIsTransferModalOpen(false);
         setTfSourceId('');
@@ -693,14 +784,90 @@ export function BankAccountsPage() {
         setTfReference('');
         setTfNotes('');
         loadAllData();
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('frenyer:bank-updated'));
+        }
       } else {
         showToast(result.error || 'No se pudo completar la transferencia.', 'info');
       }
     } catch (error) {
-      showToast(
-        error instanceof Error ? error.message : 'Error de red al procesar transferencia.',
-        'info'
-      );
+      // Manejo resiliente local ante fallo de red
+      const srcMov: BankMovement = {
+        id: 'mov-' + Date.now() + '-src',
+        bank_account_id: tfSourceId,
+        type: 'SALIDA',
+        concept: `Transferencia enviada a ${tgtAccount.bank_name}: ${tfNotes.trim() || 'Transferencia'}`,
+        reference: tfReference.trim() || 'Transferencia',
+        user_name: userRole === 'Gerente General' ? 'Gerente General' : 'Cajero',
+        rate,
+        commission: comm,
+        commission_type: tfCommissionType,
+        amount: amt,
+        created_at: new Date().toISOString()
+      };
+
+      const tgtMov: BankMovement = {
+        id: 'mov-' + Date.now() + '-tgt',
+        bank_account_id: tfTargetId,
+        type: 'ENTRADA',
+        concept: `Transferencia recibida de ${srcAccount.bank_name}: ${tfNotes.trim() || 'Transferencia'}`,
+        reference: tfReference.trim() || 'Transferencia',
+        user_name: userRole === 'Gerente General' ? 'Gerente General' : 'Cajero',
+        rate,
+        commission: 0,
+        commission_type: 'Fija',
+        amount: depositAmount,
+        created_at: new Date().toISOString()
+      };
+
+      setAccounts(prev => prev.map(a => {
+        if (a.id === tfSourceId) {
+          return { ...a, balance: Math.round(((a.balance || 0) - (amt + comm)) * 100) / 100 };
+        }
+        if (a.id === tfTargetId) {
+          return { ...a, balance: Math.round(((a.balance || 0) + depositAmount) * 100) / 100 };
+        }
+        return a;
+      }));
+
+      if (selectedAccountForMovements) {
+        if (selectedAccountForMovements.id === tfSourceId) {
+          setSelectedAccountForMovements(prev => prev ? {
+            ...prev,
+            balance: Math.round(((prev.balance || 0) - (amt + comm)) * 100) / 100
+          } : null);
+        } else if (selectedAccountForMovements.id === tfTargetId) {
+          setSelectedAccountForMovements(prev => prev ? {
+            ...prev,
+            balance: Math.round(((prev.balance || 0) + depositAmount) * 100) / 100
+          } : null);
+        }
+      }
+
+      setBankMovements(prev => [srcMov, tgtMov, ...prev.filter(m => m.id !== srcMov.id && m.id !== tgtMov.id)]);
+
+      if (typeof window !== 'undefined') {
+        try {
+          const local = JSON.parse(localStorage.getItem('frenyer_local_bank_movements') || '[]');
+          local.unshift(srcMov, tgtMov);
+          localStorage.setItem('frenyer_local_bank_movements', JSON.stringify(local));
+        } catch {}
+      }
+
+      showToast('Transferencia procesada localmente.');
+      setIsTransferModalOpen(false);
+      setTfSourceId('');
+      setTfTargetId('');
+      setTfAmount('');
+      setTfRate(activeRate.toString());
+      setTfCommission('0');
+      setTfCommissionType('Fija');
+      setTfReference('');
+      setTfNotes('');
+      loadAllData();
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('frenyer:bank-updated'));
+      }
     } finally {
       setIsSubmittingTransfer(false);
     }
@@ -728,7 +895,7 @@ export function BankAccountsPage() {
   const countCOP = normalAccounts.filter(a => a.currency === 'COP').length;
 
   const getFilteredAccounts = () => {
-    let list = normalAccounts;
+    let list = activeFolder === 'inactivas' ? inactiveAccounts : normalAccounts;
     if (selectedClassification === 'Bolívares (VES)' || selectedClassification === 'VES') {
       list = list.filter(a => a.currency === 'VES');
     } else if (selectedClassification === 'Dólares (USD)' || selectedClassification === 'USD') {
@@ -841,19 +1008,108 @@ export function BankAccountsPage() {
       {/* Screen 1: MAIN BANK ACCOUNTS INTERFACE */}
       {!selectedAccountForMovements ? (
         <>
-          {/* Header - Clean & Minimal */}
+          {/* Header - Complete Actions */}
           <div className="page-head" style={{ marginBottom: 16 }}>
             <div>
               <h1 style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 22, fontWeight: 900, textTransform: 'uppercase', color: '#0f172a', letterSpacing: '0.02em', margin: 0 }}>
                 <Building size={24} style={{ color: '#7c3aed' }} /> CUENTAS BANCARIAS
               </h1>
+              <p className="muted small" style={{ margin: '4px 0 0 0', fontSize: 13 }}>
+                Gestión de saldos, transferencias entre cuentas, ingresos y egresos de fondos
+              </p>
             </div>
             
-            
-            <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+              <button
+                onClick={() => {
+                  setTfRate(activeRate.toString());
+                  setIsTransferModalOpen(true);
+                }}
+                style={{
+                  height: 38,
+                  padding: '0 14px',
+                  borderRadius: 8,
+                  background: '#7c3aed',
+                  color: '#fff',
+                  border: 'none',
+                  fontSize: 12,
+                  fontWeight: 700,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  cursor: 'pointer',
+                  boxShadow: '0 2px 8px rgba(124,58,237,0.3)'
+                }}
+              >
+                <ArrowLeftRight size={14} />
+                <span>Transferir entre Cuentas</span>
+              </button>
+
+              <button
+                onClick={() => {
+                  setDpTargetId('');
+                  setIsDepositModalOpen(true);
+                }}
+                style={{
+                  height: 38,
+                  padding: '0 14px',
+                  borderRadius: 8,
+                  background: '#fff',
+                  color: '#16a34a',
+                  border: '1px solid #16a34a',
+                  fontSize: 12,
+                  fontWeight: 700,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  cursor: 'pointer'
+                }}
+              >
+                <PlusCircle size={14} />
+                <span>Ingresar saldo</span>
+              </button>
+
+              <button
+                onClick={() => {
+                  setWdSourceId('');
+                  setIsWithdrawModalOpen(true);
+                }}
+                style={{
+                  height: 38,
+                  padding: '0 14px',
+                  borderRadius: 8,
+                  background: '#fff',
+                  color: '#dc2626',
+                  border: '1px solid #dc2626',
+                  fontSize: 12,
+                  fontWeight: 700,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  cursor: 'pointer'
+                }}
+              >
+                <MinusCircle size={14} />
+                <span>Retirar saldo</span>
+              </button>
+
+
               <button
                 onClick={loadAllData}
-                style={{ height: 38, padding: '0 14px', borderRadius: 8, border: '1px solid #7c3aed', background: '#fff', color: '#7c3aed', fontSize: 12, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}
+                style={{
+                  height: 38,
+                  padding: '0 14px',
+                  borderRadius: 8,
+                  border: '1px solid #7c3aed',
+                  background: '#fff',
+                  color: '#7c3aed',
+                  fontSize: 12,
+                  fontWeight: 700,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  cursor: 'pointer'
+                }}
               >
                 <RefreshCw size={14} className={isLoading ? 'animate-spin' : ''} />
                 <span>Sincronizar</span>
@@ -861,183 +1117,250 @@ export function BankAccountsPage() {
             </div>
           </div>
 
-          {/* Search */}
-          <div className="card" style={{ padding: '12px 18px', display: 'flex', justifyContent: 'flex-end', alignItems: 'center', marginBottom: 16 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: '#f8fafc', padding: '6px 12px', borderRadius: 8, border: '1px solid var(--border)', width: 250 }}>
-                  <Search size={14} style={{ color: '#94a3b8' }} />
-                  <input
-                    placeholder="Buscar cuenta..."
-                    value={accountSearch}
-                    onChange={(e) => setAccountSearch(e.target.value)}
-                    style={{ border: 'none', background: 'transparent', outline: 'none', fontSize: 12, width: '100%' }}
-                  />
-                  {accountSearch && (
-                    <button onClick={() => setAccountSearch('')} style={{ border: 'none', background: 'transparent', cursor: 'pointer', padding: 0, color: '#94a3b8' }}>
-                      <X size={12} />
+          {/* Search & Active/Inactive selector */}
+          <div className="card" style={{ padding: '12px 18px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, flexWrap: 'wrap', gap: 10 }}>
+            <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+
+
+              {inactiveAccounts.length > 0 && (
+                <button
+                  onClick={() => setActiveFolder('inactivas')}
+                  style={{
+                    padding: '6px 14px',
+                    borderRadius: 8,
+                    border: activeFolder === 'inactivas' ? '1px solid #7c3aed' : '1px solid var(--border)',
+                    background: activeFolder === 'inactivas' ? '#f5f3ff' : '#fff',
+                    color: activeFolder === 'inactivas' ? '#7c3aed' : '#64748b',
+                    fontSize: 12,
+                    fontWeight: 700,
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 6
+                  }}
+                >
+                  <FolderArchive size={14} />
+                  <span>Inactivas ({inactiveAccounts.length})</span>
+                </button>
+              )}
+            </div>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: '#f8fafc', padding: '6px 12px', borderRadius: 8, border: '1px solid var(--border)', width: 250 }}>
+              <Search size={14} style={{ color: '#94a3b8' }} />
+              <input
+                placeholder="Buscar cuenta..."
+                value={accountSearch}
+                onChange={(e) => setAccountSearch(e.target.value)}
+                style={{ border: 'none', background: 'transparent', outline: 'none', fontSize: 12, width: '100%' }}
+              />
+              {accountSearch && (
+                <button onClick={() => setAccountSearch('')} style={{ border: 'none', background: 'transparent', cursor: 'pointer', padding: 0, color: '#94a3b8' }}>
+                  <X size={12} />
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Barra Selectora / Filtro para Clasificar Cuentas */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, flexWrap: 'wrap', gap: 10 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+              <span style={{ fontSize: 11, fontWeight: 800, color: '#64748b', textTransform: 'uppercase' }}>Clasificar:</span>
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                {classificationTabs.map(tab => {
+                  const isActive = selectedClassification === tab.name;
+                  return (
+                    <button
+                      key={tab.name}
+                      onClick={() => setSelectedClassification(tab.name)}
+                      style={{
+                        padding: '6px 14px',
+                        borderRadius: 20,
+                        border: '1px solid',
+                        borderColor: '#7c3aed',
+                        background: isActive ? '#7c3aed' : '#fff',
+                        color: isActive ? '#fff' : '#7c3aed',
+                        fontSize: 11,
+                        fontWeight: 700,
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 6,
+                        boxShadow: isActive ? '0 2px 6px rgba(124,58,237,0.25)' : 'none',
+                        transition: 'all 0.15s ease'
+                      }}
+                    >
+                      <span>{tab.label}</span>
+                      <span style={{
+                        background: isActive ? 'rgba(255,255,255,0.3)' : '#f1f5f9',
+                        color: isActive ? '#fff' : '#7c3aed',
+                        borderRadius: '50%',
+                        minWidth: 16,
+                        height: 16,
+                        padding: '0 4px',
+                        fontSize: 9,
+                        display: 'grid',
+                        placeItems: 'center',
+                        fontWeight: 800
+                      }}>{tab.count}</span>
                     </button>
-                  )}
-                </div>
+                  );
+                })}
               </div>
+            </div>
 
-              {/* Barra Selectora / Filtro para Clasificar Cuentas */}
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, flexWrap: 'wrap', gap: 10 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                  <span style={{ fontSize: 11, fontWeight: 800, color: '#64748b', textTransform: 'uppercase' }}>Clasificar:</span>
-                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                    {classificationTabs.map(tab => {
-                      const isActive = selectedClassification === tab.name;
-                      return (
-                        <button
-                          key={tab.name}
-                          onClick={() => setSelectedClassification(tab.name)}
-                          style={{
-                            padding: '6px 14px',
-                            borderRadius: 20,
-                            border: '1px solid',
-                            borderColor: '#7c3aed',
-                            background: isActive ? '#7c3aed' : '#fff',
-                            color: isActive ? '#fff' : '#7c3aed',
-                            fontSize: 11,
-                            fontWeight: 700,
-                            cursor: 'pointer',
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: 6,
-                            boxShadow: isActive ? '0 2px 6px rgba(124,58,237,0.25)' : 'none',
-                            transition: 'all 0.15s ease'
-                          }}
-                        >
-                          <span>{tab.label}</span>
-                          <span style={{
-                            background: isActive ? 'rgba(255,255,255,0.3)' : '#f1f5f9',
-                            color: isActive ? '#fff' : '#7c3aed',
-                            borderRadius: '50%',
-                            minWidth: 16,
-                            height: 16,
-                            padding: '0 4px',
-                            fontSize: 9,
-                            display: 'grid',
-                            placeItems: 'center',
-                            fontWeight: 800
-                          }}>{tab.count}</span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
+            <span style={{ fontSize: 11, color: '#64748b', fontWeight: 600 }}>
+              Mostrando <b>{filteredVisibleAccounts.length}</b> de {activeFolder === 'inactivas' ? inactiveAccounts.length : normalAccounts.length} cuentas
+            </span>
+          </div>
 
-                <span style={{ fontSize: 11, color: '#64748b', fontWeight: 600 }}>
-                  Mostrando <b>{filteredVisibleAccounts.length}</b> de {normalAccounts.length} cuentas
-                </span>
-              </div>
-
-              {/* Grid of Bank Accounts */}
-              {filteredVisibleAccounts.length === 0 ? (
-                <div style={{ padding: '60px 20px', textAlign: 'center', background: '#fff', borderRadius: 12, border: '1px solid var(--border)' }}>
-                  <Building size={32} strokeWidth={1.5} style={{ color: '#94a3b8', marginBottom: 10 }} />
-                  <p style={{ margin: 0, fontWeight: 700, color: '#334155' }}>No hay cuentas registradas con este filtro.</p>
-                  <button
-                    onClick={() => { setSelectedClassification('Todas'); setAccountSearch(''); }}
-                    style={{ background: 'transparent', border: 'none', color: '#7c3aed', cursor: 'pointer', fontSize: 12, fontWeight: 700, marginTop: 8 }}
-                  >
-                    Ver todas las cuentas
-                  </button>
-                </div>
-              ) : (
-                <div className="grid grid-3" style={{ gap: 14 }}>
-                  {filteredVisibleAccounts.map(acc => {
-                    const linkedPms = paymentMethods.filter(pm => pm.bank_account_id === acc.id);
-                    const isVES = acc.currency === 'VES';
-                    
-                    return (
-                      <div key={acc.id} className="card" style={{ padding: 18, display: 'flex', flexDirection: 'column', justifyContent: 'space-between', minHeight: 180 }}>
-                        <div>
-                          {/* Top Header */}
-                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 10 }}>
-                            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                              <div style={{ width: 34, height: 34, borderRadius: 8, background: '#f5f3ff', color: '#7c3aed', display: 'grid', placeItems: 'center' }}>
-                                <Building size={16} />
-                              </div>
-                              <div>
-                                <h3 style={{ margin: 0, fontSize: 14, fontWeight: 800, color: '#0f172a' }}>{acc.bank_name}</h3>
-                                <span className="muted small" style={{ fontSize: 11 }}>{acc.account_number}</span>
-                              </div>
-                            </div>
-                            <Badge tone="brand">{acc.currency}</Badge>
+          {/* Grid of Bank Accounts */}
+          {filteredVisibleAccounts.length === 0 ? (
+            <div style={{ padding: '60px 20px', textAlign: 'center', background: '#fff', borderRadius: 12, border: '1px solid var(--border)' }}>
+              <Building size={32} strokeWidth={1.5} style={{ color: '#94a3b8', marginBottom: 10 }} />
+              <p style={{ margin: 0, fontWeight: 700, color: '#334155' }}>No hay cuentas registradas con este filtro.</p>
+              <button
+                onClick={() => { setSelectedClassification('Todas'); setAccountSearch(''); }}
+                style={{ background: 'transparent', border: 'none', color: '#7c3aed', cursor: 'pointer', fontSize: 12, fontWeight: 700, marginTop: 8 }}
+              >
+                Ver todas las cuentas
+              </button>
+            </div>
+          ) : (
+            <div className="grid grid-3" style={{ gap: 14 }}>
+              {filteredVisibleAccounts.map(acc => {
+                const linkedPms = paymentMethods.filter(pm => pm.bank_account_id === acc.id);
+                const isVES = acc.currency === 'VES';
+                const isInactive = acc.status === 'Inactivo' || acc.status === 'Papelera';
+                
+                return (
+                  <div key={acc.id} className="card" style={{ padding: 18, display: 'flex', flexDirection: 'column', justifyContent: 'space-between', minHeight: 200, opacity: isInactive ? 0.75 : 1 }}>
+                    <div>
+                      {/* Top Header */}
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 10 }}>
+                        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                          <div style={{ width: 34, height: 34, borderRadius: 8, background: isInactive ? '#f1f5f9' : '#f5f3ff', color: isInactive ? '#64748b' : '#7c3aed', display: 'grid', placeItems: 'center' }}>
+                            <Building size={16} />
                           </div>
-
-                          {/* Balance section */}
-                          <div style={{ margin: '14px 0' }}>
-                            <div style={{ fontSize: 22, fontWeight: 900, color: '#0f172a' }}>
-                              {isVES ? formatVES(acc.balance) : formatUSD(acc.balance, '$ ')}
-                            </div>
-                            {isVES && (
-                              <div className="muted small" style={{ fontSize: 11, marginTop: 2 }}>
-                                Ref: {formatUSD(acc.balance / activeRate, '$')}
-                              </div>
-                            )}
-                          </div>
-
-                          {/* Linked Payment Methods */}
-                          <div style={{ borderTop: '1px solid #f1f5f9', paddingTop: 10, marginTop: 10 }}>
-                            <span style={{ fontSize: 9, fontWeight: 800, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.04em', display: 'block', marginBottom: 6 }}>
-                              MÉTODOS ASOCIADOS ({linkedPms.length})
-                            </span>
-                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-                              {linkedPms.length === 0 ? (
-                                <span style={{ fontSize: 10, color: '#94a3b8', fontStyle: 'italic' }}>Ninguno fijado</span>
-                              ) : (
-                                linkedPms.map(pm => (
-                                  <span
-                                    key={pm.id}
-                                    style={{
-                                      background: '#f5f3ff',
-                                      color: '#6d28d9',
-                                      border: '1px solid #ddd6fe',
-                                      borderRadius: 4,
-                                      padding: '2px 6px',
-                                      fontSize: 9,
-                                      fontWeight: 700
-                                    }}
-                                  >
-                                    {pm.name}
-                                  </span>
-                                ))
-                              )}
-                            </div>
+                          <div>
+                            <h3 style={{ margin: 0, fontSize: 14, fontWeight: 800, color: '#0f172a' }}>{acc.bank_name}</h3>
+                            <span className="muted small" style={{ fontSize: 11 }}>{acc.account_number}</span>
                           </div>
                         </div>
-
-                        {/* Bottom Action bar */}
-                        <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', marginTop: 14, paddingTop: 10, borderTop: '1px solid var(--border)' }}>
-                          <button
-                            onClick={() => setSelectedAccountForMovements(acc)}
-                            style={{
-                              background: 'transparent',
-                              border: 'none',
-                              color: '#7c3aed',
-                              fontSize: 11,
-                              fontWeight: 700,
-                              cursor: 'pointer',
-                              display: 'flex',
-                              alignItems: 'center',
-                              gap: 4
-                            }}
-                          >
-                            Ver movimientos ↗
-                          </button>
+                        <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+                          {isInactive && <Badge tone="danger">Inactivo</Badge>}
+                          <Badge tone="brand">{acc.currency}</Badge>
                         </div>
                       </div>
-                    );
-                  })}
-                </div>
-              )}
+
+                      {/* Balance section */}
+                      <div style={{ margin: '14px 0' }}>
+                        <div style={{ fontSize: 22, fontWeight: 900, color: '#0f172a' }}>
+                          {isVES ? formatVES(acc.balance) : formatUSD(acc.balance, '$ ')}
+                        </div>
+                        {isVES && (
+                          <div className="muted small" style={{ fontSize: 11, marginTop: 2 }}>
+                            Ref: {formatUSD(acc.balance / activeRate, '$')}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Linked Payment Methods */}
+                      <div style={{ borderTop: '1px solid #f1f5f9', paddingTop: 10, marginTop: 10 }}>
+                        <span style={{ fontSize: 9, fontWeight: 800, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.04em', display: 'block', marginBottom: 6 }}>
+                          MÉTODOS ASOCIADOS ({linkedPms.length})
+                        </span>
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                          {linkedPms.length === 0 ? (
+                            <span style={{ fontSize: 10, color: '#94a3b8', fontStyle: 'italic' }}>Ninguno fijado</span>
+                          ) : (
+                            linkedPms.map(pm => (
+                              <span
+                                key={pm.id}
+                                style={{
+                                  background: '#f5f3ff',
+                                  color: '#6d28d9',
+                                  border: '1px solid #ddd6fe',
+                                  borderRadius: 4,
+                                  padding: '2px 6px',
+                                  fontSize: 9,
+                                  fontWeight: 700
+                                }}
+                              >
+                                {pm.name}
+                              </span>
+                            ))
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Bottom Action bar with quick actions */}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 14, paddingTop: 10, borderTop: '1px solid var(--border)', flexWrap: 'wrap', gap: 6 }}>
+                      {isInactive ? (
+                        <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                          <button
+                            onClick={() => handleRestoreBankAccount(acc.id)}
+                            style={{
+                              background: '#ecfdf5',
+                              border: '1px solid #a7f3d0',
+                              color: '#059669',
+                              borderRadius: 6,
+                              padding: '4px 8px',
+                              fontSize: 11,
+                              fontWeight: 700,
+                              cursor: 'pointer'
+                            }}
+                          >
+                            Reactivar
+                          </button>
+                          <button
+                            onClick={() => handlePurgeBankAccount(acc)}
+                            style={{
+                              background: '#fef2f2',
+                              border: '1px solid #fecaca',
+                              color: '#dc2626',
+                              borderRadius: 6,
+                              padding: '4px 8px',
+                              fontSize: 11,
+                              fontWeight: 700,
+                              cursor: 'pointer'
+                            }}
+                          >
+                            Eliminar
+                          </button>
+                        </div>
+                      ) : (
+                        <div />
+                      )}
+
+                      <button
+                        onClick={() => setSelectedAccountForMovements(acc)}
+                        style={{
+                          background: 'transparent',
+                          border: 'none',
+                          color: '#7c3aed',
+                          fontSize: 11,
+                          fontWeight: 700,
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 4
+                        }}
+                      >
+                        Movimientos ↗
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </>
       ) : (
         /* Screen 2: MOVEMENTS DETAILS SCREEN */
         <>
           {/* Back Action Bar */}
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, flexWrap: 'wrap', gap: 10 }}>
             <button
               onClick={() => setSelectedAccountForMovements(null)}
               style={{
@@ -1055,7 +1378,75 @@ export function BankAccountsPage() {
               <ArrowLeft size={16} /> Volver a cuentas
             </button>
 
-            <div style={{ display: 'flex', gap: 8 }}>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+              <button
+                onClick={() => {
+                  setDpTargetId(selectedAccountForMovements.id);
+                  setIsDepositModalOpen(true);
+                }}
+                style={{
+                  height: 34,
+                  padding: '0 12px',
+                  borderRadius: 6,
+                  background: '#fff',
+                  color: '#16a34a',
+                  border: '1px solid #16a34a',
+                  fontSize: 11,
+                  fontWeight: 700,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 4,
+                  cursor: 'pointer'
+                }}
+              >
+                <PlusCircle size={13} /> Ingresar saldo
+              </button>
+              <button
+                onClick={() => {
+                  setWdSourceId(selectedAccountForMovements.id);
+                  setIsWithdrawModalOpen(true);
+                }}
+                style={{
+                  height: 34,
+                  padding: '0 12px',
+                  borderRadius: 6,
+                  background: '#fff',
+                  color: '#dc2626',
+                  border: '1px solid #dc2626',
+                  fontSize: 11,
+                  fontWeight: 700,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 4,
+                  cursor: 'pointer'
+                }}
+              >
+                <MinusCircle size={13} /> Retirar saldo
+              </button>
+              <button
+                onClick={() => {
+                  setTfSourceId(selectedAccountForMovements.id);
+                  setTfRate(activeRate.toString());
+                  setIsTransferModalOpen(true);
+                }}
+                style={{
+                  height: 34,
+                  padding: '0 12px',
+                  borderRadius: 6,
+                  background: '#7c3aed',
+                  color: '#fff',
+                  border: 'none',
+                  fontSize: 11,
+                  fontWeight: 700,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 4,
+                  cursor: 'pointer',
+                  boxShadow: '0 2px 6px rgba(124,58,237,0.25)'
+                }}
+              >
+                <ArrowLeftRight size={13} /> Transferir entre Cuentas
+              </button>
             </div>
           </div>
 
@@ -1440,6 +1831,42 @@ export function BankAccountsPage() {
                 <input type="number" step="0.01" className="input" placeholder="0.00" value={tfAmount} onChange={(e) => setTfAmount(e.target.value)} required />
               </div>
 
+              {/* Conversion and Balance preview */}
+              {(() => {
+                const src = normalAccounts.find(a => a.id === tfSourceId);
+                const tgt = normalAccounts.find(a => a.id === tfTargetId);
+                const amt = parseFloat(tfAmount) || 0;
+                const rate = parseFloat(tfRate) || activeRate;
+                if (!src || !tgt || amt <= 0) return null;
+
+                let calculatedTgt = amt;
+                if (src.currency !== tgt.currency) {
+                  if (src.currency === 'VES' && tgt.currency === 'USD') {
+                    calculatedTgt = amt / rate;
+                  } else if (src.currency === 'USD' && tgt.currency === 'VES') {
+                    calculatedTgt = amt * rate;
+                  }
+                }
+
+                return (
+                  <div style={{ background: '#f5f3ff', border: '1px solid #ddd6fe', borderRadius: 8, padding: '10px 12px', fontSize: 11, color: '#4c1d95', display: 'flex', flexDirection: 'column', gap: 4 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 700 }}>
+                      <span>Monto a debitar ({src.currency}):</span>
+                      <span>{src.currency === 'VES' ? formatVES(amt) : formatUSD(amt, '$')}</span>
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 800, color: '#7c3aed' }}>
+                      <span>Destino recibirá ({tgt.currency}):</span>
+                      <span>{tgt.currency === 'VES' ? formatVES(calculatedTgt) : formatUSD(calculatedTgt, '$')}</span>
+                    </div>
+                    {src.currency !== tgt.currency && (
+                      <span style={{ fontSize: 10, color: '#6d28d9', fontStyle: 'italic', marginTop: 2 }}>
+                        Calculado a tasa: {rate.toFixed(4)} Bs/USD
+                      </span>
+                    )}
+                  </div>
+                );
+              })()}
+
               <div className="grid grid-2" style={{ gap: 10 }}>
                 <div className="field">
                   <label style={{ fontSize: 11, fontWeight: 700, color: '#475569' }}>TASA OFICIAL *</label>
@@ -1514,6 +1941,19 @@ export function BankAccountsPage() {
                 </select>
               </div>
 
+              {(() => {
+                const src = normalAccounts.find(a => a.id === wdSourceId);
+                const amt = parseFloat(wdAmount) || 0;
+                if (!src) return null;
+                const isOverdraft = amt > (src.balance || 0);
+                return (
+                  <div style={{ background: isOverdraft ? '#fef2f2' : '#f8fafc', border: `1px solid ${isOverdraft ? '#fecaca' : '#e2e8f0'}`, borderRadius: 8, padding: '8px 12px', fontSize: 11, color: isOverdraft ? '#dc2626' : '#475569', display: 'flex', justifyContent: 'space-between', fontWeight: 600 }}>
+                    <span>Saldo disponible: {src.currency === 'VES' ? formatVES(src.balance) : formatUSD(src.balance, '$')}</span>
+                    {isOverdraft && <span style={{ fontWeight: 800 }}>⚠️ Supera el saldo</span>}
+                  </div>
+                );
+              })()}
+
               <div className="field">
                 <label style={{ fontSize: 11, fontWeight: 700, color: '#475569' }}>MONTO A RETIRAR *</label>
                 <input type="number" step="0.01" className="input" placeholder="0.00" value={wdAmount} onChange={(e) => setWdAmount(e.target.value)} required />
@@ -1580,6 +2020,16 @@ export function BankAccountsPage() {
                   ))}
                 </select>
               </div>
+
+              {(() => {
+                const tgt = normalAccounts.find(a => a.id === dpTargetId);
+                if (!tgt) return null;
+                return (
+                  <div style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 8, padding: '8px 12px', fontSize: 11, color: '#166534', display: 'flex', justifyContent: 'space-between', fontWeight: 600 }}>
+                    <span>Saldo actual: {tgt.currency === 'VES' ? formatVES(tgt.balance) : formatUSD(tgt.balance, '$')}</span>
+                  </div>
+                );
+              })()}
 
               <div className="field">
                 <label style={{ fontSize: 11, fontWeight: 700, color: '#475569' }}>MONTO A INGRESAR *</label>
