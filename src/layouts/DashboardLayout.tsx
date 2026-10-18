@@ -162,6 +162,21 @@ export function DashboardLayout() {
       setAuthStatus('noOrganization');
       return;
     }
+
+    // NEW: Check if user is a shop_customer
+    const { data: customer } = await supabase
+      .from('shop_customers')
+      .select('id')
+      .eq('id', data.session.user.id)
+      .maybeSingle();
+
+    if (customer) {
+      setAuthMessage('Esta cuenta es de cliente. No tiene acceso al panel administrativo.');
+      await supabase.auth.signOut();
+      setAuthStatus('signedOut');
+      return;
+    }
+
     setAuthMessage('');
     setAuthStatus('authenticated');
   };

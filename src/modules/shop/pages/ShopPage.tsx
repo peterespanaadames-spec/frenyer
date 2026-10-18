@@ -24,8 +24,14 @@ import {
   MessageCircle,
   Home,
   User,
-  Building
+  Building,
+  Mail,
+  LockKeyhole,
+  LogIn,
+  Eye,
+  EyeOff
 } from 'lucide-react';
+import { supabase } from '../../../lib/supabase/client';
 import {
   getActiveExchangeRate,
   convertUSDtoVES,
@@ -1634,8 +1640,17 @@ export function ShopPage() {
             <button
               type="button"
               className="cr-icon-btn"
-              onClick={() => setIsTrackerOpen(true)}
-              title="Mis pedidos y seguimiento"
+              onClick={async () => {
+                // Check if user is logged in (use Supabase client)
+                const { data: { session } } = await supabase.auth.getSession();
+                if (session) {
+                  await supabase.auth.signOut();
+                  showToast('Sesión cerrada correctamente.');
+                } else {
+                  setIsTrackerOpen(true); // Open login/tracker modal
+                }
+              }}
+              title="Mi cuenta / Cerrar sesión"
             >
               <User size={22} />
             </button>
@@ -2531,7 +2546,14 @@ export function ShopPage() {
                   </button>
                   <button
                     type="button"
-                    onClick={() => {
+                    onClick={async () => {
+                      const { data: { session } } = await supabase.auth.getSession();
+                      if (!session) {
+                        showToast('Debes iniciar sesión para finalizar la compra.');
+                        setIsCartOpen(false);
+                        setIsTrackerOpen(true); // Reutilizar modal de seguimiento/login
+                        return;
+                      }
                       setIsCartOpen(false);
                       setCheckoutStep(1);
                       setIsCheckoutOpen(true);
@@ -3034,7 +3056,7 @@ export function ShopPage() {
         </div>
       )}
 
-      {/* 13. TRACKER MODAL ("MIS PEDIDOS") */}
+      {/* 13. AUTH MODAL ("CREAR CUENTA") */}
       {isTrackerOpen && (
         <div
           style={{
@@ -3052,97 +3074,145 @@ export function ShopPage() {
         >
           <div
             style={{
-              width: 'min(540px, 100%)',
-              maxHeight: '80vh',
+              width: 'min(400px, 100%)',
               background: '#ffffff',
               borderRadius: 20,
-              padding: 24,
-              boxShadow: '0 20px 50px rgba(0,0,0,0.2)',
-              display: 'flex',
-              flexDirection: 'column'
+              padding: 32,
+              boxShadow: '0 20px 50px rgba(0,0,0,0.1)',
             }}
             onClick={e => e.stopPropagation()}
           >
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <FileText size={20} style={{ color: '#1e3a8a' }} />
-                <h3 style={{ margin: 0, fontSize: 17 }}>Rastrear mis Compras</h3>
-              </div>
-              <button
-                type="button"
-                onClick={() => setIsTrackerOpen(false)}
-                style={{ border: 'none', background: 'transparent', cursor: 'pointer' }}
-              >
-                <X size={20} />
-              </button>
-            </div>
-
-            <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
-              <input
-                type="text"
-                className="input"
-                placeholder="Número de pedido o teléfono..."
-                value={trackerQuery}
-                onChange={e => setTrackerQuery(e.target.value)}
-                onKeyDown={e => e.key === 'Enter' && handleSearchTrackedOrders()}
-              />
-              <button
-                type="button"
-                onClick={handleSearchTrackedOrders}
-                disabled={isSearchingOrders}
-                style={{
-                  padding: '0 16px',
-                  borderRadius: 8,
-                  background: '#1e3a8a',
-                  color: '#fff',
-                  border: 'none',
-                  fontWeight: 600,
-                  cursor: 'pointer'
-                }}
-              >
-                Buscar
-              </button>
-            </div>
-
-            <div style={{ overflowY: 'auto', flex: 1, display: 'flex', flexDirection: 'column', gap: 10 }}>
-              {isSearchingOrders ? (
-                <div style={{ textAlign: 'center', padding: 20, color: '#64748b' }}>Consultando...</div>
-              ) : trackedOrders.length === 0 ? (
-                <div style={{ textAlign: 'center', padding: 30, color: '#94a3b8', fontSize: 13 }}>
-                  Ingresa tu número de orden o teléfono para consultar el estatus.
-                </div>
-              ) : (
-                trackedOrders.map((ord: any) => (
-                  <div
-                    key={ord.id}
-                    style={{
-                      border: '1px solid #e2e8f0',
-                      borderRadius: 12,
-                      padding: 12,
-                      background: '#f8fafc'
-                    }}
-                  >
-                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
-                      <b style={{ color: '#1e3a8a' }}>{ord.order_number}</b>
-                      <span
-                        style={{
-                          background: ord.delivery_status === 'ENTREGADO' ? '#dcfce7' : '#fef9c3',
-                          color: ord.delivery_status === 'ENTREGADO' ? '#166534' : '#854d0e',
-                          padding: '2px 8px',
-                          borderRadius: 9999,
-                          fontSize: 11,
-                          fontWeight: 700
-                        }}
-                      >
-                        {ord.delivery_status}
-                      </span>
-                    </div>
-                    <div style={{ fontSize: 12, color: '#64748b' }}>
-                      Total: <b>{formatVES(ord.total_ves)} ({formatUSD(ord.total_usd)})</b>
-                    </div>
+            <h2 id="auth-modal-title" style={{ margin: '0 0 8px', fontSize: 28, fontWeight: 800, color: '#172033' }}>
+              Iniciar sesión
+            </h2>
+            <p style={{ margin: '0 0 24px', fontSize: 14, color: '#64748b' }}>
+              Ingresa a tu espacio de gestión empresarial.
+            </p>
+            
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+              {/* Registration Fields - Now hidden by default */}
+              <div id="register_fields" style={{ display: 'none', flexDirection: 'column', gap: 16 }}>
+                <div className="field">
+                  <label style={{ fontSize: 13, fontWeight: 650, color: '#172033' }}>Nombre completo</label>
+                  <div style={{ position: 'relative', display: 'flex', alignItems: 'center', marginTop: 4 }}>
+                    <User size={18} style={{ position: 'absolute', left: 12, color: '#94a3b8' }} />
+                    <input type="text" className="input" placeholder="Tu nombre" id="auth_full_name" style={{ paddingLeft: 40 }} />
                   </div>
-                ))
-              )}
+                </div>
+                <div className="field">
+                  <label style={{ fontSize: 13, fontWeight: 650, color: '#172033' }}>Nombre de la empresa</label>
+                  <div style={{ position: 'relative', display: 'flex', alignItems: 'center', marginTop: 4 }}>
+                    <Building size={18} style={{ position: 'absolute', left: 12, color: '#94a3b8' }} />
+                    <input type="text" className="input" placeholder="Mi empresa" id="auth_company" style={{ paddingLeft: 40 }} />
+                  </div>
+                </div>
+              </div>
+
+              <div className="field">
+                <label style={{ fontSize: 13, fontWeight: 650, color: '#172033' }}>Correo electrónico</label>
+                <div style={{ position: 'relative', display: 'flex', alignItems: 'center', marginTop: 4 }}>
+                  <Mail size={18} style={{ position: 'absolute', left: 12, color: '#94a3b8' }} />
+                  <input type="email" className="input" placeholder="correo@ejemplo.com" id="auth_email" style={{ paddingLeft: 40 }} />
+                </div>
+              </div>
+              
+              <div className="field">
+                <label style={{ fontSize: 13, fontWeight: 650, color: '#172033' }}>Contraseña</label>
+                <div style={{ position: 'relative', display: 'flex', alignItems: 'center', marginTop: 4 }}>
+                  <LockKeyhole size={18} style={{ position: 'absolute', left: 12, color: '#94a3b8' }} />
+                  <input type="password" className="input" placeholder="Mínimo 8 caracteres" id="auth_password" style={{ paddingLeft: 40 }} />
+                  <Eye size={18} style={{ position: 'absolute', right: 12, color: '#94a3b8', cursor: 'pointer' }} />
+                </div>
+              </div>
+
+              {/* Confirm Password Field - Hidden by default */}
+              <div id="confirm_password_field" style={{ display: 'none', flexDirection: 'column', gap: 16 }}>
+                <div className="field">
+                  <label style={{ fontSize: 13, fontWeight: 650, color: '#172033' }}>Confirmar contraseña</label>
+                  <div style={{ position: 'relative', display: 'flex', alignItems: 'center', marginTop: 4 }}>
+                    <LockKeyhole size={18} style={{ position: 'absolute', left: 12, color: '#94a3b8' }} />
+                    <input type="password" className="input" placeholder="Repite la contraseña" id="auth_confirm_password" style={{ paddingLeft: 40 }} />
+                  </div>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={async () => {
+                  const regFields = document.getElementById('register_fields')!;
+                  const isRegistering = regFields.style.display === 'flex';
+                  
+                  const email = (document.getElementById('auth_email') as HTMLInputElement).value;
+                  const password = (document.getElementById('auth_password') as HTMLInputElement).value;
+                  
+                  if (!isRegistering) {
+                    // Login
+                    const { error } = await supabase.auth.signInWithPassword({ email, password });
+                    if (error) showToast(error.message, 'info');
+                    else {
+                      showToast('Sesión iniciada.');
+                      setIsTrackerOpen(false);
+                    }
+                  } else {
+                    // Register
+                    const full_name = (document.getElementById('auth_full_name') as HTMLInputElement).value;
+                    const confirmPassword = (document.getElementById('auth_confirm_password') as HTMLInputElement).value;
+                    
+                    if (password !== confirmPassword) {
+                      showToast('Las contraseñas no coinciden.', 'info');
+                      return;
+                    }
+
+                    fetch('/api/auth/customer/register', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ email, password, full_name })
+                    }).then(r => r.json()).then(data => {
+                      if (data.success) {
+                        showToast('Cuenta creada. Inicia sesión.');
+                        // Toggle back to login
+                        regFields.style.display = 'none';
+                        document.getElementById('confirm_password_field')!.style.display = 'none';
+                        document.getElementById('auth-modal-title')!.innerText = 'Iniciar sesión';
+                      } else {
+                        showToast(data.error, 'info');
+                      }
+                    });
+                  }
+                }}
+                style={{ width: '100%', padding: 12, borderRadius: 10, background: '#4c1d95', color: '#fff', border: 'none', fontWeight: 700, fontSize: 15, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}
+              >
+                <LogIn size={18} /> Iniciar sesión
+              </button>
+              
+              <button
+                type="button"
+                onClick={() => {
+                  const regFields = document.getElementById('register_fields')!;
+                  const confirmFields = document.getElementById('confirm_password_field')!;
+                  const title = document.getElementById('auth-modal-title')!;
+                  const btn = document.querySelector('button[type="button"][style*="background: #4c1d95"]') as HTMLButtonElement;
+                  
+                  if (regFields.style.display === 'none') {
+                    regFields.style.display = 'flex';
+                    confirmFields.style.display = 'flex';
+                    title.innerText = 'Crear cuenta';
+                    btn.innerText = 'Crear cuenta';
+                  } else {
+                    regFields.style.display = 'none';
+                    confirmFields.style.display = 'none';
+                    title.innerText = 'Iniciar sesión';
+                    btn.innerText = 'Iniciar sesión';
+                  }
+                }}
+                style={{ background: 'transparent', border: 'none', color: '#64748b', fontSize: 13, cursor: 'pointer' }}
+              >
+                {document.getElementById('register_fields')?.style.display === 'flex' ? (
+                  <>¿Ya tienes una cuenta? <span style={{ color: '#4c1d95', fontWeight: 600 }}>Inicia sesión</span></>
+                ) : (
+                  <>¿No tienes una cuenta? <span style={{ color: '#4c1d95', fontWeight: 600 }}>Regístrate aquí</span></>
+                )}
+              </button>
             </div>
           </div>
         </div>

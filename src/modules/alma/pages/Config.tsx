@@ -411,6 +411,7 @@ export function ConfigPage() {
   const [newUserTitle, setNewUserTitle] = useState('Cajero Principal');
   const [newUserActive, setNewUserActive] = useState(true);
   const [newUserPermissions, setNewUserPermissions] = useState<string[]>(['ventas']);
+  const [newUserPassword, setNewUserPassword] = useState('');
   const [isSavingUser, setIsSavingUser] = useState(false);
 
   // Alert/Notifications
@@ -588,6 +589,7 @@ export function ConfigPage() {
     setEditingUserId(null);
     setNewUserName('');
     setNewUserEmail('');
+    setNewUserPassword('');
     setNewUserRole('Cashier');
     setNewUserTitle('Cajero Principal');
     setNewUserActive(true);
@@ -599,6 +601,7 @@ export function ConfigPage() {
     setEditingUserId(user.id);
     setNewUserName(user.name);
     setNewUserEmail(user.email);
+    setNewUserPassword('');
     setNewUserRole((user.role as any) || 'Cashier');
     setNewUserTitle(user.title || '');
     setNewUserActive(user.active);
@@ -615,23 +618,29 @@ export function ConfigPage() {
 
     setIsSavingUser(true);
     try {
+      const payload: any = {
+        name: newUserName.trim(),
+        email: newUserEmail.trim(),
+        full_name: newUserName.trim(),
+        role: newUserRole,
+        title: newUserTitle.trim(),
+        active: newUserActive,
+        permissions: newUserPermissions
+      };
+      if (newUserPassword.trim()) {
+        payload.password = newUserPassword.trim();
+      }
+
       if (editingUserId) {
         // Actualizar usuario existente
-        const res = await fetch(`/api/users/${editingUserId}`, {
+        const res = await fetch(`/api/admin/users/${editingUserId}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            name: newUserName.trim(),
-            email: newUserEmail.trim(),
-            role: newUserRole,
-            title: newUserTitle.trim(),
-            active: newUserActive,
-            permissions: newUserPermissions
-          })
+          body: JSON.stringify(payload)
         });
         const json = await res.json();
-        if (json.success && json.data) {
-          setUsers(prev => prev.map(u => String(u.id) === String(editingUserId) ? json.data : u));
+        if (json.success) {
+          await fetchUsers(); // Re-fetch
           showNotification(`Usuario ${newUserName} actualizado correctamente.`);
           setIsAddUserModalOpen(false);
         } else {
@@ -639,22 +648,15 @@ export function ConfigPage() {
         }
       } else {
         // Crear nuevo usuario asociado
-        const res = await fetch('/api/users', {
+        const res = await fetch('/api/admin/users/add', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            name: newUserName.trim(),
-            email: newUserEmail.trim(),
-            role: newUserRole,
-            title: newUserTitle.trim(),
-            active: newUserActive,
-            permissions: newUserPermissions
-          })
+          body: JSON.stringify({ ...payload, password: newUserPassword.trim() })
         });
         const json = await res.json();
-        if (json.success && json.data) {
-          setUsers(prev => [json.data, ...prev]);
-          showNotification(`Usuario ${newUserName} registrado exitosamente con rol ${newUserRole}.`);
+        if (json.success) {
+          await fetchUsers(); // Re-fetch
+          showNotification(`Usuario ${newUserName} registrado exitosamente.`);
           setIsAddUserModalOpen(false);
         } else {
           showNotification(json.error || 'Error al registrar usuario.', 'info');
@@ -747,7 +749,7 @@ export function ConfigPage() {
       </div>
 
       {activeTab === 'negocio' && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16, height: '800px' }}>
           
           {/* Section 1: Identidad y datos fiscales */}
           <Card>
@@ -919,7 +921,7 @@ export function ConfigPage() {
           </Card>
 
           {/* Section 2: Tasa de Cambio Diaria (Image 2) */}
-          <div>
+          <div style={{ height: '800px', overflowY: 'auto' }}>
             {/* Dark Blue Active Rate Card */}
             <div className="rate-display-card" style={{ backgroundColor: '#7e22ce' }}>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
@@ -2314,6 +2316,20 @@ GRANT ALL ON TABLE public.branches TO anon;`}</pre>
                       onChange={(e) => setNewUserEmail(e.target.value)}
                       placeholder="usuario@empresa.com"
                       required
+                    />
+                  </div>
+
+                  <div className="field">
+                    <label style={{ fontSize: 12, fontWeight: 700, color: '#334155' }}>
+                      {editingUserId ? 'Nueva contraseña (dejar en blanco para no cambiar)' : 'Contraseña *'}
+                    </label>
+                    <input
+                      type="password"
+                      className="input"
+                      value={newUserPassword}
+                      onChange={(e) => setNewUserPassword(e.target.value)}
+                      placeholder={editingUserId ? '******' : 'Contraseña segura'}
+                      required={!editingUserId}
                     />
                   </div>
 

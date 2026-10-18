@@ -393,11 +393,6 @@ export function AuthScreen({
             )}
 
             {captchaSiteKey && <div className="auth-captcha" ref={captchaContainerRef} />}
-            {!captchaSiteKey && (
-              <p className="auth-captcha-note">
-                Puedes activar la verificación antispam de Cloudflare Turnstile en la configuración de Supabase.
-              </p>
-            )}
 
             {message && <p className="auth-message error" role="alert">{message}</p>}
             {errorMessage && <p className="auth-message error" role="alert">{errorMessage}</p>}

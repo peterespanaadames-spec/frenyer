@@ -1,5 +1,5 @@
-import { useState, useEffect, useMemo } from 'react';
-import { useSearchParams, useNavigate } from 'react-router-dom';
+import { useState, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import * as XLSX from 'xlsx';
 import {
   Truck,
@@ -9,44 +9,29 @@ import {
   FileText,
   FileSpreadsheet,
   Edit2,
-  Trash2,
   Phone,
   Mail,
   User,
   X,
   Building2,
   Printer,
-  ArrowLeft,
-  Save,
-  DollarSign,
   ChevronDown,
   Download,
-  Eye,
-  Clock,
-  Calendar,
-  TrendingUp,
-  CheckCircle2,
-  AlertTriangle,
-  CreditCard,
-  ExternalLink
+  Eye
 } from 'lucide-react';
 import { Card } from '../../../components/ui/Card';
 import { Button } from '../../../components/ui/Button';
 import { Badge } from '../../../components/ui/Badge';
-import { getActiveExchangeRate, convertUSDtoVES, formatVES, formatUSD } from '../../../lib/currency';
-import { authenticatedFetch } from '../../../lib/supabase/api';
+import { getActiveExchangeRate, convertUSDtoVES, formatVES } from '../../../lib/currency';
 import {
   fetchSuppliersFromSupabase,
-  createSupplierInSupabase,
   updateSupplierInSupabase,
-  deleteSupplierFromSupabase,
   getActiveOrgId,
   DbSupplier
 } from '../../../lib/supabase/db';
 import { SupplierDetailModal } from '../components/SupplierDetailModal';
 
 export function SuppliersPage() {
-  const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const [suppliers, setSuppliers] = useState<DbSupplier[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -55,35 +40,18 @@ export function SuppliersPage() {
   const [activeRate] = useState(() => getActiveExchangeRate());
   const [toast, setToast] = useState<string | null>(null);
 
-  // Modal de Detalle, Compromisos y Métricas de Proveedor
-  const [selectedSupplierModal, setSelectedSupplierModal] = useState<DbSupplier | null>(null);
-
-  // View Mode: 'list' (directorio) | 'form' (pantalla externa de formulario)
-  const [viewMode, setViewMode] = useState<'list' | 'form'>(() => {
-    return searchParams.get('action') === 'new' ? 'form' : 'list';
-  });
-  const [isSaving, setIsSaving] = useState(false);
-  const [editingId, setEditingId] = useState<string | null>(null);
-
-  // Form Fields
-  const [nameInput, setNameInput] = useState('');
-  const [docTypeInput, setDocTypeInput] = useState('RIF (J / G / V)');
-  const [docNumberInput, setDocNumberInput] = useState('');
-  const [contactInput, setContactInput] = useState('');
-  const [phoneInput, setPhoneInput] = useState('');
-  const [emailInput, setEmailInput] = useState('');
-  const [addressInput, setAddressInput] = useState('');
-  const [categoryInput, setCategoryInput] = useState('General');
-  const [balanceInput, setBalanceInput] = useState('0');
-  const [statusInput, setStatusInput] = useState<'Activo' | 'Inactivo'>('Activo');
-  const [creditTermsInput, setCreditTermsInput] = useState('Contado');
-  const [notesInput, setNotesInput] = useState('');
-
-  // 3-Phase Registration State
-  const [registrationPhase, setRegistrationPhase] = useState(1);
-
-  // Delete Modal
-  const [deletingId, setDeletingId] = useState<string | null>(null);
+  // Modal Unificado y Centrado para Nuevo Proveedor, Ficha, Edición y Movimientos
+  const [modalState, setModalState] = useState<{
+    isOpen: boolean;
+    supplier: DbSupplier | null;
+    isNew: boolean;
+    initialEditMode: boolean;
+  }>(() => ({
+    isOpen: searchParams.get('action') === 'new',
+    supplier: null,
+    isNew: searchParams.get('action') === 'new',
+    initialEditMode: searchParams.get('action') === 'new'
+  }));
 
   // Export Modal & Dropdown
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
@@ -94,7 +62,7 @@ export function SuppliersPage() {
     setTimeout(() => setToast(null), 3500);
   };
 
-  // Load Suppliers from Supabase / Server Proxy
+  // Cargar proveedores desde Supabase
   const loadSuppliers = async () => {
     setIsLoading(true);
     try {
@@ -113,143 +81,37 @@ export function SuppliersPage() {
     loadSuppliers();
   }, []);
 
-  // Open Full-Screen Form for Creation
+  // Abrir Modal Centrado para Crear Nuevo Proveedor
   const handleOpenNewForm = () => {
-    setEditingId(null);
-    setNameInput('');
-    setDocTypeInput('RIF (J / G / V)');
-    setDocNumberInput('');
-    setContactInput('');
-    setPhoneInput('');
-    setEmailInput('');
-    setAddressInput('');
-    setCategoryInput('General');
-    setBalanceInput('0');
-    setStatusInput('Activo');
-    setCreditTermsInput('Contado');
-    setNotesInput('');
-    setViewMode('form');
+    setModalState({
+      isOpen: true,
+      supplier: null,
+      isNew: true,
+      initialEditMode: true
+    });
   };
 
-  // Open Full-Screen Form for Edit
-  const handleOpenEditForm = (s: DbSupplier) => {
-    setEditingId(s.id);
-    setNameInput(s.name || '');
-    setDocTypeInput(s.doc_type || 'RIF (J / G / V)');
-    setDocNumberInput(s.doc_number || '');
-    setContactInput(s.contact_person || '');
-    setPhoneInput(s.phone || '');
-    setEmailInput(s.email || '');
-    setAddressInput(s.address || '');
-    setCategoryInput(s.category || 'General');
-    setBalanceInput(s.balance_usd ? s.balance_usd.toString() : '0');
-    setStatusInput(s.status || 'Activo');
-    setCreditTermsInput('Contado');
-    setNotesInput('');
-    setViewMode('form');
+  // Abrir Modal Centrado para Ver Ficha y Movimientos
+  const handleOpenDetail = (s: DbSupplier) => {
+    setModalState({
+      isOpen: true,
+      supplier: s,
+      isNew: false,
+      initialEditMode: false
+    });
   };
 
-  const handleReturnToList = () => {
-    setViewMode('list');
-    if (searchParams.get('action')) {
-      setSearchParams({});
-    }
+  // Abrir Modal Centrado para Editar Proveedor
+  const handleOpenEdit = (s: DbSupplier) => {
+    setModalState({
+      isOpen: true,
+      supplier: s,
+      isNew: false,
+      initialEditMode: true
+    });
   };
 
-  // Save / Update Supplier
-  const handleSaveSupplier = async (e: React.FormEvent) => {
-    e.preventDefault();
-
-    if (!nameInput.trim()) {
-      showToast('⚠️ Ingresa la Razón Social / Nombre del proveedor.');
-      return;
-    }
-    if (!docNumberInput.trim()) {
-      showToast('⚠️ Ingresa el RIF o número de documento del proveedor.');
-      return;
-    }
-
-    setIsSaving(true);
-
-    const payload = {
-      name: nameInput.trim(),
-      doc_type: docTypeInput,
-      doc_number: docNumberInput.trim().toUpperCase(),
-      contact_person: contactInput.trim(),
-      phone: phoneInput.trim(),
-      email: emailInput.trim().toLowerCase(),
-      address: addressInput.trim(),
-      category: categoryInput.trim() || 'General',
-      balance_usd: parseFloat(balanceInput) || 0,
-      status: statusInput
-    };
-
-    const cleanDoc = docNumberInput.trim().toUpperCase().replace(/[\s.-]/g, '');
-    const cleanName = nameInput.trim().toLowerCase().replace(/\s+/g, ' ');
-
-    try {
-      if (editingId) {
-        const ok = await updateSupplierInSupabase(editingId, payload);
-        if (ok) {
-          showToast('✅ Proveedor actualizado correctamente.');
-          await loadSuppliers();
-          setRegistrationPhase(1); // Reset phase
-          handleReturnToList();
-        } else {
-          showToast('❌ Error actualizando proveedor.');
-        }
-      } else {
-        const duplicate = suppliers.find(s => 
-          (cleanDoc && s.doc_number && s.doc_number.trim().toUpperCase().replace(/[\s.-]/g, '') === cleanDoc) ||
-          (cleanName && s.name && s.name.trim().toLowerCase().replace(/\s+/g, ' ') === cleanName)
-        );
-        if (duplicate) {
-          const ok = await updateSupplierInSupabase(duplicate.id, payload);
-          if (ok) {
-            showToast(`ℹ️ El proveedor ya existía (${duplicate.code || 'PRV'}). Datos actualizados sin duplicar.`);
-            await loadSuppliers();
-            setRegistrationPhase(1);
-            handleReturnToList();
-          } else {
-            showToast('❌ Error actualizando proveedor existente.');
-          }
-          return;
-        }
-
-        const created = await createSupplierInSupabase({
-          ...payload
-        });
-        if (created) {
-          showToast('✅ Proveedor registrado con éxito.');
-          await loadSuppliers();
-          setRegistrationPhase(1); // Reset phase
-          handleReturnToList();
-        } else {
-          showToast('❌ Error registrando proveedor.');
-        }
-      }
-    } catch (err: any) {
-      showToast('❌ Error guardando proveedor: ' + (err?.message || 'Error de red'));
-    } finally {
-      setIsSaving(false);
-    }
-  };
-
-  // Delete Supplier
-  const handleDeleteSupplier = async () => {
-    if (!deletingId) return;
-
-    const ok = await deleteSupplierFromSupabase(deletingId);
-    if (ok) {
-      showToast('🗑️ Proveedor eliminado correctamente.');
-      await loadSuppliers();
-    } else {
-      showToast('❌ Error al eliminar proveedor de Supabase.');
-    }
-    setDeletingId(null);
-  };
-
-  // Toggle Supplier Status
+  // Alternar Estado de Proveedor (Activo / Inactivo)
   const handleToggleStatus = async (s: DbSupplier) => {
     const newStatus = s.status === 'Activo' ? 'Inactivo' : 'Activo';
     const ok = await updateSupplierInSupabase(s.id, { ...s, status: newStatus });
@@ -261,7 +123,7 @@ export function SuppliersPage() {
     }
   };
 
-  // Export to Excel
+  // Exportar a Excel (XLS)
   const handleExportXLS = () => {
     const exportData = filteredSuppliers.map((s) => ({
       Código: s.code || 'N/A',
@@ -285,7 +147,7 @@ export function SuppliersPage() {
     setIsExportModalOpen(false);
   };
 
-  // Export PDF Report
+  // Exportar a PDF / Impresión oficial
   const handleExportPDF = () => {
     const printWindow = window.open('', '_blank');
     if (!printWindow) {
@@ -318,7 +180,7 @@ export function SuppliersPage() {
       <head>
         <title>Reporte de Proveedores — Frenyer ERP</title>
         <style>
-          body { font-family: 'Segoe UI', Arial, sans-serif; padding: 25px; color: #0f172a; }
+          body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif; padding: 25px; color: #0f172a; margin: 0; }
           .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #7c3aed; padding-bottom: 12px; margin-bottom: 20px; }
           .title { font-size: 22px; font-weight: bold; color: #1e1b4b; margin: 0; }
           .subtitle { font-size: 13px; color: #64748b; margin-top: 4px; }
@@ -402,7 +264,7 @@ export function SuppliersPage() {
     setIsExportModalOpen(false);
   };
 
-  // Filter Logic
+  // Filtrado de proveedores
   const filteredSuppliers = suppliers.filter((s) => {
     const matchSearch =
       (s.name && s.name.toLowerCase().includes(searchTerm.toLowerCase())) ||
@@ -420,317 +282,13 @@ export function SuppliersPage() {
     return true;
   });
 
-  // KPI Calculations
+  // Métricas de Cabecera
   const totalCount = suppliers.length;
   const activeCount = suppliers.filter((s) => s.status === 'Activo').length;
   const debtSuppliersCount = suppliers.filter((s) => (s.balance_usd || 0) > 0).length;
   const totalDebtUSD = suppliers.reduce((sum, s) => sum + (s.balance_usd || 0), 0);
   const totalDebtVES = convertUSDtoVES(totalDebtUSD, activeRate);
 
-  // ---------------------------------------------------------------------------
-  // PANTALLA DE FORMULARIO DEDICADO DE REGISTRO / EDICIÓN
-  // ---------------------------------------------------------------------------
-  if (viewMode === 'form') {
-    return (
-      <div className="content">
-        {/* Toast Notification */}
-        {toast && (
-          <div
-            style={{
-              position: 'fixed',
-              top: 20,
-              right: 20,
-              backgroundColor: '#1e293b',
-              color: '#fff',
-              padding: '12px 20px',
-              borderRadius: 12,
-              boxShadow: '0 10px 25px rgba(0,0,0,0.2)',
-              zIndex: 9999,
-              fontSize: '0.9rem',
-              display: 'flex',
-              alignItems: 'center',
-              gap: 8,
-              border: '1px solid #334155'
-            }}
-          >
-            {toast}
-          </div>
-        )}
-
-        {/* Top Navigation */}
-        <div className="page-head" style={{ marginBottom: 20 }}>
-          <div>
-            <Button
-              variant="secondary"
-              onClick={handleReturnToList}
-              style={{ marginBottom: 12, display: 'inline-flex', alignItems: 'center', gap: 6 }}
-            >
-              <ArrowLeft size={16} /> Volver al Directorio
-            </Button>
-            <h1 style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              <Truck size={28} style={{ color: 'var(--brand-500)' }} />
-              {editingId ? `Editar Proveedor: ${nameInput || 'Sin Nombre'}` : 'Registro de Nuevo Proveedor'}
-            </h1>
-            <p>Ingresa la información legal, fiscal, comercial y de contacto del proveedor.</p>
-          </div>
-        </div>
-
-        {/* Form Sections */}
-        <form onSubmit={handleSaveSupplier}>
-          <div style={{ marginBottom: 20 }}>
-            {/* Progress Indicator */}
-            <div style={{ display: 'flex', gap: 8, marginBottom: 20 }}>
-              {[1, 2, 3].map((p) => (
-                <div
-                  key={p}
-                  style={{
-                    flex: 1,
-                    height: 8,
-                    borderRadius: 4,
-                    backgroundColor: p <= registrationPhase ? 'var(--brand-500)' : 'var(--border)'
-                  }}
-                />
-              ))}
-            </div>
-            <h2 style={{ fontSize: '1.25rem', marginBottom: 20 }}>
-              Fase {registrationPhase}: {registrationPhase === 1 ? 'Identificación' : registrationPhase === 2 ? 'Contacto' : 'Finanzas'}
-            </h2>
-          </div>
-
-          <div style={{ display: registrationPhase === 1 ? 'block' : 'none' }}>
-            <Card className="spaced">
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 18, borderBottom: '1px solid var(--border)', paddingBottom: 12 }}>
-                <Building2 size={20} style={{ color: 'var(--brand-500)' }} />
-                <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 700 }}>1. Identificación Legal y Fiscal</h3>
-              </div>
-
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-                <div>
-                  <label className="label">Razón Social / Nombre Comercial *</label>
-                  <input
-                    className="input"
-                    placeholder="Ej. Distribuidora Central C.A."
-                    value={nameInput}
-                    onChange={(e) => setNameInput(e.target.value)}
-                    required={registrationPhase === 1}
-                  />
-                </div>
-
-                <div className="grid grid-2" style={{ gap: 12 }}>
-                  <div>
-                    <label className="label">Tipo Documento</label>
-                    <select
-                      className="input"
-                      value={docTypeInput}
-                      onChange={(e) => setDocTypeInput(e.target.value)}
-                    >
-                      <option value="RIF (J / G / V)">RIF (J / G / V)</option>
-                      <option value="Cédula (V / E)">Cédula (V / E)</option>
-                      <option value="Pasaporte">Pasaporte</option>
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="label">RIF / N° Identificación *</label>
-                    <input
-                      className="input"
-                      placeholder="Ej. J-31234567-8"
-                      value={docNumberInput}
-                      onChange={(e) => setDocNumberInput(e.target.value)}
-                      required={registrationPhase === 1}
-                    />
-                  </div>
-                </div>
-
-                <div>
-                  <label className="label">Persona de Contacto Principal</label>
-                  <input
-                    className="input"
-                    placeholder="Ej. Ing. Roberto Gómez"
-                    value={contactInput}
-                    onChange={(e) => setContactInput(e.target.value)}
-                  />
-                </div>
-
-                <div>
-                  <label className="label">Categoría / Rubro Comercial</label>
-                  <input
-                    className="input"
-                    placeholder="Ej. Alimentos, Insumos"
-                    value={categoryInput}
-                    onChange={(e) => setCategoryInput(e.target.value)}
-                  />
-                </div>
-              </div>
-            </Card>
-          </div>
-
-          <div style={{ display: registrationPhase === 2 ? 'block' : 'none' }}>
-            <Card className="spaced">
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 18, borderBottom: '1px solid var(--border)', paddingBottom: 12 }}>
-                <Phone size={20} style={{ color: 'var(--brand-500)' }} />
-                <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 700 }}>2. Ubicación y Contacto Directo</h3>
-              </div>
-
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-                <div>
-                  <label className="label">Teléfono Principal</label>
-                  <input
-                    className="input"
-                    placeholder="Ej. 0414-555-1234"
-                    value={phoneInput}
-                    onChange={(e) => setPhoneInput(e.target.value)}
-                  />
-                </div>
-
-                <div>
-                  <label className="label">Correo Electrónico Fiscal</label>
-                  <input
-                    type="email"
-                    className="input"
-                    placeholder="Ej. ventas@proveedor.com"
-                    value={emailInput}
-                    onChange={(e) => setEmailInput(e.target.value)}
-                  />
-                </div>
-
-                <div>
-                  <label className="label">Dirección Fiscal</label>
-                  <textarea
-                    className="input"
-                    rows={4}
-                    placeholder="Dirección completa..."
-                    value={addressInput}
-                    onChange={(e) => setAddressInput(e.target.value)}
-                  />
-                </div>
-              </div>
-            </Card>
-          </div>
-
-          <div style={{ display: registrationPhase === 3 ? 'block' : 'none' }}>
-            <Card className="spaced">
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 18, borderBottom: '1px solid var(--border)', paddingBottom: 12 }}>
-                <DollarSign size={20} style={{ color: 'var(--brand-500)' }} />
-                <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 700 }}>3. Condiciones Financieras</h3>
-              </div>
-
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-                <div>
-                  <label className="label">Saldo Pendiente Inicial ($ USD)</label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    className="input"
-                    value={balanceInput}
-                    onChange={(e) => setBalanceInput(e.target.value)}
-                  />
-                </div>
-
-                <div>
-                  <label className="label">Términos de Pago</label>
-                  <select
-                    className="input"
-                    value={creditTermsInput}
-                    onChange={(e) => setCreditTermsInput(e.target.value)}
-                  >
-                    <option value="Contado">Contado</option>
-                    <option value="7 Días">Crédito 7 Días</option>
-                    <option value="15 Días">Crédito 15 Días</option>
-                    <option value="30 Días">Crédito 30 Días</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="label">Estatus</label>
-                  <select
-                    className="input"
-                    value={statusInput}
-                    onChange={(e) => setStatusInput(e.target.value as any)}
-                  >
-                    <option value="Activo">Activo</option>
-                    <option value="Inactivo">Inactivo</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="label">Notas Internas</label>
-                  <textarea
-                    className="input"
-                    rows={2}
-                    value={notesInput}
-                    onChange={(e) => setNotesInput(e.target.value)}
-                  />
-                </div>
-              </div>
-            </Card>
-          </div>
-
-          {/* Bottom Action Footer Bar */}
-          <div
-            style={{
-              marginTop: 24,
-              padding: '16px 24px',
-              backgroundColor: 'var(--card)',
-              border: '1px solid var(--border)',
-              borderRadius: 'var(--radius-lg, 16px)',
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-              boxShadow: '0 4px 12px rgba(0,0,0,0.05)',
-              gap: 12
-            }}
-          >
-            <Button
-              type="button"
-              variant="secondary"
-              onClick={handleReturnToList}
-              disabled={isSaving}
-            >
-              Cancelar
-            </Button>
-            <div style={{ display: 'flex', gap: 12 }}>
-              {registrationPhase > 1 && (
-                <Button
-                  type="button"
-                  variant="secondary"
-                  onClick={() => setRegistrationPhase(registrationPhase - 1)}
-                  disabled={isSaving}
-                >
-                  Atrás
-                </Button>
-              )}
-              {registrationPhase < 3 ? (
-                <Button
-                  type="button"
-                  variant="primary"
-                  onClick={() => {
-                    if (registrationPhase === 1 && (!nameInput.trim() || !docNumberInput.trim())) {
-                      showToast('⚠️ Completa los campos obligatorios de la Fase 1.');
-                      return;
-                    }
-                    setRegistrationPhase(registrationPhase + 1);
-                  }}
-                >
-                  Siguiente
-                </Button>
-              ) : (
-                <Button type="submit" variant="primary" disabled={isSaving}>
-                  <Save size={16} />
-                  {isSaving ? 'Guardando...' : editingId ? 'Actualizar' : 'Guardar Proveedor'}
-                </Button>
-              )}
-            </div>
-          </div>
-        </form>
-      </div>
-    );
-  }
-
-  // ---------------------------------------------------------------------------
-  // PANTALLA PRINCIPAL: DIRECTORIO Y TABLA DE PROVEEDORES
-  // ---------------------------------------------------------------------------
   return (
     <div className="content">
       {/* Toast Notification */}
@@ -757,13 +315,13 @@ export function SuppliersPage() {
         </div>
       )}
 
-      {/* Page Header */}
+      {/* Page Header Principal */}
       <div className="page-head">
         <div>
           <h1 style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
             <Truck size={28} style={{ color: 'var(--brand-500)' }} /> Directorio de Proveedores
           </h1>
-          <p>Gestión completa de proveedores, registro en Supabase, cuentas por pagar y compras.</p>
+          <p>Directorio unificado de proveedores, cuentas por pagar, facturas y auditoría de compras.</p>
         </div>
 
         <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
@@ -788,7 +346,6 @@ export function SuppliersPage() {
 
             {isExportDropdownOpen && (
               <>
-                {/* Backdrop to close dropdown on click outside */}
                 <div
                   style={{ position: 'fixed', inset: 0, zIndex: 90 }}
                   onClick={() => setIsExportDropdownOpen(false)}
@@ -851,7 +408,7 @@ export function SuppliersPage() {
                     </div>
                     <div>
                       <div style={{ fontWeight: 600 }}>Exportar PDF</div>
-                      <div style={{ fontSize: '0.75rem', color: 'var(--muted)' }}>Reporte para imprimir</div>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--muted)' }}>Reporte oficial para imprimir</div>
                     </div>
                   </button>
 
@@ -904,13 +461,14 @@ export function SuppliersPage() {
             )}
           </div>
 
+          {/* Botón Nuevo Proveedor: Abre el modal centrado inmediatamente */}
           <Button variant="primary" onClick={handleOpenNewForm}>
             <Plus size={16} /> Nuevo Proveedor
           </Button>
         </div>
       </div>
 
-      {/* KPI Cards */}
+      {/* KPI Cards Ejecutivas */}
       <div className="grid grid-4" style={{ marginBottom: 20 }}>
         <Card>
           <div className="kpi-label">Proveedores Registrados</div>
@@ -921,13 +479,13 @@ export function SuppliersPage() {
         <Card>
           <div className="kpi-label">Proveedores Activos</div>
           <div className="kpi-value" style={{ color: '#10b981' }}>{activeCount}</div>
-          <div className="positive small">Listos para compras y facturación</div>
+          <div className="positive small">Habilitados para compras y facturación</div>
         </Card>
 
         <Card>
           <div className="kpi-label">Con Deuda Activa</div>
           <div className="kpi-value" style={{ color: '#f59e0b' }}>{debtSuppliersCount}</div>
-          <div className="warning small">Pendiente por abonar/saldar</div>
+          <div className="warning small">Facturas pendientes por abonar</div>
         </Card>
 
         <Card>
@@ -1004,7 +562,7 @@ export function SuppliersPage() {
               {isLoading ? (
                 <tr>
                   <td colSpan={8} style={{ textAlign: 'center', padding: '40px 0', color: 'var(--muted)' }}>
-                    Cargando proveedores desde Supabase...
+                    Cargando directorio de proveedores desde Supabase...
                   </td>
                 </tr>
               ) : filteredSuppliers.length === 0 ? (
@@ -1019,9 +577,9 @@ export function SuppliersPage() {
                   return (
                     <tr
                       key={s.id}
-                      onClick={() => setSelectedSupplierModal(s)}
+                      onClick={() => handleOpenDetail(s)}
                       style={{ cursor: 'pointer', transition: 'background-color 0.15s' }}
-                      title="Haz clic para ver compromisos, ticket promedio y tiempo estimado de pago"
+                      title="Haz clic para ver la ficha completa, movimientos de facturas y opciones de impresión"
                       className="hover:bg-slate-50"
                     >
                       <td>
@@ -1103,8 +661,8 @@ export function SuppliersPage() {
                         >
                           <Button
                             variant="secondary"
-                            title="Ver compromisos y métricas"
-                            onClick={() => setSelectedSupplierModal(s)}
+                            title="Ver ficha completa y movimientos de facturas"
+                            onClick={() => handleOpenDetail(s)}
                           >
                             <Eye size={14} />
                           </Button>
@@ -1112,7 +670,7 @@ export function SuppliersPage() {
                           <Button
                             variant="secondary"
                             title="Editar Proveedor"
-                            onClick={() => handleOpenEditForm(s)}
+                            onClick={() => handleOpenEdit(s)}
                           >
                             <Edit2 size={14} />
                           </Button>
@@ -1142,8 +700,6 @@ export function SuppliersPage() {
           </table>
         </div>
       </Card>
-      
-      {/* (Deleted Delete Modal here if not needed) */}
 
       {/* Modal: Export Report Options */}
       {isExportModalOpen && (
@@ -1255,15 +811,17 @@ export function SuppliersPage() {
         </div>
       )}
 
-      {/* Modal: Detalle de Proveedor, Compromisos, Ticket Promedio y Tiempo Estimado de Pago */}
+      {/* Modal Unificado y Centrado: Ficha de Proveedor, Movimientos de Facturas y Formulario */}
       <SupplierDetailModal
-        isOpen={Boolean(selectedSupplierModal)}
-        onClose={() => setSelectedSupplierModal(null)}
-        supplier={selectedSupplierModal}
-        onEditSupplier={(s) => {
-          setSelectedSupplierModal(null);
-          handleOpenEditForm(s);
+        isOpen={modalState.isOpen}
+        onClose={() => {
+          setModalState({ isOpen: false, supplier: null, isNew: false, initialEditMode: false });
+          if (searchParams.get('action')) setSearchParams({});
         }}
+        supplier={modalState.supplier}
+        isNew={modalState.isNew}
+        initialEditMode={modalState.initialEditMode}
+        onSupplierSaved={loadSuppliers}
       />
     </div>
   );

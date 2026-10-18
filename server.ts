@@ -4210,19 +4210,30 @@ app.get('/api/accounts-receivable', async (_req, res: AuthenticatedResponse) => 
     const orgId = res.locals.supabaseContext?.organizationId || '00000000-0000-0000-0000-000000000001';
     let dbItems: any[] = [];
 
-    // 1. Consultar Supabase con relación de clientes y pagos
+    // 1. Consultar Supabase con relación de clientes, pagos y ventas con ítems
     try {
-      const result = await supabaseRestRequest('accounts_receivable?select=*,customers(name),receivable_payments(*)&order=created_at.desc');
+      const result = await supabaseRestRequest(
+        'accounts_receivable?select=*,customers(*),receivable_payments(*),sales(*,sale_items(*))&order=created_at.desc'
+      );
       if (!result.error && Array.isArray(result.data)) {
         dbItems = result.data;
       } else {
-        const simpleResult = await supabaseRestRequest('accounts_receivable?select=*&order=created_at.desc');
-        if (!simpleResult.error && Array.isArray(simpleResult.data)) {
-          dbItems = simpleResult.data;
+        const fallbackRes = await supabaseRestRequest('accounts_receivable?select=*,customers(*)&order=created_at.desc');
+        if (!fallbackRes.error && Array.isArray(fallbackRes.data)) {
+          dbItems = fallbackRes.data;
         }
       }
 
-      // Consultar receivable_payments directamente por si el join de PostgREST vino vacío
+      // 2. Consultar pagos registrados en Supabase (tabla payments para ventas directas/POS y receivable_payments para abonos)
+      const saleIds = dbItems.map((r: any) => r.sale_id).filter(Boolean);
+      let salePayments: any[] = [];
+      if (saleIds.length > 0) {
+        const salePaysRes = await supabaseRestRequest(`payments?sale_id=in.(${saleIds.join(',')})&order=created_at.desc`);
+        if (!salePaysRes.error && Array.isArray(salePaysRes.data)) {
+          salePayments = salePaysRes.data;
+        }
+      }
+
       const directPaymentsRes = await supabaseRestRequest('receivable_payments?select=*&order=payment_date.desc');
       const directPaymentsMap = new Map<string, any[]>();
       if (!directPaymentsRes.error && Array.isArray(directPaymentsRes.data)) {
@@ -4235,90 +4246,70 @@ app.get('/api/accounts-receivable', async (_req, res: AuthenticatedResponse) => 
         }
       }
 
-      // Asociar pagos directos si la relación PostgREST vino vacía
+      // 3. Procesar y unificar los pagos reales de cada cuenta por cobrar
       for (const item of dbItems) {
-        if ((!item.receivable_payments || item.receivable_payments.length === 0) && directPaymentsMap.has(item.id)) {
-          item.receivable_payments = directPaymentsMap.get(item.id);
+        const recPays = item.receivable_payments || directPaymentsMap.get(item.id) || [];
+        const matchingSalePays = salePayments
+          .filter((p: any) => p.sale_id === item.sale_id)
+          .map((p: any) => ({
+            id: p.id,
+            receivable_id: item.id,
+            amount_usd: Number(p.amount_usd) || 0,
+            amount_ves: Number(p.amount_ves) || 0,
+            exchange_rate: Number(p.exchange_rate) || 1,
+            payment_method: p.method || 'Efectivo USD',
+            reference: p.reference_number || 'PAGO CONTADO/CRÉDITO',
+            payment_date: p.created_at
+          }));
+
+        // Deduplicar pagos
+        const payMap = new Map<string, any>();
+        for (const p of [...recPays, ...matchingSalePays]) {
+          const k = p.id || `${p.payment_date || p.date}-${p.amount_usd}`;
+          payMap.set(k, p);
         }
+
+        const mergedPayments = Array.from(payMap.values());
+        const total = Number(item.total_usd) || 0;
+        const balance = Number(item.balance_usd != null ? item.balance_usd : 0);
+        const paidDiff = Math.round(Math.max(0, total - balance) * 100) / 100;
+        const currentSum = mergedPayments.reduce((s: number, p: any) => s + (Number(p.amount_usd) || 0), 0);
+
+        // Si la orden está cancelada/pagada en Supabase y no había fila explícita en payments ni receivable_payments
+        if (paidDiff > currentSum + 0.01) {
+          const missing = Math.round((paidDiff - currentSum) * 100) / 100;
+          mergedPayments.unshift({
+            id: `pago-registrado-${item.id}`,
+            receivable_id: item.id,
+            amount_usd: missing,
+            amount_ves: Math.round(missing * (Number(item.sales?.exchange_rate || item.exchange_rate) || 877.90) * 100) / 100,
+            exchange_rate: Number(item.sales?.exchange_rate || item.exchange_rate) || 877.90,
+            payment_method: 'Cancelación registrada',
+            reference: 'PAGO-COMPLETO',
+            payment_date: item.updated_at || item.created_at || new Date().toISOString()
+          });
+        }
+
+        item.receivable_payments = mergedPayments;
+        item.customer_name = item.customers?.name || item.customer_name || 'Cliente';
+        item.customer_doc = item.customers?.doc_number || item.customer_doc || '';
+        item.customer_phone = item.customers?.phone || '';
+      }
+
+      // Si obtuvimos registros reales de Supabase, actualizamos la caché local con los datos reales
+      if (dbItems.length > 0) {
+        try {
+          fs.writeFileSync(ACCOUNTS_RECEIVABLE_FILE, JSON.stringify(dbItems, null, 2), 'utf-8');
+        } catch {}
+        return res.json({ success: true, data: dbItems });
       }
     } catch (sbErr) {
       console.warn('Aviso consultando accounts_receivable en Supabase:', sbErr);
     }
 
-    // 2. Fusionar con persistencia local
-    const localItems = loadPersistedReceivables(orgId);
-    const map = new Map<string, any>();
-    for (const r of localItems) {
-      if (r.id) map.set(r.id, r);
-    }
-    for (const r of dbItems) {
-      if (r.id) {
-        const local = map.get(r.id) || {};
-        // Fusionar pagos locales y remotos deduplicando por id o fecha+monto
-        const localPays = Array.isArray(local.receivable_payments) ? local.receivable_payments : [];
-        const remotePays = Array.isArray(r.receivable_payments) ? r.receivable_payments : [];
-        const payMap = new Map<string, any>();
-        for (const p of localPays) {
-          const k = p.id || `${p.payment_date || p.date}-${p.amount_usd || p.amount}`;
-          payMap.set(k, p);
-        }
-        for (const p of remotePays) {
-          const k = p.id || `${p.payment_date || p.date}-${p.amount_usd || p.amount}`;
-          payMap.set(k, p);
-        }
-        const mergedPayments = Array.from(payMap.values());
-
-        // Reconciliar: si hay diferencia entre total_usd y balance_usd pero no hay pagos registrados en el historial
-        const tot = Number(r.total_usd) || 0;
-        const bal = Number(r.balance_usd != null ? r.balance_usd : (local.balance_usd ?? tot));
-        const paidDiff = Math.round(Math.max(0, tot - bal) * 100) / 100;
-        const currentSum = mergedPayments.reduce((s: number, p: any) => s + (Number(p.amount_usd || p.amount) || 0), 0);
-        if (paidDiff > currentSum + 0.01) {
-          const missing = Math.round((paidDiff - currentSum) * 100) / 100;
-          mergedPayments.unshift({
-            id: `abono-rec-${r.id}`,
-            receivable_id: r.id,
-            amount_usd: missing,
-            amount_ves: missing * (Number(r.exchange_rate) || 1),
-            exchange_rate: Number(r.exchange_rate) || 1,
-            payment_method: 'Abono registrado',
-            reference: 'ABONO',
-            payment_date: r.updated_at || r.created_at || new Date().toISOString()
-          });
-        }
-
-        map.set(r.id, {
-          ...local,
-          ...r,
-          receivable_payments: mergedPayments
-        });
-      }
-    }
-
-    // Asegurar que también los ítems puramente locales tengan sus pagos reconciliados
-    for (const [id, item] of map.entries()) {
-      const tot = Number(item.total_usd) || 0;
-      const bal = Number(item.balance_usd != null ? item.balance_usd : tot);
-      const paidDiff = Math.round(Math.max(0, tot - bal) * 100) / 100;
-      const pays = Array.isArray(item.receivable_payments) ? item.receivable_payments : [];
-      const currentSum = pays.reduce((s: number, p: any) => s + (Number(p.amount_usd || p.amount) || 0), 0);
-      if (paidDiff > currentSum + 0.01) {
-        const missing = Math.round((paidDiff - currentSum) * 100) / 100;
-        pays.unshift({
-          id: `abono-rec-${id}`,
-          receivable_id: id,
-          amount_usd: missing,
-          amount_ves: missing * (Number(item.exchange_rate) || 1),
-          exchange_rate: Number(item.exchange_rate) || 1,
-          payment_method: 'Abono registrado',
-          reference: 'ABONO',
-          payment_date: item.updated_at || item.created_at || new Date().toISOString()
-        });
-        item.receivable_payments = pays;
-      }
-    }
-
-    return res.json({ success: true, data: Array.from(map.values()) });
+    // 4. Si Supabase no devolvió registros o hubo error de red, usar respaldo local
+    const fallbackData = loadPersistedReceivables(orgId);
+    return res.json({ success: true, data: fallbackData });
   } catch (err: any) {
     return res.status(200).json({ success: true, data: loadPersistedReceivables() });
   }
@@ -5263,6 +5254,83 @@ app.get('/api/supabase/migrations-bundle', (_req, res) => {
     return res.send(bundledSql);
   } catch (err: any) {
     return res.status(500).json({ success: false, error: err?.message || 'Error generando el bundle de migraciones.' });
+  }
+});
+
+
+// ---------------------------------------------------------------------------
+// CUSTOMER & ADMIN AUTH/USER MANAGEMENT ROUTES
+// ---------------------------------------------------------------------------
+
+// Customer Registration
+app.post('/api/auth/customer/register', async (req, res) => {
+  const { email, password, full_name, phone, address } = req.body;
+  
+  try {
+    // 1. Register user in auth.users (email_confirm: true skips verification)
+    const { data: authData, error: authError } = await supabaseServer.auth.admin.createUser({
+      email,
+      password,
+      user_metadata: { role: 'cliente', full_name },
+      email_confirm: true 
+    });
+    if (authError) throw authError;
+
+    // 2. Insert into public.shop_customers
+    const { error: dbError } = await supabaseServer
+      .from('shop_customers')
+      .insert({ id: authData.user!.id, email, full_name, phone, address });
+    
+    if (dbError) throw dbError;
+
+    res.json({ success: true, user: authData.user });
+  } catch (err: any) {
+    res.status(400).json({ success: false, error: err.message });
+  }
+});
+
+// Admin: Add User (Internal)
+app.post('/api/admin/users/add', authenticateSupabaseRequest, async (req, res) => {
+  const { email, password, full_name, role } = req.body;
+  
+  if (res.locals.supabaseContext?.role !== 'gerente') {
+    return res.status(403).json({ success: false, error: 'No autorizado' });
+  }
+
+  try {
+    const { data, error } = await supabaseServer.auth.admin.createUser({
+      email,
+      password,
+      user_metadata: { full_name, role },
+      email_confirm: true
+    });
+    if (error) throw error;
+    res.json({ success: true, user: data.user });
+  } catch (err: any) {
+    res.status(400).json({ success: false, error: err.message });
+  }
+});
+
+// Admin: Update User (Internal)
+app.patch('/api/admin/users/:id', authenticateSupabaseRequest, async (req, res) => {
+  const { id } = req.params;
+  const { password, full_name, role } = req.body;
+  
+  if (res.locals.supabaseContext?.role !== 'gerente') {
+    return res.status(403).json({ success: false, error: 'No autorizado' });
+  }
+
+  try {
+    const updatePayload: any = { user_metadata: { full_name, role } };
+    if (password) {
+      updatePayload.password = password;
+    }
+    
+    const { data, error } = await supabaseServer.auth.admin.updateUserById(id, updatePayload);
+    if (error) throw error;
+    res.json({ success: true, user: data.user });
+  } catch (err: any) {
+    res.status(400).json({ success: false, error: err.message });
   }
 });
 
