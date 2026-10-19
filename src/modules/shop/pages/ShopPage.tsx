@@ -186,6 +186,7 @@ export function ShopPage() {
   const [isSubmittingOrder, setIsSubmittingOrder] = useState(false);
   const [completedOrder, setCompletedOrder] = useState<any | null>(null);
   const [isTrackerOpen, setIsTrackerOpen] = useState(false);
+  const [isAuthRegisterMode, setIsAuthRegisterMode] = useState(false);
   const [trackerQuery, setTrackerQuery] = useState('');
   const [trackedOrders, setTrackedOrders] = useState<any[]>([]);
   const [isSearchingOrders, setIsSearchingOrders] = useState(false);
