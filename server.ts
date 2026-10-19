@@ -5375,8 +5375,6 @@ app.post('/api/admin/users/add', authenticateSupabaseRequest, async (req, res) =
   if (roleVal === 'customer' || roleVal === 'cliente') {
     return res.status(403).json({ success: false, error: 'No autorizado' });
   }
-    return res.status(403).json({ success: false, error: 'No autorizado' });
-  }
 
   try {
     const { data, error } = await supabaseServer.auth.admin.createUser({
@@ -5399,8 +5397,6 @@ app.patch('/api/admin/users/:id', authenticateSupabaseRequest, async (req, res) 
   
   const roleVal = (res.locals.supabaseContext?.role || 'admin').toLowerCase();
   if (roleVal === 'customer' || roleVal === 'cliente') {
-    return res.status(403).json({ success: false, error: 'No autorizado' });
-  }
     return res.status(403).json({ success: false, error: 'No autorizado' });
   }
 
