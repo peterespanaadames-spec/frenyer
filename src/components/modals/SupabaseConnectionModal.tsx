@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Database, CheckCircle, AlertCircle, RefreshCw, Copy, Check, ExternalLink, X, Shield, Key } from 'lucide-react';
+import { Database, CheckCircle, AlertCircle, RefreshCw, Copy, Check, ExternalLink, X, Shield, Key, Eye, EyeOff } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { Card } from '../ui/Card';
 import { updateSupabaseClient, isSupabaseConfigured, SUPABASE_URL } from '../../lib/supabase/client';
@@ -21,6 +21,7 @@ export function SupabaseConnectionModal({ isOpen, onClose, onConnected }: Supaba
   const [anonKey, setAnonKey] = useState(() => {
     return typeof window !== 'undefined' ? (localStorage.getItem('frenyer_supabase_anon_key') || '') : '';
   });
+  const [showAnonKey, setShowAnonKey] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [serverStatus, setServerStatus] = useState<{
     configured: boolean;
@@ -349,16 +350,36 @@ export function SupabaseConnectionModal({ isOpen, onClose, onConnected }: Supaba
                   <label style={{ fontSize: 12, fontWeight: 700, color: '#334155', display: 'block', marginBottom: 6 }}>
                     Project API Anon Key (Clave pública anónima) *
                   </label>
-                  <div style={{ position: 'relative' }}>
+                  <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
                     <input
                       className="input"
-                      type="password"
+                      type={showAnonKey ? 'text' : 'password'}
                       placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
                       value={anonKey}
                       onChange={(e) => setAnonKey(e.target.value)}
                       required
-                      style={{ height: 40, fontSize: 13, fontFamily: 'monospace' }}
+                      style={{ height: 40, fontSize: 13, fontFamily: 'monospace', paddingRight: 40 }}
                     />
+                    <button
+                      type="button"
+                      onClick={() => setShowAnonKey(!showAnonKey)}
+                      style={{
+                        position: 'absolute',
+                        right: 10,
+                        background: 'transparent',
+                        border: 'none',
+                        color: '#64748b',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        padding: 4
+                      }}
+                      title={showAnonKey ? 'Ocultar clave' : 'Ver clave'}
+                      aria-label={showAnonKey ? 'Ocultar clave' : 'Ver clave'}
+                    >
+                      {showAnonKey ? <EyeOff size={18} /> : <Eye size={18} />}
+                    </button>
                   </div>
                   <span style={{ fontSize: 11, color: '#64748b', marginTop: 4, display: 'block' }}>
                     Clave pública para el cliente (`anon` / `public`). No introduzcas `service_role`.

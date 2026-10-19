@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, Outlet } from 'react-router-dom';
-import { Menu, Sparkles, RefreshCw, Edit3, AlertCircle, ArrowUpRight, Check, X, Database } from 'lucide-react';
+import { Menu, Sparkles, RefreshCw, Edit3, AlertCircle, ArrowUpRight, Check, X, Database, Store } from 'lucide-react';
 import { Sidebar } from '../components/ui/Sidebar';
 import { ManualBcvRateModal } from '../components/modals/ManualBcvRateModal';
 import { SupabaseConnectionModal } from '../components/modals/SupabaseConnectionModal';
@@ -61,6 +61,66 @@ export function DashboardLayout() {
     window.addEventListener('frenyer:active-user-changed', handleUserChange);
     return () => window.removeEventListener('frenyer:active-user-changed', handleUserChange);
   }, []);
+
+  // Guard de rol: Clientes solo se quedan en la tienda e-commerce
+  useEffect(() => {
+    const guardRole = async () => {
+      const storedRole = localStorage.getItem('frenyer_user_role');
+      if (storedRole === 'cliente') {
+        navigate('/', { replace: true });
+        return;
+      }
+
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session?.user) {
+        const metaRole = (session.user.user_metadata?.role || '').toLowerCase();
+        if (metaRole === 'cliente' || metaRole === 'customer') {
+          localStorage.setItem('frenyer_user_role', 'cliente');
+          navigate('/', { replace: true });
+          return;
+        }
+
+        try {
+          const res = await fetch('/api/users');
+          if (res.ok) {
+            const json = await res.json();
+            if (json.success && Array.isArray(json.data)) {
+              const matched = json.data.find(
+                (u: any) => u.email && u.email.toLowerCase() === session.user.email?.toLowerCase()
+              );
+              if (matched) {
+                if (matched.active === false) {
+                  await supabase.auth.signOut();
+                  localStorage.removeItem('frenyer_active_user');
+                  localStorage.removeItem('frenyer_user_role');
+                  localStorage.removeItem('frenyer_user_permissions');
+                  navigate('/', { replace: true });
+                  return;
+                }
+                const names = (matched.name || 'Usuario').trim().split(/\s+/);
+                const initials = names.length >= 2 ? `${names[0][0]}${names[1][0]}`.toUpperCase() : names[0].slice(0, 2).toUpperCase();
+                const config = {
+                  id: matched.id,
+                  name: matched.name,
+                  email: matched.email,
+                  role: matched.role || 'Admin',
+                  title: matched.title || 'Personal Asociado',
+                  active: true,
+                  initials,
+                  permissions: Array.isArray(matched.permissions) ? matched.permissions : ['ventas']
+                };
+                localStorage.setItem('frenyer_active_user', JSON.stringify(config));
+                localStorage.setItem('frenyer_user_permissions', JSON.stringify(config.permissions));
+                localStorage.setItem('frenyer_user_role', config.role);
+                setActiveUser(config);
+              }
+            }
+          }
+        } catch {}
+      }
+    };
+    guardRole();
+  }, [navigate]);
 
   // Proposed Rate Notification Banner
   const [proposedRate, setProposedRate] = useState<{
@@ -247,6 +307,28 @@ export function DashboardLayout() {
             >
               Bs. {bcvRate.toFixed(2)}
             </div>
+
+            <button
+              type="button"
+              onClick={() => navigate('/')}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 6,
+                padding: '5px 11px',
+                borderRadius: 8,
+                border: '1px solid #e2e8f0',
+                background: '#f8fafc',
+                color: '#334155',
+                fontSize: 12,
+                fontWeight: 650,
+                cursor: 'pointer',
+                transition: 'all 0.15s ease'
+              }}
+              title="Abrir Tienda Online (Catálogo público)"
+            >
+              <Store size={14} color="#7c3aed" /> Tienda Online
+            </button>
 
             <span className="muted" style={{ fontSize: 12 }}>
               Sucursal Principal

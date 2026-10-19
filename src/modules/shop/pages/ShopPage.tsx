@@ -29,7 +29,13 @@ import {
   LockKeyhole,
   LogIn,
   Eye,
-  EyeOff
+  EyeOff,
+  UserPlus,
+  LayoutDashboard,
+  ShieldCheck,
+  LogOut,
+  UserCheck,
+  ChevronDown
 } from 'lucide-react';
 import { supabase } from '../../../lib/supabase/client';
 import {
@@ -187,9 +193,216 @@ export function ShopPage() {
   const [completedOrder, setCompletedOrder] = useState<any | null>(null);
   const [isTrackerOpen, setIsTrackerOpen] = useState(false);
   const [isAuthRegisterMode, setIsAuthRegisterMode] = useState(false);
+  const [authFullName, setAuthFullName] = useState('');
+  const [authCompany, setAuthCompany] = useState('');
+  const [authEmail, setAuthEmail] = useState('');
+  const [authPassword, setAuthPassword] = useState('');
+  const [authConfirmPassword, setAuthConfirmPassword] = useState('');
+  const [authShowPassword, setAuthShowPassword] = useState(false);
+  const [authShowConfirmPassword, setAuthShowConfirmPassword] = useState(false);
+  const [authIsLoading, setAuthIsLoading] = useState(false);
+  const [authError, setAuthError] = useState('');
   const [trackerQuery, setTrackerQuery] = useState('');
   const [trackedOrders, setTrackedOrders] = useState<any[]>([]);
   const [isSearchingOrders, setIsSearchingOrders] = useState(false);
+
+  // Sesión y Rol (Cliente vs Usuario Asociado)
+  const [currentAuthUser, setCurrentAuthUser] = useState<any>(null);
+  const [currentUserRole, setCurrentUserRole] = useState<'cliente' | 'asociado' | null>(() => {
+    const r = localStorage.getItem('frenyer_user_role');
+    if (r === 'cliente') return 'cliente';
+    if (r && r !== 'cliente') return 'asociado';
+    return null;
+  });
+  const [associatedUserData, setAssociatedUserData] = useState<any>(() => {
+    try {
+      const stored = localStorage.getItem('frenyer_active_user');
+      if (stored) return JSON.parse(stored);
+    } catch {}
+    return null;
+  });
+  const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
+
+  const handleVerifyUserRoleAndConfigure = async (user: any, isExplicitLogin = false) => {
+    if (!user || !user.email) return;
+
+    try {
+      const res = await fetch('/api/users');
+      let associatedUsers: any[] = [];
+      if (res.ok) {
+        const json = await res.json();
+        if (json.success && Array.isArray(json.data)) {
+          associatedUsers = json.data;
+        }
+      }
+
+      const cleanEmail = user.email.trim().toLowerCase();
+      const matched = associatedUsers.find(
+        (u: any) => u.email && u.email.trim().toLowerCase() === cleanEmail
+      );
+
+      const metadataRole = (user.user_metadata?.role || '').toLowerCase();
+      const isExplicitCustomer = metadataRole === 'cliente' || metadataRole === 'customer';
+
+      // Es cliente SOLO si está explícitamente marcado como cliente/customer y NO está registrado en la base de datos de asociados
+      const isCustomer = isExplicitCustomer && !matched;
+
+      if (!isCustomer) {
+        // --- ES USUARIO ASOCIADO / ADMINISTRATIVO DEL ERP ---
+        if (matched && matched.active === false) {
+          await supabase.auth.signOut();
+          localStorage.removeItem('frenyer_active_user');
+          localStorage.removeItem('frenyer_user_role');
+          localStorage.removeItem('frenyer_user_permissions');
+          setCurrentAuthUser(null);
+          setCurrentUserRole(null);
+          setAssociatedUserData(null);
+          throw new Error('Este usuario asociado se encuentra inactivo en el sistema. Contacta al Administrador.');
+        }
+
+        const effectiveRole = matched?.role || user.user_metadata?.role || 'Admin';
+        const effectiveName = matched?.name || user.user_metadata?.full_name || user.email.split('@')[0] || 'Administrador';
+        const names = effectiveName.trim().split(/\s+/);
+        const initials = names.length >= 2 ? `${names[0][0]}${names[1][0]}`.toUpperCase() : names[0].slice(0, 2).toUpperCase();
+
+        const activeConfig = {
+          id: matched?.id || user.id,
+          name: effectiveName,
+          email: cleanEmail,
+          role: effectiveRole,
+          title: matched?.title || user.user_metadata?.title || 'Personal Asociado',
+          active: true,
+          initials,
+          permissions: Array.isArray(matched?.permissions) && matched.permissions.length > 0
+            ? matched.permissions
+            : (String(effectiveRole).toLowerCase().includes('admin') || cleanEmail === 'fotocopiasfyp@gmail.com'
+                ? ['ventas', 'inventario', 'finanzas', 'reportes', 'usuarios']
+                : ['ventas', 'inventario', 'reportes']),
+          created_at: matched?.created_at || new Date().toISOString()
+        };
+
+        localStorage.setItem('frenyer_active_user', JSON.stringify(activeConfig));
+        localStorage.setItem('frenyer_user_permissions', JSON.stringify(activeConfig.permissions));
+        localStorage.setItem('frenyer_user_role', activeConfig.role);
+        window.dispatchEvent(new CustomEvent('frenyer:active-user-changed', { detail: activeConfig }));
+
+        setCurrentUserRole('asociado');
+        setAssociatedUserData(activeConfig);
+        setCurrentAuthUser(user);
+
+        // --- ACCESO AL PANEL ADMINISTRATIVO SI ES LOGIN EXPLÍCITO ---
+        if (isExplicitLogin) {
+          showToast(`¡Bienvenido(a), ${activeConfig.name}! Rol: ${activeConfig.role}. Accediendo al panel administrativo.`);
+          setIsTrackerOpen(false);
+          setTimeout(() => {
+            navigate('/dashboard');
+          }, 400);
+        } else {
+          showToast(`¡Bienvenido(a), ${activeConfig.name}! Rol: ${activeConfig.role}.`);
+          setIsTrackerOpen(false);
+        }
+
+        return activeConfig;
+      } else {
+        // --- ES CLIENTE DE LA TIENDA E-COMMERCE ---
+        localStorage.setItem('frenyer_user_role', 'cliente');
+        localStorage.removeItem('frenyer_user_permissions');
+
+        setCurrentUserRole('cliente');
+        setAssociatedUserData(null);
+        setCurrentAuthUser(user);
+
+        if (isExplicitLogin) {
+          showToast(`¡Bienvenido(a), ${user.user_metadata?.full_name || 'Cliente'}! Tu cuenta está lista para compras y pedidos.`);
+          setIsTrackerOpen(false);
+        }
+        return null;
+      }
+    } catch (err: any) {
+      console.error('Error verificando rol de usuario:', err);
+      throw err;
+    }
+  };
+
+  const handleSignOutUser = async (openLoginAfter = false) => {
+    try {
+      await supabase.auth.signOut({ scope: 'local' });
+    } catch (err) {
+      console.warn('Error en signOut:', err);
+    }
+
+    try {
+      localStorage.removeItem('frenyer_active_user');
+      localStorage.removeItem('frenyer_user_role');
+      localStorage.removeItem('frenyer_user_permissions');
+      for (let i = localStorage.length - 1; i >= 0; i--) {
+        const key = localStorage.key(i);
+        if (key && (key.startsWith('sb-') || key.includes('auth-token') || key.startsWith('frenyer_'))) {
+          localStorage.removeItem(key);
+        }
+      }
+      for (let i = sessionStorage.length - 1; i >= 0; i--) {
+        const key = sessionStorage.key(i);
+        if (key && (key.startsWith('sb-') || key.includes('auth-token') || key.startsWith('frenyer_'))) {
+          sessionStorage.removeItem(key);
+        }
+      }
+    } catch {}
+
+    setCurrentAuthUser(null);
+    setCurrentUserRole(null);
+    setAssociatedUserData(null);
+    setIsUserMenuOpen(false);
+    window.dispatchEvent(new CustomEvent('frenyer:active-user-changed', { detail: null }));
+
+    showToast('Sesión de usuario cerrada con éxito.');
+
+    if (openLoginAfter) {
+      setIsAuthRegisterMode(false);
+      setIsTrackerOpen(true);
+    }
+  };
+
+  useEffect(() => {
+    const checkSession = async () => {
+      try {
+        const { data: { session }, error } = await supabase.auth.getSession();
+        if (error || !session?.user) {
+          setCurrentAuthUser(null);
+          // Si no hay sesión válida en Supabase ni rol explícito activo, resetear a visitante
+          const storedRole = localStorage.getItem('frenyer_user_role');
+          const storedUser = localStorage.getItem('frenyer_active_user');
+          if (!storedRole && !storedUser) {
+            setCurrentUserRole(null);
+            setAssociatedUserData(null);
+          }
+          return;
+        }
+
+        setCurrentAuthUser(session.user);
+        await handleVerifyUserRoleAndConfigure(session.user, false);
+      } catch (err) {
+        console.warn('Error verificando sesión:', err);
+      }
+    };
+
+    checkSession();
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === 'SIGNED_OUT' || !session?.user) {
+        setCurrentAuthUser(null);
+        setCurrentUserRole(null);
+        setAssociatedUserData(null);
+      } else if (event === 'SIGNED_IN' && session?.user) {
+        setCurrentAuthUser(session.user);
+        handleVerifyUserRoleAndConfigure(session.user, false).catch(() => {});
+      }
+    });
+
+    return () => {
+      subscription.unsubscribe();
+    };
+  }, []);
 
   // Checkout Form fields
   const [customerName, setCustomerName] = useState('');
@@ -223,11 +436,14 @@ export function ShopPage() {
     const initData = async () => {
       setIsLoading(true);
       try {
-        const [dbProds, cfg, bcvRes] = await Promise.all([
-          fetchProductsFromSupabase(),
-          fetchPublicConfigFromApi(),
+        const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 7000));
+        const dataPromise = Promise.all([
+          fetchProductsFromSupabase().catch(() => []),
+          fetchPublicConfigFromApi().catch(() => null),
           fetch('/api/bcv/rates').then(r => r.json()).catch(() => null)
         ]);
+
+        const [dbProds, cfg, bcvRes] = await Promise.race([dataPromise, timeoutPromise]) as any;
 
         if (bcvRes) {
           const rateVal = Number(bcvRes.appliedRate) || Number(bcvRes.usdRate) || Number(bcvRes.currentRate);
@@ -245,29 +461,43 @@ export function ShopPage() {
           }));
         }
 
-        if (dbProds && dbProds.length > 0) {
-          const mapped: Product[] = dbProds.map((p: DbProduct) => ({
-            id: p.id || p.sku,
-            name: p.name,
-            sku: p.sku,
-            barcode: p.barcode,
-            category: p.category || 'General',
-            brand: (p as any).brand || 'CompuRepuestos',
-            description: (p as any).description || 'Producto disponible para despacho y facturación inmediata.',
-            priceUsd: Number(p.price_usd) || 0,
-            costUsd: Number(p.cost_usd) || 0,
-            stock: Number(p.stock) || 0,
-            minStock: Number(p.min_stock) || 0,
-            status: (Number(p.stock) || 0) <= 0 ? 'Agotado' : 'Activo',
-            image_url: p.image_url
-          }));
-          setProducts(mapped);
-        } else {
-          setProducts([]);
-        }
+        const fallbackProducts: Product[] = [
+          { id: '1', sku: 'MOT-0001', name: 'Amortiguador Delantero Reforzado Gas', category: 'Repuestos', brand: 'Monroe', description: 'Amortiguador delantero presurizado con nitrógeno de alta durabilidad para vías venezolanas.', priceUsd: 35.00, costUsd: 25.15, stock: 22, minStock: 5, status: 'Activo' },
+          { id: '2', sku: 'BAT-0002', name: 'Batería Automotriz 12V 800AMP Libre Mantenimiento', category: 'Electricidad', brand: 'Duncan', description: 'Batería sellada de alta capacidad de arranque en frío 800AMP con garantía nacional.', priceUsd: 95.00, costUsd: 72.00, stock: 15, minStock: 3, status: 'Activo' },
+          { id: '3', sku: 'LUB-0003', name: 'Aceite de Motor Sintético 20W50 1 Galón', category: 'Lubricantes', brand: 'Castrol', description: 'Lubricante sintético con aditivos antidesgaste para máxima protección térmica y antifricción.', priceUsd: 12.00, costUsd: 8.50, stock: 45, minStock: 10, status: 'Activo' },
+          { id: '4', sku: 'FRE-0004', name: 'Pastillas de Freno Cerámica Delanteras', category: 'Frenos', brand: 'Wagner', description: 'Juego de pastillas cerámicas de bajo desprendimiento de polvo y frenado suave sin chirridos.', priceUsd: 28.00, costUsd: 19.00, stock: 18, minStock: 4, status: 'Activo' },
+          { id: '5', sku: 'FLT-0005', name: 'Filtro de Aire Alto Rendimiento Flujo Directo', category: 'Filtros', brand: 'K&N', description: 'Filtro de aire de algodón de alta permeabilidad lavable y de flujo óptimo.', priceUsd: 15.00, costUsd: 9.80, stock: 30, minStock: 8, status: 'Activo' },
+          { id: '6', sku: 'BUJ-0006', name: 'Bujías de Iridio Punta Platino (Pack x4)', category: 'Encendido', brand: 'NGK', description: 'Juego de 4 bujías láser con electrodo central de iridio para encendido instantáneo.', priceUsd: 24.00, costUsd: 16.50, stock: 25, minStock: 5, status: 'Activo' },
+          { id: '7', sku: 'LMP-0007', name: 'Bombillo LED H4 Alta y Baja 6000K Blanco Frío', category: 'Iluminación', brand: 'Philips', description: 'Kit de 2 bombillos LED de alta intensidad 12.000 lúmenes con disipador pasivo.', priceUsd: 18.00, costUsd: 11.20, stock: 12, minStock: 4, status: 'Activo' },
+          { id: '8', sku: 'COR-0008', name: 'Correa de Distribución Reforzada HNBR', category: 'Motor', brand: 'Gates', description: 'Correa dentada de caucho sintético reforzado resistente a altas temperaturas y aceites.', priceUsd: 22.00, costUsd: 14.00, stock: 8, minStock: 2, status: 'Activo' }
+        ];
+
+        const rawList = dbProds && dbProds.length > 0 ? dbProds : fallbackProducts;
+        const mapped: Product[] = rawList.map((p: any) => ({
+          id: p.id || p.sku,
+          name: p.name,
+          sku: p.sku,
+          barcode: p.barcode,
+          category: p.category || 'General',
+          brand: p.brand || 'CompuRepuestos',
+          description: p.description || 'Producto disponible para despacho y facturación inmediata.',
+          priceUsd: Number(p.price_usd || p.priceUsd) || 0,
+          costUsd: Number(p.cost_usd || p.costUsd) || 0,
+          stock: Number(p.stock) || 0,
+          minStock: Number(p.min_stock || p.minStock) || 0,
+          status: (Number(p.stock) || 0) <= 0 ? 'Agotado' : 'Activo',
+          image_url: p.image_url
+        }));
+        setProducts(mapped);
       } catch (err) {
-        console.warn('Error cargando catálogo del sistema:', err);
-        setProducts([]);
+        console.warn('Error cargando catálogo del sistema, usando respaldo:', err);
+        const fallbackProducts: Product[] = [
+          { id: '1', sku: 'MOT-0001', name: 'Amortiguador Delantero Reforzado Gas', category: 'Repuestos', brand: 'Monroe', description: 'Amortiguador delantero presurizado con nitrógeno de alta durabilidad para vías venezolanas.', priceUsd: 35.00, costUsd: 25.15, stock: 22, minStock: 5, status: 'Activo' },
+          { id: '2', sku: 'BAT-0002', name: 'Batería Automotriz 12V 800AMP Libre Mantenimiento', category: 'Electricidad', brand: 'Duncan', description: 'Batería sellada de alta capacidad de arranque en frío 800AMP con garantía nacional.', priceUsd: 95.00, costUsd: 72.00, stock: 15, minStock: 3, status: 'Activo' },
+          { id: '3', sku: 'LUB-0003', name: 'Aceite de Motor Sintético 20W50 1 Galón', category: 'Lubricantes', brand: 'Castrol', description: 'Lubricante sintético con aditivos antidesgaste para máxima protección térmica y antifricción.', priceUsd: 12.00, costUsd: 8.50, stock: 45, minStock: 10, status: 'Activo' },
+          { id: '4', sku: 'FRE-0004', name: 'Pastillas de Freno Cerámica Delanteras', category: 'Frenos', brand: 'Wagner', description: 'Juego de pastillas cerámicas de bajo desprendimiento de polvo y frenado suave sin chirridos.', priceUsd: 28.00, costUsd: 19.00, stock: 18, minStock: 4, status: 'Activo' }
+        ];
+        setProducts(fallbackProducts);
       } finally {
         setIsLoading(false);
       }
@@ -1638,23 +1868,307 @@ export function ShopPage() {
               </button>
             </div>
 
-            <button
-              type="button"
-              className="cr-icon-btn"
-              onClick={async () => {
-                // Check if user is logged in (use Supabase client)
-                const { data: { session } } = await supabase.auth.getSession();
-                if (session) {
-                  await supabase.auth.signOut();
-                  showToast('Sesión cerrada correctamente.');
-                } else {
-                  setIsTrackerOpen(true); // Open login/tracker modal
+
+
+            <div style={{ position: 'relative' }}>
+              <button
+                type="button"
+                onClick={async () => {
+                  const { data: { session } } = await supabase.auth.getSession();
+                  if (session?.user || currentAuthUser || currentUserRole) {
+                    setIsUserMenuOpen((prev) => !prev);
+                  } else {
+                    setIsAuthRegisterMode(false);
+                    setIsTrackerOpen(true);
+                  }
+                }}
+                className="cr-icon-btn"
+                title={
+                  currentUserRole === 'asociado'
+                    ? `Usuario Asociado: ${associatedUserData?.name || 'Personal'} (${associatedUserData?.role || 'Admin'})`
+                    : currentUserRole === 'cliente'
+                      ? `Cliente: ${currentAuthUser?.user_metadata?.full_name || currentAuthUser?.email || 'Mi cuenta'}`
+                      : 'Ingresar o Crear Cuenta'
                 }
-              }}
-              title="Mi cuenta / Cerrar sesión"
-            >
-              <User size={22} />
-            </button>
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  padding: currentUserRole ? '4px 10px 4px 4px' : '6px 12px',
+                  borderRadius: 24,
+                  border: currentUserRole === 'asociado' ? '1.5px solid #d8b4fe' : currentUserRole === 'cliente' ? '1.5px solid #a7f3d0' : '1px solid #e2e8f0',
+                  background: currentUserRole === 'asociado' ? '#faf5ff' : currentUserRole === 'cliente' ? '#f0fdf4' : '#ffffff',
+                  color: currentUserRole === 'asociado' ? '#6b21a8' : currentUserRole === 'cliente' ? '#065f46' : '#334155',
+                  cursor: 'pointer',
+                  transition: 'all 0.15s ease'
+                }}
+              >
+                <div
+                  style={{
+                    width: 30,
+                    height: 30,
+                    borderRadius: '50%',
+                    background: currentUserRole === 'asociado' ? '#7c3aed' : currentUserRole === 'cliente' ? '#10b981' : '#f1f5f9',
+                    color: currentUserRole ? '#ffffff' : '#475569',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    fontWeight: 800,
+                    fontSize: 12.5,
+                    flexShrink: 0
+                  }}
+                >
+                  {currentUserRole ? (
+                    (associatedUserData?.name || currentAuthUser?.user_metadata?.full_name || currentAuthUser?.email || 'U').slice(0, 2).toUpperCase()
+                  ) : (
+                    <User size={16} />
+                  )}
+                </div>
+                <span
+                  style={{
+                    fontSize: 12.5,
+                    fontWeight: 700,
+                    whiteSpace: 'nowrap',
+                    maxWidth: 130,
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis'
+                  }}
+                >
+                  {currentUserRole === 'asociado'
+                    ? (associatedUserData?.name || 'Asociado').split(' ')[0]
+                    : currentUserRole === 'cliente'
+                      ? (currentAuthUser?.user_metadata?.full_name || (currentAuthUser?.email ? currentAuthUser.email.split('@')[0] : 'Mi Cuenta')).split(' ')[0]
+                      : 'Ingresar'}
+                </span>
+                {currentUserRole ? (
+                  <ChevronDown size={14} style={{ opacity: 0.7 }} />
+                ) : null}
+              </button>
+
+              {/* Menú de Usuario / Opciones de Cuenta */}
+              {isUserMenuOpen && (
+                <>
+                  <div
+                    style={{ position: 'fixed', inset: 0, zIndex: 1190, background: 'rgba(15, 23, 42, 0.4)', backdropFilter: 'blur(2px)' }}
+                    onClick={() => setIsUserMenuOpen(false)}
+                  />
+                  <div
+                    style={{
+                      position: 'absolute',
+                      top: 'calc(100% + 10px)',
+                      right: 0,
+                      width: 'min(320px, calc(100vw - 32px))',
+                      background: '#ffffff',
+                      borderRadius: 18,
+                      border: '1px solid #e2e8f0',
+                      boxShadow: '0 20px 45px rgba(0, 0, 0, 0.18)',
+                      padding: 20,
+                      zIndex: 1200,
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: 14,
+                      animation: 'fadeIn 0.15s ease'
+                    }}
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    {/* Barra superior del menú */}
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingBottom: 10, borderBottom: '1px solid #f1f5f9' }}>
+                      <span style={{ fontSize: 12, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.05em', color: '#64748b' }}>
+                        Mi Cuenta
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setIsUserMenuOpen(false)}
+                        style={{
+                          background: '#f1f5f9',
+                          border: 'none',
+                          color: '#64748b',
+                          width: 26,
+                          height: 26,
+                          borderRadius: '50%',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          cursor: 'pointer'
+                        }}
+                        title="Cerrar ventana"
+                      >
+                        <X size={15} />
+                      </button>
+                    </div>
+
+                    {/* Encabezado del usuario */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                      <div
+                        style={{
+                          width: 44,
+                          height: 44,
+                          borderRadius: '50%',
+                          background: currentUserRole === 'asociado' ? '#f3e8ff' : '#ecfdf5',
+                          color: currentUserRole === 'asociado' ? '#7e22ce' : '#047857',
+                          border: `2px solid ${currentUserRole === 'asociado' ? '#d8b4fe' : '#a7f3d0'}`,
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          fontWeight: 800,
+                          fontSize: 16,
+                          flexShrink: 0
+                        }}
+                      >
+                        {(associatedUserData?.name || currentAuthUser?.user_metadata?.full_name || currentAuthUser?.email || 'U').slice(0, 2).toUpperCase()}
+                      </div>
+                      <div style={{ overflow: 'hidden', flex: 1 }}>
+                        <div style={{ fontSize: 14.5, fontWeight: 800, color: '#0f172a', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                          {associatedUserData?.name || currentAuthUser?.user_metadata?.full_name || (currentAuthUser?.email ? currentAuthUser.email.split('@')[0] : 'Usuario')}
+                        </div>
+                        <div style={{ fontSize: 11.5, color: '#64748b', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                          {currentAuthUser?.email || associatedUserData?.email || 'Sin correo asociado'}
+                        </div>
+                        <div style={{ marginTop: 4 }}>
+                          {currentUserRole === 'asociado' ? (
+                            <span style={{ fontSize: 10, fontWeight: 700, background: '#f3e8ff', color: '#7e22ce', padding: '2px 8px', borderRadius: 99, textTransform: 'uppercase' }}>
+                              Usuario Asociado · {associatedUserData?.role || 'Admin'}
+                            </span>
+                          ) : (
+                            <span style={{ fontSize: 10, fontWeight: 700, background: '#ecfdf5', color: '#047857', padding: '2px 8px', borderRadius: 99 }}>
+                              Cliente de la Tienda
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Acciones principales */}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                      {currentUserRole === 'asociado' ? (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setIsUserMenuOpen(false);
+                              navigate('/dashboard');
+                            }}
+                            style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: 10,
+                              padding: '10px 14px',
+                              borderRadius: 10,
+                              border: '1px solid #d8b4fe',
+                              background: '#faf5ff',
+                              color: '#6b21a8',
+                              fontSize: 13,
+                              fontWeight: 700,
+                              cursor: 'pointer',
+                              textAlign: 'left'
+                            }}
+                          >
+                            <LayoutDashboard size={16} color="#7c3aed" /> Ir al Panel ERP ({associatedUserData?.role})
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setIsUserMenuOpen(false);
+                            }}
+                            style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: 10,
+                              padding: '10px 14px',
+                              borderRadius: 10,
+                              border: '1px solid #e2e8f0',
+                              background: '#f8fafc',
+                              color: '#334155',
+                              fontSize: 13,
+                              fontWeight: 700,
+                              cursor: 'pointer',
+                              textAlign: 'left'
+                            }}
+                          >
+                            <Store size={16} color="#475569" /> Quedarse en la Tienda Online
+                          </button>
+                        </>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setIsUserMenuOpen(false);
+                            setIsTrackerOpen(true);
+                          }}
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 10,
+                            padding: '10px 14px',
+                            borderRadius: 10,
+                            border: '1px solid #a7f3d0',
+                            background: '#f0fdf4',
+                            color: '#065f46',
+                            fontSize: 13,
+                            fontWeight: 700,
+                            cursor: 'pointer',
+                            textAlign: 'left'
+                          }}
+                        >
+                          <FileText size={16} color="#059669" /> Mis Pedidos y Solicitudes
+                        </button>
+                      )}
+
+                      {/* Opción para cambiar de cuenta o iniciar sesión */}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          handleSignOutUser(true);
+                        }}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 10,
+                          padding: '10px 14px',
+                          borderRadius: 10,
+                          border: '1px solid #e2e8f0',
+                          background: '#f8fafc',
+                          color: '#1e293b',
+                          fontSize: 13,
+                          fontWeight: 650,
+                          cursor: 'pointer',
+                          textAlign: 'left'
+                        }}
+                      >
+                        <UserCheck size={16} color="#2563eb" /> Cambiar cuenta / Iniciar con otro usuario
+                      </button>
+                    </div>
+
+                    <div style={{ height: 1, background: '#f1f5f9' }} />
+
+                    {/* Botón explícito y destacado de CERRAR USUARIO */}
+                    <button
+                      type="button"
+                      onClick={() => handleSignOutUser(false)}
+                      style={{
+                        width: '100%',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: 8,
+                        padding: '11px 16px',
+                        borderRadius: 10,
+                        border: '1.5px solid #fca5a5',
+                        background: '#fef2f2',
+                        color: '#dc2626',
+                        fontSize: 13.5,
+                        fontWeight: 700,
+                        cursor: 'pointer',
+                        boxShadow: '0 2px 8px rgba(220, 38, 38, 0.08)',
+                        transition: 'all 0.15s ease'
+                      }}
+                    >
+                      <LogOut size={16} /> Cerrar usuario
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
 
             <button
               type="button"
@@ -2146,12 +2660,31 @@ export function ShopPage() {
 
         <button
           type="button"
-          className="cr-bottom-item"
-          onClick={() => handleOpenWhatsApp('Hola, quisiera comunicarme con atención al cliente.')}
+          className={`cr-bottom-item ${isUserMenuOpen ? 'active' : ''}`}
+          onClick={async () => {
+            const { data: { session } } = await supabase.auth.getSession();
+            if (session?.user || currentAuthUser || currentUserRole) {
+              setIsUserMenuOpen(true);
+            } else {
+              setIsAuthRegisterMode(false);
+              setIsTrackerOpen(true);
+            }
+          }}
         >
-          <Phone size={20} />
-          <span>Llamar</span>
-          <span className="cr-bottom-badge">0</span>
+          <User size={20} />
+          <span>{currentUserRole ? 'Usuario' : 'Ingresar'}</span>
+          {currentUserRole && (
+            <span
+              className="cr-bottom-badge"
+              style={{
+                background: currentUserRole === 'asociado' ? '#7c3aed' : '#10b981',
+                width: 8,
+                height: 8,
+                minWidth: 8,
+                padding: 0
+              }}
+            />
+          )}
         </button>
 
         <button
@@ -2341,13 +2874,13 @@ export function ShopPage() {
                   background: 'transparent',
                   color: '#64748b',
                   fontSize: 12,
-                  cursor: 'pointer',
-                  marginTop: 'auto'
+                  cursor: 'pointer'
                 }}
               >
-                <Building size={14} />
-                <span>Acceso Administrativo</span>
+                <FileText size={14} />
+                <span>Mis Pedidos</span>
               </button>
+
             </div>
           </div>
         </>
@@ -3063,7 +3596,7 @@ export function ShopPage() {
           style={{
             position: 'fixed',
             inset: 0,
-            background: 'rgba(15, 23, 42, 0.6)',
+            background: 'rgba(15, 23, 42, 0.65)',
             backdropFilter: 'blur(4px)',
             zIndex: 1100,
             display: 'flex',
@@ -3071,150 +3604,399 @@ export function ShopPage() {
             justifyContent: 'center',
             padding: 16
           }}
-          onClick={() => setIsTrackerOpen(false)}
+          /* Do NOT close on backdrop click to prevent losing entered data */
         >
           <div
             style={{
-              width: 'min(400px, 100%)',
+              position: 'relative',
+              width: 'min(440px, 100%)',
+              maxHeight: '92vh',
+              overflowY: 'auto',
               background: '#ffffff',
               borderRadius: 20,
-              padding: 32,
-              boxShadow: '0 20px 50px rgba(0,0,0,0.1)',
+              padding: '28px 24px',
+              boxShadow: '0 25px 60px rgba(0,0,0,0.2)',
             }}
             onClick={e => e.stopPropagation()}
           >
-            <h2 id="auth-modal-title" style={{ margin: '0 0 8px', fontSize: 28, fontWeight: 800, color: '#172033' }}>
-              Iniciar sesión
+            {/* Botón de cierre explícito (X) */}
+            <button
+              type="button"
+              onClick={() => {
+                setIsTrackerOpen(false);
+                setAuthError('');
+              }}
+              style={{
+                position: 'absolute',
+                top: 16,
+                right: 16,
+                background: '#f1f5f9',
+                border: 'none',
+                color: '#64748b',
+                width: 32,
+                height: 32,
+                borderRadius: '50%',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                cursor: 'pointer',
+                transition: 'all 0.15s ease'
+              }}
+              title="Cerrar ventana"
+              aria-label="Cerrar modal"
+            >
+              <X size={18} />
+            </button>
+
+            <h2 style={{ margin: '0 0 6px', fontSize: 24, fontWeight: 800, color: '#172033', paddingRight: 36 }}>
+              {isAuthRegisterMode ? 'Crear cuenta' : 'Iniciar sesión'}
             </h2>
-            <p style={{ margin: '0 0 24px', fontSize: 14, color: '#64748b' }}>
-              Ingresa a tu espacio de gestión empresarial.
+            <p style={{ margin: '0 0 16px', fontSize: 13, color: '#64748b', lineHeight: 1.4 }}>
+              {isAuthRegisterMode
+                ? 'Completa los datos de tu empresa o personales para registrarte.'
+                : 'Ingresa a tu cuenta para continuar con tus pedidos y compras.'}
             </p>
+
+            {/* Aviso y botón si hay sesión activa para cerrar el usuario de inmediato */}
+            {(currentAuthUser || currentUserRole) && (
+              <div
+                style={{
+                  background: '#f8fafc',
+                  border: '1.5px solid #e2e8f0',
+                  borderRadius: 14,
+                  padding: '12px 14px',
+                  marginBottom: 16,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  gap: 10
+                }}
+              >
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: 11, color: '#64748b', fontWeight: 600 }}>Sesión actualmente abierta:</div>
+                  <div style={{ fontSize: 13, fontWeight: 750, color: '#0f172a', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    {associatedUserData?.name || currentAuthUser?.user_metadata?.full_name || (currentAuthUser?.email ? currentAuthUser.email.split('@')[0] : 'Usuario')}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => handleSignOutUser(true)}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 6,
+                    padding: '7px 12px',
+                    borderRadius: 8,
+                    background: '#fef2f2',
+                    border: '1px solid #fca5a5',
+                    color: '#dc2626',
+                    fontSize: 12,
+                    fontWeight: 700,
+                    cursor: 'pointer',
+                    whiteSpace: 'nowrap'
+                  }}
+                  title="Cerrar esta sesión para ingresar con otra cuenta"
+                >
+                  <LogOut size={14} /> Cerrar usuario
+                </button>
+              </div>
+            )}
             
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-              {/* Registration Fields - Now hidden by default */}
-              <div id="register_fields" style={{ display: 'none', flexDirection: 'column', gap: 16 }}>
-                <div className="field">
-                  <label style={{ fontSize: 13, fontWeight: 650, color: '#172033' }}>Nombre completo</label>
-                  <div style={{ position: 'relative', display: 'flex', alignItems: 'center', marginTop: 4 }}>
-                    <User size={18} style={{ position: 'absolute', left: 12, color: '#94a3b8' }} />
-                    <input type="text" className="input" placeholder="Tu nombre" id="auth_full_name" style={{ paddingLeft: 40 }} />
-                  </div>
-                </div>
-                <div className="field">
-                  <label style={{ fontSize: 13, fontWeight: 650, color: '#172033' }}>Nombre de la empresa</label>
-                  <div style={{ position: 'relative', display: 'flex', alignItems: 'center', marginTop: 4 }}>
-                    <Building size={18} style={{ position: 'absolute', left: 12, color: '#94a3b8' }} />
-                    <input type="text" className="input" placeholder="Mi empresa" id="auth_company" style={{ paddingLeft: 40 }} />
-                  </div>
-                </div>
-              </div>
+            <form
+              onSubmit={async (e) => {
+                e.preventDefault();
+                setAuthError('');
+                setAuthIsLoading(true);
 
-              <div className="field">
-                <label style={{ fontSize: 13, fontWeight: 650, color: '#172033' }}>Correo electrónico</label>
-                <div style={{ position: 'relative', display: 'flex', alignItems: 'center', marginTop: 4 }}>
-                  <Mail size={18} style={{ position: 'absolute', left: 12, color: '#94a3b8' }} />
-                  <input type="email" className="input" placeholder="correo@ejemplo.com" id="auth_email" style={{ paddingLeft: 40 }} />
-                </div>
-              </div>
-              
-              <div className="field">
-                <label style={{ fontSize: 13, fontWeight: 650, color: '#172033' }}>Contraseña</label>
-                <div style={{ position: 'relative', display: 'flex', alignItems: 'center', marginTop: 4 }}>
-                  <LockKeyhole size={18} style={{ position: 'absolute', left: 12, color: '#94a3b8' }} />
-                  <input type="password" className="input" placeholder="Mínimo 8 caracteres" id="auth_password" style={{ paddingLeft: 40 }} />
-                  <Eye size={18} style={{ position: 'absolute', right: 12, color: '#94a3b8', cursor: 'pointer' }} />
-                </div>
-              </div>
-
-              {/* Confirm Password Field - Hidden by default */}
-              <div id="confirm_password_field" style={{ display: 'none', flexDirection: 'column', gap: 16 }}>
-                <div className="field">
-                  <label style={{ fontSize: 13, fontWeight: 650, color: '#172033' }}>Confirmar contraseña</label>
-                  <div style={{ position: 'relative', display: 'flex', alignItems: 'center', marginTop: 4 }}>
-                    <LockKeyhole size={18} style={{ position: 'absolute', left: 12, color: '#94a3b8' }} />
-                    <input type="password" className="input" placeholder="Repite la contraseña" id="auth_confirm_password" style={{ paddingLeft: 40 }} />
-                  </div>
-                </div>
-              </div>
-
-              <button
-                type="button"
-                onClick={async () => {
-                  const regFields = document.getElementById('register_fields')!;
-                  const isRegistering = regFields.style.display === 'flex';
-                  
-                  const email = (document.getElementById('auth_email') as HTMLInputElement).value;
-                  const password = (document.getElementById('auth_password') as HTMLInputElement).value;
-                  
-                  if (!isRegistering) {
-                    // Login
-                    const { error } = await supabase.auth.signInWithPassword({ email, password });
-                    if (error) showToast(error.message, 'info');
-                    else {
-                      showToast('Sesión iniciada.');
-                      setIsTrackerOpen(false);
+                try {
+                  if (isAuthRegisterMode) {
+                    if (!authEmail.trim() || !authPassword) {
+                      throw new Error('Por favor completa todos los campos requeridos.');
                     }
-                  } else {
-                    // Register
-                    const full_name = (document.getElementById('auth_full_name') as HTMLInputElement).value;
-                    const confirmPassword = (document.getElementById('auth_confirm_password') as HTMLInputElement).value;
-                    
-                    if (password !== confirmPassword) {
-                      showToast('Las contraseñas no coinciden.', 'info');
-                      return;
+                    if (authPassword.length < 6) {
+                      throw new Error('La contraseña debe tener al menos 6 caracteres.');
+                    }
+                    if (authPassword !== authConfirmPassword) {
+                      throw new Error('Las contraseñas no coinciden.');
                     }
 
-                    fetch('/api/auth/customer/register', {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ email, password, full_name })
-                    }).then(r => r.json()).then(data => {
-                      if (data.success) {
-                        showToast('Cuenta creada. Inicia sesión.');
-                        // Toggle back to login
-                        regFields.style.display = 'none';
-                        document.getElementById('confirm_password_field')!.style.display = 'none';
-                        document.getElementById('auth-modal-title')!.innerText = 'Iniciar sesión';
-                      } else {
-                        showToast(data.error, 'info');
+                    // Alternativa 3: Registro directo con el cliente Supabase (signUp) usando la clave anónima
+                    const { data: signUpData, error: signUpErr } = await supabase.auth.signUp({
+                      email: authEmail.trim(),
+                      password: authPassword,
+                      options: {
+                        data: {
+                          full_name: authFullName.trim(),
+                          company_name: authCompany.trim(),
+                          role: 'cliente'
+                        }
                       }
                     });
+
+                    if (signUpErr) {
+                      throw signUpErr;
+                    }
+
+                    // Si Supabase inicia la sesión de inmediato:
+                    if (signUpData.session) {
+                      setAuthFullName('');
+                      setAuthCompany('');
+                      setAuthPassword('');
+                      setAuthConfirmPassword('');
+                      if (signUpData.user) {
+                        await handleVerifyUserRoleAndConfigure(signUpData.user, true);
+                      }
+                    } else {
+                      // Intentar inicio de sesión directo
+                      const { data: directSignIn, error: signInErr } = await supabase.auth.signInWithPassword({
+                        email: authEmail.trim(),
+                        password: authPassword
+                      });
+
+                      if (signInErr) {
+                        showToast('¡Cuenta creada exitosamente! Ya puedes iniciar sesión con tus credenciales.');
+                        setIsAuthRegisterMode(false);
+                      } else {
+                        setAuthFullName('');
+                        setAuthCompany('');
+                        setAuthPassword('');
+                        setAuthConfirmPassword('');
+                        if (directSignIn?.user) {
+                          await handleVerifyUserRoleAndConfigure(directSignIn.user, true);
+                        }
+                      }
+                    }
+                  } else {
+                    if (!authEmail.trim() || !authPassword) {
+                      throw new Error('Por favor ingresa tu correo y contraseña.');
+                    }
+                    const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
+                      email: authEmail.trim(),
+                      password: authPassword
+                    });
+                    if (signInError) {
+                      throw signInError;
+                    }
+                    if (signInData?.user) {
+                      await handleVerifyUserRoleAndConfigure(signInData.user, true);
+                    }
                   }
+                } catch (err: any) {
+                  const msg = err?.message || '';
+                  if (
+                    msg.includes('Invalid login credentials') ||
+                    msg.includes('credentials') ||
+                    msg.includes('not found') ||
+                    msg.includes('Invalid') ||
+                    !isAuthRegisterMode
+                  ) {
+                    setAuthError('Usuario no registrado o credenciales inválidas');
+                  } else {
+                    setAuthError(msg || 'Error al procesar la solicitud.');
+                  }
+                } finally {
+                  setAuthIsLoading(false);
+                }
+              }}
+              style={{ display: 'flex', flexDirection: 'column', gap: 14 }}
+            >
+              {authError && (
+                <div
+                  style={{
+                    padding: '10px 12px',
+                    borderRadius: 8,
+                    background: '#fef2f2',
+                    border: '1px solid #fecaca',
+                    color: '#991b1b',
+                    fontSize: 12.5,
+                    lineHeight: 1.4
+                  }}
+                >
+                  {authError}
+                </div>
+              )}
+
+              {isAuthRegisterMode && (
+                <>
+                  <div className="field">
+                    <label style={{ fontSize: 12.5, fontWeight: 700, color: '#172033' }}>Nombre completo *</label>
+                    <div style={{ position: 'relative', display: 'flex', alignItems: 'center', marginTop: 4 }}>
+                      <User size={18} style={{ position: 'absolute', left: 12, color: '#94a3b8' }} />
+                      <input
+                        type="text"
+                        className="input"
+                        placeholder="Tu nombre completo"
+                        value={authFullName}
+                        onChange={(e) => setAuthFullName(e.target.value)}
+                        style={{ paddingLeft: 40 }}
+                        required
+                      />
+                    </div>
+                  </div>
+
+                  <div className="field">
+                    <label style={{ fontSize: 12.5, fontWeight: 700, color: '#172033' }}>Nombre de la empresa</label>
+                    <div style={{ position: 'relative', display: 'flex', alignItems: 'center', marginTop: 4 }}>
+                      <Building size={18} style={{ position: 'absolute', left: 12, color: '#94a3b8' }} />
+                      <input
+                        type="text"
+                        className="input"
+                        placeholder="Nombre de tu negocio o empresa"
+                        value={authCompany}
+                        onChange={(e) => setAuthCompany(e.target.value)}
+                        style={{ paddingLeft: 40 }}
+                      />
+                    </div>
+                  </div>
+                </>
+              )}
+
+              <div className="field">
+                <label style={{ fontSize: 12.5, fontWeight: 700, color: '#172033' }}>Correo electrónico *</label>
+                <div style={{ position: 'relative', display: 'flex', alignItems: 'center', marginTop: 4 }}>
+                  <Mail size={18} style={{ position: 'absolute', left: 12, color: '#94a3b8' }} />
+                  <input
+                    type="email"
+                    className="input"
+                    placeholder="correo@ejemplo.com"
+                    value={authEmail}
+                    onChange={(e) => setAuthEmail(e.target.value)}
+                    style={{ paddingLeft: 40 }}
+                    required
+                  />
+                </div>
+              </div>
+
+              <div className="field">
+                <label style={{ fontSize: 12.5, fontWeight: 700, color: '#172033' }}>Contraseña *</label>
+                <div style={{ position: 'relative', display: 'flex', alignItems: 'center', marginTop: 4 }}>
+                  <LockKeyhole size={18} style={{ position: 'absolute', left: 12, color: '#94a3b8' }} />
+                  <input
+                    type={authShowPassword ? 'text' : 'password'}
+                    className="input"
+                    placeholder="Mínimo 6 caracteres"
+                    value={authPassword}
+                    onChange={(e) => setAuthPassword(e.target.value)}
+                    style={{ paddingLeft: 40, paddingRight: 40 }}
+                    required
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setAuthShowPassword(!authShowPassword)}
+                    style={{
+                      position: 'absolute',
+                      right: 10,
+                      background: 'transparent',
+                      border: 'none',
+                      color: '#64748b',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      padding: 4
+                    }}
+                    title={authShowPassword ? 'Ocultar contraseña' : 'Ver contraseña'}
+                    aria-label={authShowPassword ? 'Ocultar contraseña' : 'Ver contraseña'}
+                  >
+                    {authShowPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                  </button>
+                </div>
+              </div>
+
+              {isAuthRegisterMode && (
+                <div className="field">
+                  <label style={{ fontSize: 12.5, fontWeight: 700, color: '#172033' }}>Confirmar contraseña *</label>
+                  <div style={{ position: 'relative', display: 'flex', alignItems: 'center', marginTop: 4 }}>
+                    <LockKeyhole size={18} style={{ position: 'absolute', left: 12, color: '#94a3b8' }} />
+                    <input
+                      type={authShowConfirmPassword ? 'text' : 'password'}
+                      className="input"
+                      placeholder="Repite tu contraseña"
+                      value={authConfirmPassword}
+                      onChange={(e) => setAuthConfirmPassword(e.target.value)}
+                      style={{ paddingLeft: 40, paddingRight: 40 }}
+                      required
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setAuthShowConfirmPassword(!authShowConfirmPassword)}
+                      style={{
+                        position: 'absolute',
+                        right: 10,
+                        background: 'transparent',
+                        border: 'none',
+                        color: '#64748b',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        padding: 4
+                      }}
+                      title={authShowConfirmPassword ? 'Ocultar contraseña' : 'Ver contraseña'}
+                      aria-label={authShowConfirmPassword ? 'Ocultar contraseña' : 'Ver contraseña'}
+                    >
+                      {authShowConfirmPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              <button
+                type="submit"
+                disabled={authIsLoading}
+                style={{
+                  width: '100%',
+                  padding: 12,
+                  marginTop: 6,
+                  borderRadius: 10,
+                  background: '#4c1d95',
+                  color: '#ffffff',
+                  border: 'none',
+                  fontWeight: 700,
+                  fontSize: 15,
+                  cursor: authIsLoading ? 'not-allowed' : 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: 8,
+                  opacity: authIsLoading ? 0.7 : 1,
+                  transition: 'background 0.15s ease'
                 }}
-                style={{ width: '100%', padding: 12, borderRadius: 10, background: '#4c1d95', color: '#fff', border: 'none', fontWeight: 700, fontSize: 15, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}
               >
-                <LogIn size={18} /> Iniciar sesión
+                {isAuthRegisterMode ? (
+                  <>
+                    <UserPlus size={18} /> {authIsLoading ? 'Creando cuenta...' : 'Crear cuenta'}
+                  </>
+                ) : (
+                  <>
+                    <LogIn size={18} /> {authIsLoading ? 'Iniciando sesión...' : 'Iniciar sesión'}
+                  </>
+                )}
               </button>
               
               <button
                 type="button"
                 onClick={() => {
-                  const regFields = document.getElementById('register_fields')!;
-                  const confirmFields = document.getElementById('confirm_password_field')!;
-                  const title = document.getElementById('auth-modal-title')!;
-                  const btn = document.querySelector('button[type="button"][style*="background: #4c1d95"]') as HTMLButtonElement;
-                  
-                  if (regFields.style.display === 'none') {
-                    regFields.style.display = 'flex';
-                    confirmFields.style.display = 'flex';
-                    title.innerText = 'Crear cuenta';
-                    btn.innerText = 'Crear cuenta';
-                  } else {
-                    regFields.style.display = 'none';
-                    confirmFields.style.display = 'none';
-                    title.innerText = 'Iniciar sesión';
-                    btn.innerText = 'Iniciar sesión';
-                  }
+                  setIsAuthRegisterMode(!isAuthRegisterMode);
+                  setAuthError('');
                 }}
-                style={{ background: 'transparent', border: 'none', color: '#64748b', fontSize: 13, cursor: 'pointer' }}
+                style={{
+                  background: 'transparent',
+                  border: 'none',
+                  color: '#64748b',
+                  fontSize: 13,
+                  cursor: 'pointer',
+                  padding: '6px 0',
+                  textAlign: 'center'
+                }}
               >
-                {document.getElementById('register_fields')?.style.display === 'flex' ? (
-                  <>¿Ya tienes una cuenta? <span style={{ color: '#4c1d95', fontWeight: 600 }}>Inicia sesión</span></>
+                {isAuthRegisterMode ? (
+                  <>¿Ya tienes una cuenta? <span style={{ color: '#4c1d95', fontWeight: 700 }}>Inicia sesión</span></>
                 ) : (
-                  <>¿No tienes una cuenta? <span style={{ color: '#4c1d95', fontWeight: 600 }}>Regístrate aquí</span></>
+                  <>¿No tienes una cuenta? <span style={{ color: '#4c1d95', fontWeight: 700 }}>Regístrate aquí</span></>
                 )}
               </button>
-            </div>
+            </form>
           </div>
         </div>
       )}
@@ -3236,7 +4018,13 @@ export function ShopPage() {
           </div>
           <button
             type="button"
-            onClick={() => navigate('/ventas-flash/pedidos')}
+            onClick={() => {
+              if (currentUserRole === 'cliente') {
+                showToast('Acceso exclusivo para personal de la empresa. Tu cuenta es de Cliente (solo compras y solicitudes).', 'info');
+                return;
+              }
+              navigate('/dashboard');
+            }}
             style={{
               border: 'none',
               background: 'transparent',

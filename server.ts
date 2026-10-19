@@ -3697,7 +3697,25 @@ app.post('/api/users', async (req, res: AuthenticatedResponse) => {
     // 1. Guardar en persistencia local resiliente
     savePersistedUser(newUser);
 
-    // 2. Intentar registrar en Supabase (tabla profiles y organization_members)
+    // 2. Intentar registrar en Supabase Auth
+    if (body.password) {
+      try {
+        await supabaseServer.auth.signUp({
+          email: newUser.email,
+          password: body.password,
+          options: {
+            data: {
+              full_name: newUser.name,
+              role: newUser.role.toLowerCase()
+            }
+          }
+        });
+      } catch (authErr) {
+        console.warn('Aviso registrando usuario en Auth:', authErr);
+      }
+    }
+
+    // 3. Intentar registrar en Supabase (tabla profiles y organization_members)
     try {
       // Si el id es UUID válido, podemos intentar registrar en profiles
       const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(userId);
@@ -5342,26 +5360,51 @@ app.get('/api/supabase/migrations-bundle', (_req, res) => {
 
 // Customer Registration
 app.post('/api/auth/customer/register', async (req, res) => {
-  const { email, password, full_name, phone, address } = req.body;
+  const { email, password, full_name, company_name, phone, address } = req.body;
   
   try {
-    // 1. Register user in auth.users (email_confirm: true skips verification)
-    const { data: authData, error: authError } = await supabaseServer.auth.admin.createUser({
-      email,
-      password,
-      user_metadata: { role: 'cliente', full_name },
-      email_confirm: true 
-    });
-    if (authError) throw authError;
+    let authUser: any = null;
 
-    // 2. Insert into public.shop_customers
-    const { error: dbError } = await supabaseServer
-      .from('shop_customers')
-      .insert({ id: authData.user!.id, email, full_name, phone, address });
-    
-    if (dbError) throw dbError;
+    // Intentar con admin createUser si está disponible
+    try {
+      const { data: adminData, error: adminError } = await supabaseServer.auth.admin.createUser({
+        email,
+        password,
+        user_metadata: { role: 'cliente', full_name, company_name: company_name || '' },
+        email_confirm: true 
+      });
+      if (!adminError && adminData?.user) {
+        authUser = adminData.user;
+      }
+    } catch {
+      // Si auth.admin requiere Bearer token/service_role, recurrir al signUp estándar
+    }
 
-    res.json({ success: true, user: authData.user });
+    // Fallback a signUp estándar con clave anónima (Alternativa 3)
+    if (!authUser) {
+      const { data: signData, error: signError } = await supabaseServer.auth.signUp({
+        email,
+        password,
+        options: {
+          data: { role: 'cliente', full_name, company_name: company_name || '' }
+        }
+      });
+      if (signError) throw signError;
+      authUser = signData.user;
+    }
+
+    // Insertar en public.shop_customers si es posible
+    if (authUser?.id) {
+      try {
+        await supabaseServer
+          .from('shop_customers')
+          .insert({ id: authUser.id, email, full_name, phone, address });
+      } catch (insertErr) {
+        console.warn('Aviso guardando en shop_customers:', insertErr);
+      }
+    }
+
+    res.json({ success: true, user: authUser });
   } catch (err: any) {
     res.status(400).json({ success: false, error: err.message });
   }

@@ -123,6 +123,7 @@ drop policy if exists "Los usuarios pueden leer su propio perfil" on public.prof
 drop policy if exists "Los gerentes y administradores pueden leer todos los perfiles" on public.profiles;
 drop policy if exists "Los usuarios pueden editar su propio nombre" on public.profiles;
 drop policy if exists "Solo gerentes pueden modificar roles de perfiles" on public.profiles;
+drop policy if exists "Solo gerentes pueden borrar perfiles" on public.profiles;
 
 -- Política de lectura: El usuario puede ver su perfil o un admin/gerente puede ver todos
 create policy "Los usuarios pueden leer su propio perfil"

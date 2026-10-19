@@ -24,7 +24,9 @@ import {
   MapPin,
   Phone,
   Monitor,
-  Copy
+  Copy,
+  Eye,
+  EyeOff
 } from 'lucide-react';
 import { Card } from '../../../components/ui/Card';
 import { Button } from '../../../components/ui/Button';
@@ -616,6 +618,7 @@ export function ConfigPage() {
   const [newUserActive, setNewUserActive] = useState(true);
   const [newUserPermissions, setNewUserPermissions] = useState<string[]>(['ventas']);
   const [newUserPassword, setNewUserPassword] = useState('');
+  const [showUserPassword, setShowUserPassword] = useState(false);
   const [isSavingUser, setIsSavingUser] = useState(false);
 
   // Alert/Notifications
@@ -798,6 +801,7 @@ export function ConfigPage() {
     setNewUserTitle('Cajero Principal');
     setNewUserActive(true);
     setNewUserPermissions(['ventas']);
+    setShowUserPassword(false);
     setIsAddUserModalOpen(true);
   };
 
@@ -806,6 +810,7 @@ export function ConfigPage() {
     setNewUserName(user.name);
     setNewUserEmail(user.email);
     setNewUserPassword('');
+    setShowUserPassword(false);
     setNewUserRole((user.role as any) || 'Cashier');
     setNewUserTitle(user.title || '');
     setNewUserActive(user.active);
@@ -2277,7 +2282,9 @@ GRANT ALL ON TABLE public.branches TO anon;`}</pre>
             </Card>
           ) : (
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(360px, 1fr))', gap: 16 }}>
-              {filteredUsers.map((item) => {
+              {filteredUsers
+                .filter(u => u.role.toLowerCase() !== 'cliente')
+                .map((item) => {
                 const roleColors: Record<string, { bg: string; border: string; text: string }> = {
                   Admin: { bg: '#faf5ff', border: '#e9d5ff', text: '#7e22ce' },
                   Manager: { bg: '#eff6ff', border: '#bfdbfe', text: '#1d4ed8' },
@@ -2438,7 +2445,7 @@ GRANT ALL ON TABLE public.branches TO anon;`}</pre>
                         </button>
                         <button
                           title="Eliminar asociado"
-                          style={{ background: 'transparent', border: 'none', color: '#e36f6f', cursor: 'pointer', padding: 6, borderRadius: 6 }}
+                          style={{ background: 'transparent', border: 'none', color: '#e36f6f', cursor: 'pointer', padding: 6, borderRadius: 6, display: 'flex', alignItems: 'center' }}
                           onClick={() => handleDeleteUser(item.id)}
                         >
                           <Trash2 size={15} />
@@ -2527,14 +2534,37 @@ GRANT ALL ON TABLE public.branches TO anon;`}</pre>
                     <label style={{ fontSize: 12, fontWeight: 700, color: '#334155' }}>
                       {editingUserId ? 'Nueva contraseña (dejar en blanco para no cambiar)' : 'Contraseña *'}
                     </label>
-                    <input
-                      type="password"
-                      className="input"
-                      value={newUserPassword}
-                      onChange={(e) => setNewUserPassword(e.target.value)}
-                      placeholder={editingUserId ? '******' : 'Contraseña segura'}
-                      required={!editingUserId}
-                    />
+                    <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+                      <input
+                        type={showUserPassword ? 'text' : 'password'}
+                        className="input"
+                        value={newUserPassword}
+                        onChange={(e) => setNewUserPassword(e.target.value)}
+                        placeholder={editingUserId ? '******' : 'Contraseña segura'}
+                        required={!editingUserId}
+                        style={{ paddingRight: 40 }}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowUserPassword(!showUserPassword)}
+                        style={{
+                          position: 'absolute',
+                          right: 10,
+                          background: 'transparent',
+                          border: 'none',
+                          color: '#64748b',
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          padding: 4
+                        }}
+                        title={showUserPassword ? 'Ocultar contraseña' : 'Ver contraseña'}
+                        aria-label={showUserPassword ? 'Ocultar contraseña' : 'Ver contraseña'}
+                      >
+                        {showUserPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                      </button>
+                    </div>
                   </div>
 
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
