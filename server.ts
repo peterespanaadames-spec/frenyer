@@ -3744,12 +3744,14 @@ app.post('/api/users', async (req, res: AuthenticatedResponse) => {
 
 app.patch('/api/users/:id', async (req, res: AuthenticatedResponse) => {
   try {
+    console.log('PATCH /api/users/:id - id:', req.params.id, 'body:', JSON.stringify(req.body));
     const { id } = req.params;
     const updates = req.body || {};
     const current = loadPersistedUsers();
     const existing = current.find((u: any) => String(u.id) === String(id));
 
     if (!existing) {
+      console.log('PATCH - Usuario no encontrado:', id);
       return res.status(404).json({ success: false, error: 'Usuario no encontrado.' });
     }
 
@@ -3758,27 +3760,38 @@ app.patch('/api/users/:id', async (req, res: AuthenticatedResponse) => {
       ...updates,
       updated_at: new Date().toISOString()
     };
-
+    
     if (updates.name) {
       const names = updates.name.trim().split(/\s+/);
       updatedUser.initials = names.length >= 2 ? `${names[0][0]}${names[1][0]}`.toUpperCase() : names[0].slice(0, 2).toUpperCase();
     }
 
     savePersistedUser(updatedUser);
+    console.log('PATCH - saved locally successfully for id:', id);
 
     // Intentar actualizar en Supabase si corresponde
     try {
-      await supabaseRestRequest(`profiles?id=eq.${encodeURIComponent(id)}`, {
-        method: 'PATCH',
-        body: {
-          full_name: updatedUser.name,
-          role: (updatedUser.role || '').toLowerCase()
-        }
-      });
-    } catch {}
+      console.log('PATCH - intentando actualizar en Supabase para id:', id);
+      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+      if (isUuid) {
+        await supabaseRestRequest(`profiles?id=eq.${encodeURIComponent(id)}`, {
+          method: 'PATCH',
+          body: {
+            full_name: updatedUser.name,
+            role: (updatedUser.role || '').toLowerCase()
+          }
+        });
+        console.log('PATCH - Supabase update intent finalizado');
+      } else {
+        console.log('PATCH - ID no es UUID, saltando Supabase update');
+      }
+    } catch (sbErr) {
+      console.log('PATCH - Supabase update error:', sbErr);
+    }
 
     return res.json({ success: true, data: updatedUser });
   } catch (err: any) {
+    console.log('PATCH - error crítico:', err);
     return res.status(500).json({ success: false, error: err?.message });
   }
 });
