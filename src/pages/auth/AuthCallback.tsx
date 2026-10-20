@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { supabase } from '../../lib/supabase/client';
 import { Sparkles, AlertCircle } from 'lucide-react';
 
 export function AuthCallback() {
@@ -12,42 +11,24 @@ export function AuthCallback() {
 
     const processAuth = async () => {
       try {
-        const { data, error } = await supabase.auth.getSession();
-        if (error) {
-          if (isMounted) setErrorMsg(error.message);
+        // El intercambio con Google lo resuelve el servidor: aqui solo se
+        // consulta la sesion ya establecida en la cookie httpOnly.
+        const res = await fetch('/api/auth/session', { credentials: 'include' });
+
+        if (!res.ok) {
+          if (isMounted) setErrorMsg('No se pudo completar el inicio de sesión.');
           return;
         }
 
-        if (data?.session?.user) {
-          // Verificar si tiene rol de cliente o administrativo
-          const user = data.session.user;
-          const role = (user.user_metadata?.role || '').toLowerCase();
+        const json = await res.json();
+        const role = (json?.data?.role || '').toLowerCase();
 
+        if (isMounted) {
           if (role === 'cliente' || role === 'customer') {
             navigate('/', { replace: true });
           } else {
             navigate('/dashboard', { replace: true });
           }
-        } else {
-          // Si no hay sesión inmediata, suscribirse al evento de cambio
-          const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
-            if (session?.user && isMounted) {
-              subscription.unsubscribe();
-              const role = (session.user.user_metadata?.role || '').toLowerCase();
-              if (role === 'cliente' || role === 'customer') {
-                navigate('/', { replace: true });
-              } else {
-                navigate('/dashboard', { replace: true });
-              }
-            }
-          });
-
-          // Timeout de seguridad por si falla la autenticación
-          setTimeout(() => {
-            if (isMounted) {
-              navigate('/login', { replace: true });
-            }
-          }, 6000);
         }
       } catch (err: any) {
         if (isMounted) setErrorMsg(err?.message || 'Error procesando la autenticación.');
@@ -56,8 +37,15 @@ export function AuthCallback() {
 
     processAuth();
 
+    const timeout = setTimeout(() => {
+      if (isMounted) {
+        navigate('/login', { replace: true });
+      }
+    }, 6000);
+
     return () => {
       isMounted = false;
+      clearTimeout(timeout);
     };
   }, [navigate]);
 

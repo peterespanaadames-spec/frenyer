@@ -1,4 +1,4 @@
-import { supabase, isSupabaseConfigured } from './client';
+import { supabase, hasBrowserSupabaseClient as isSupabaseConfigured } from './client';
 import { authenticatedFetch } from './api';
 
 export interface DbCustomer {
@@ -608,80 +608,44 @@ export async function deleteSupplierFromSupabase(id: string): Promise<boolean> {
 }
 
 export async function getActiveOrgId(): Promise<string | null> {
-  // 1. Intentar sesión activa de Supabase Auth
+  // 1. Organizacion de la sesion activa (la resuelve el servidor con las RLS)
   try {
-    const { data: authData } = await supabase.auth.getSession();
-    if (authData?.session?.user?.id) {
-      const { data } = await supabase
-        .from('organization_members')
-        .select('organization_id')
-        .eq('user_id', authData.session.user.id)
-        .order('created_at', { ascending: true })
-        .limit(1);
-      if (data && data.length > 0 && data[0].organization_id) {
-        return data[0].organization_id;
+    const res = await authenticatedFetch('/api/auth/session');
+    if (res.ok) {
+      const json = await res.json();
+      const orgId = json?.data?.organizationId;
+      if (orgId) {
+        if (typeof window !== 'undefined') {
+          localStorage.setItem('frenyer_org_id', orgId);
+        }
+        return orgId;
       }
     }
   } catch (err) {
-    console.warn('Error resolviendo membresía activa:', err);
+    console.warn('Aviso resolviendo la organizacion de la sesion:', err);
   }
 
-  // 2. Intentar leer organización almacenada en localStorage
+  // 2. Organizacion almacenada localmente
   if (typeof window !== 'undefined') {
     const storedOrg = localStorage.getItem('frenyer_org_id');
     if (storedOrg) return storedOrg;
   }
 
-  // 3. Fallback: consultar la primera organización registrada en Supabase
-  if (isSupabaseConfigured) {
-    try {
-      const { data: orgs } = await supabase
-        .from('organizations')
-        .select('id')
-        .limit(1);
-      if (orgs && orgs.length > 0 && orgs[0].id) {
+  // 3. Organizacion por defecto que expone el servidor para el canal publico
+  try {
+    const res = await fetch('/api/public/organization', { credentials: 'include' });
+    if (res.ok) {
+      const json = await res.json();
+      const orgId = json?.data?.organizationId;
+      if (orgId) {
         if (typeof window !== 'undefined') {
-          localStorage.setItem('frenyer_org_id', orgs[0].id);
+          localStorage.setItem('frenyer_org_id', orgId);
         }
-        return orgs[0].id;
+        return orgId;
       }
-    } catch {
-      // ignore
     }
-
-    // 3.B Fallback a través de productos existentes
-    try {
-      const { data: prods } = await supabase
-        .from('products')
-        .select('organization_id')
-        .not('organization_id', 'is', null)
-        .limit(1);
-      if (prods && prods.length > 0 && prods[0].organization_id) {
-        if (typeof window !== 'undefined') {
-          localStorage.setItem('frenyer_org_id', prods[0].organization_id);
-        }
-        return prods[0].organization_id;
-      }
-    } catch {
-      // ignore
-    }
-
-    // 3.C Fallback a través de cuentas bancarias
-    try {
-      const { data: banks } = await supabase
-        .from('bank_accounts')
-        .select('organization_id')
-        .not('organization_id', 'is', null)
-        .limit(1);
-      if (banks && banks.length > 0 && banks[0].organization_id) {
-        if (typeof window !== 'undefined') {
-          localStorage.setItem('frenyer_org_id', banks[0].organization_id);
-        }
-        return banks[0].organization_id;
-      }
-    } catch {
-      // ignore
-    }
+  } catch {
+    // ignore
   }
 
   // 4. UUID por defecto para entornos demo/locales
@@ -1456,6 +1420,32 @@ export async function fetchQuotesFromSupabase(): Promise<DbQuote[]> {
   }
 }
 
+/** Quita una cotización del almacenamiento local del navegador. */
+function cleanLocalQuotes(quoteId: string): void {
+  if (typeof window === 'undefined') return;
+  try {
+    const localQuotes = JSON.parse(localStorage.getItem('frenyer_local_quotes') || '[]');
+    localStorage.setItem(
+      'frenyer_local_quotes',
+      JSON.stringify(localQuotes.filter((q: any) => q.id !== quoteId))
+    );
+  } catch {
+    // ignore
+  }
+}
+
+/** Mantiene sincronizada la copia local de una cotización. */
+function syncLocalQuote(quoteId: string, patch: Record<string, any>): void {
+  if (typeof window === 'undefined') return;
+  try {
+    const localQuotes = JSON.parse(localStorage.getItem('frenyer_local_quotes') || '[]');
+    const updated = localQuotes.map((q: any) => (q.id === quoteId ? { ...q, ...patch } : q));
+    localStorage.setItem('frenyer_local_quotes', JSON.stringify(updated));
+  } catch {
+    // ignore
+  }
+}
+
 export async function createQuoteInSupabase(input: {
   customerId?: string;
   validityDays: number;
@@ -1470,6 +1460,34 @@ export async function createQuoteInSupabase(input: {
     let organizationId = await getActiveOrgId();
     if (!organizationId) {
       organizationId = '00000000-0000-0000-0000-000000000001';
+    }
+
+    // 1. Proxy del servidor: la credencial de Supabase no vive en el navegador.
+    try {
+      const res = await authenticatedFetch('/api/quotes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          customerId: input.customerId,
+          validityDays: input.validityDays,
+          notes: input.notes,
+          items: input.items,
+          exchangeRate: input.exchangeRate,
+          rateSource: input.rateSource,
+          isFutureRate: input.isFutureRate,
+          rateValueDate: input.rateValueDate,
+          organizationId
+        })
+      });
+      const json = await res.json().catch(() => null);
+      if (res.ok && json?.success) {
+        return { success: true, quoteId: json.quoteId, docNumber: json.docNumber };
+      }
+      if (res.status === 401) {
+        return { success: false, error: 'Sesión requerida para crear cotizaciones.' };
+      }
+    } catch (err) {
+      console.warn('Aviso en /api/quotes proxy:', err);
     }
 
     const subtotal = input.items.reduce((acc, it) => acc + (it.quantity * it.unit_price_usd), 0);
@@ -1999,18 +2017,29 @@ export async function convertQuoteToInvoiceInSupabase(
 
 export async function deleteQuoteFromSupabase(quoteId: string): Promise<{ success: boolean; error?: string }> {
   try {
-    // 1. Eliminar ítems de la cotización
+    // 1. Proxy del servidor
+    try {
+      const res = await authenticatedFetch(`/api/quotes/${encodeURIComponent(quoteId)}`, { method: 'DELETE' });
+      const json = await res.json().catch(() => null);
+      if (res.ok && json?.success) {
+        cleanLocalQuotes(quoteId);
+        return { success: true };
+      }
+      if (res.status === 401) {
+        return { success: false, error: 'Sesión requerida para eliminar cotizaciones.' };
+      }
+    } catch (err) {
+      console.warn('Aviso en proxy de eliminación de cotización:', err);
+    }
+
+    // 2. Eliminar ítems de la cotización
     await supabase.from('sale_items').delete().eq('sale_id', quoteId);
 
-    // 2. Eliminar la cotización en sales
+    // 3. Eliminar la cotización en sales
     const { error } = await supabase.from('sales').delete().eq('id', quoteId);
 
-    // 3. Limpiar también de almacenamiento local si existe
-    if (typeof window !== 'undefined') {
-      const localQuotes = JSON.parse(localStorage.getItem('frenyer_local_quotes') || '[]');
-      const filtered = localQuotes.filter((q: any) => q.id !== quoteId);
-      localStorage.setItem('frenyer_local_quotes', JSON.stringify(filtered));
-    }
+    // 4. Limpiar también de almacenamiento local si existe
+    cleanLocalQuotes(quoteId);
 
     if (error) {
       console.warn('Aviso eliminando cotización de Supabase:', error.message);
@@ -2034,6 +2063,39 @@ export async function updateQuoteInSupabase(
   }
 ): Promise<{ success: boolean; error?: string }> {
   try {
+    // 1. Proxy del servidor: la credencial de Supabase no vive en el navegador.
+    try {
+      const res = await authenticatedFetch(`/api/quotes/${encodeURIComponent(quoteId)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          customerId: input.customerId,
+          validityDays: input.validityDays,
+          notes: input.notes,
+          items: input.items,
+          exchangeRate: input.exchangeRate
+        })
+      });
+      const json = await res.json().catch(() => null);
+      if (res.ok && json?.success) {
+        syncLocalQuote(quoteId, {
+          customer_id: input.customerId,
+          subtotal_usd: json.data?.subtotal_usd,
+          total_usd: json.data?.total_usd,
+          total_ves: json.data?.total_ves,
+          notes: input.notes,
+          items: input.items,
+          sale_items: json.data?.sale_items
+        });
+        return { success: true };
+      }
+      if (res.status === 401) {
+        return { success: false, error: 'Sesión requerida para actualizar cotizaciones.' };
+      }
+    } catch (err) {
+      console.warn('Aviso en /api/quotes proxy (actualización):', err);
+    }
+
     const subtotal = input.items.reduce((acc, it) => acc + (it.quantity * it.unit_price_usd), 0);
     const totalVes = Math.round(subtotal * input.exchangeRate * 100) / 100;
 
@@ -2078,25 +2140,15 @@ export async function updateQuoteInSupabase(
     }
 
     // Actualizar en localStorage si existe
-    if (typeof window !== 'undefined') {
-      const localQuotes = JSON.parse(localStorage.getItem('frenyer_local_quotes') || '[]');
-      const updated = localQuotes.map((q: any) => {
-        if (q.id === quoteId) {
-          return {
-            ...q,
-            customer_id: input.customerId,
-            subtotal_usd: subtotal,
-            total_usd: subtotal,
-            total_ves: totalVes,
-            notes: input.notes,
-            items: input.items,
-            sale_items: itemsToInsert
-          };
-        }
-        return q;
-      });
-      localStorage.setItem('frenyer_local_quotes', JSON.stringify(updated));
-    }
+    syncLocalQuote(quoteId, {
+      customer_id: input.customerId,
+      subtotal_usd: subtotal,
+      total_usd: subtotal,
+      total_ves: totalVes,
+      notes: input.notes,
+      items: input.items,
+      sale_items: itemsToInsert
+    });
 
     return { success: true };
   } catch (err: any) {
@@ -2110,6 +2162,24 @@ export async function rejectQuoteInSupabase(quoteId: string): Promise<{ success:
     const organizationId = await getActiveOrgId();
     if (!organizationId) {
       return { success: false, error: 'No hay una organización activa autorizada para rechazar la cotización.' };
+    }
+
+    // 1. Proxy del servidor
+    try {
+      const res = await authenticatedFetch(`/api/quotes/${encodeURIComponent(quoteId)}/status`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'Rechazada' })
+      });
+      const json = await res.json().catch(() => null);
+      if (res.ok && json?.success) {
+        return { success: true };
+      }
+      if (res.status === 401) {
+        return { success: false, error: 'Sesión requerida para rechazar cotizaciones.' };
+      }
+    } catch (err) {
+      console.warn('Aviso en proxy de rechazo de cotización:', err);
     }
 
     const { error } = await supabase.rpc('reject_quote', { p_quote_id: quoteId });
@@ -3427,19 +3497,7 @@ export async function fetchInventoryMovementsFromSupabase(): Promise<DbInventory
 
   // 1. Intentar endpoint proxy del servidor (unifica inventory_movements, sales y purchases reales)
   try {
-    let headers: Record<string, string> = {};
-    if (isSupabaseConfigured) {
-      try {
-        const { data: sessionData } = await supabase.auth.getSession();
-        if (sessionData?.session?.access_token) {
-          headers['Authorization'] = `Bearer ${sessionData.session.access_token}`;
-        }
-      } catch {
-        // ignore
-      }
-    }
-
-    const res = await fetch('/api/inventory/movements', { headers });
+    const res = await authenticatedFetch('/api/inventory/movements');
     if (res.ok) {
       const json = await res.json();
       if (json.success && Array.isArray(json.data)) {
@@ -3617,21 +3675,9 @@ export async function recordInventoryAdjustmentInSupabase(adjustment: {
 }): Promise<{ success: boolean; data?: DbInventoryMovement; error?: string }> {
   // 1. Intentar endpoint proxy del servidor
   try {
-    let headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    if (isSupabaseConfigured) {
-      try {
-        const { data: sessionData } = await supabase.auth.getSession();
-        if (sessionData?.session?.access_token) {
-          headers['Authorization'] = `Bearer ${sessionData.session.access_token}`;
-        }
-      } catch {
-        // ignore
-      }
-    }
-
-    const res = await fetch('/api/inventory/adjustments', {
+    const res = await authenticatedFetch('/api/inventory/adjustments', {
       method: 'POST',
-      headers,
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(adjustment)
     });
     if (res.ok) {

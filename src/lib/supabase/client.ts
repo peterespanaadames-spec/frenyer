@@ -1,110 +1,88 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 
-function isValidSupabaseUrl(url?: string): boolean {
-  if (!url) return false;
-  const clean = url.trim().toLowerCase();
-  return (
-    /^https?:\/\//i.test(clean) &&
-    !clean.includes('your-project') &&
-    !clean.includes('example.com')
-  );
-}
-
-function isValidSupabaseKey(key?: string): boolean {
-  if (!key) return false;
-  const clean = key.trim().toLowerCase();
-  return (
-    clean.length > 20 &&
-    !clean.includes('your-supabase') &&
-    !clean.includes('configure-supabase')
-  );
-}
-
 export const DEFAULT_SUPABASE_URL = 'https://knyqrwpaksawuxoqcayu.supabase.co';
 
-// 1. Check env vars first, then fallback to stored connection in browser
-const envUrl = (import.meta.env.VITE_SUPABASE_URL || '').trim();
-const envKey = (import.meta.env.VITE_SUPABASE_ANON_KEY || '').trim();
+/**
+ * El navegador NUNCA recibe una credencial de Supabase.
+ * Toda la comunicacion con la base de datos pasa por el servidor (/api/*),
+ * que resuelve las claves, valida la sesion y aplica las RLS.
+ *
+ * El cliente de Supabase que se crea aqui es inerte: se conserva unicamente
+ * porque algunos modulos lo usan para detectar capacidades, no para leer datos.
+ */
+export const hasBrowserSupabaseClient = false;
 
-const storedUrl = typeof window !== 'undefined' ? (localStorage.getItem('frenyer_supabase_url') || '').trim() : '';
-const storedKey = typeof window !== 'undefined' ? (localStorage.getItem('frenyer_supabase_anon_key') || '').trim() : '';
+/** Estado informado por el servidor. Se actualiza con refreshSupabaseStatus(). */
+export let isSupabaseConfigured = false;
+export let SUPABASE_URL = DEFAULT_SUPABASE_URL;
 
-const initialUrl = isValidSupabaseUrl(envUrl)
-  ? envUrl
-  : isValidSupabaseUrl(storedUrl)
-  ? storedUrl
-  : DEFAULT_SUPABASE_URL;
+export interface SupabaseServerStatus {
+  supabaseConfigured: boolean;
+  supabaseConnected: boolean;
+  missingTables: string[];
+  supabaseUrl: string;
+  localAccessEnabled: boolean;
+  credentialsSource: string;
+}
 
-const initialKey = isValidSupabaseKey(envKey)
-  ? envKey
-  : isValidSupabaseKey(storedKey)
-  ? storedKey
-  : envKey || 'configure-supabase-publishable-key';
+export let supabaseServerStatus: SupabaseServerStatus = {
+  supabaseConfigured: false,
+  supabaseConnected: false,
+  missingTables: [],
+  supabaseUrl: '',
+  localAccessEnabled: false,
+  credentialsSource: 'desconocida'
+};
 
-export let isSupabaseConfigured = isValidSupabaseUrl(initialUrl) && isValidSupabaseKey(initialKey);
-export let SUPABASE_URL = initialUrl;
-export let SUPABASE_ANON_KEY = initialKey;
-
-function createSupabaseInstance(url: string, key: string): SupabaseClient {
-  return createClient(url, key, {
+function createInertSupabaseInstance(url: string): SupabaseClient {
+  return createClient(url, 'sin-credencial-en-el-navegador', {
     auth: {
-      persistSession: true,
-      autoRefreshToken: true,
-      detectSessionInUrl: true
+      persistSession: false,
+      autoRefreshToken: false,
+      detectSessionInUrl: false
     }
   });
 }
 
-export let supabase: SupabaseClient = createSupabaseInstance(SUPABASE_URL, SUPABASE_ANON_KEY);
+export let supabase: SupabaseClient = createInertSupabaseInstance(SUPABASE_URL);
 
 /**
- * Updates the client in runtime, persists to localStorage and dispatches a change event
+ * Consulta al servidor el estado de la conexion con Supabase.
+ * No devuelve claves: solo informacion de estado.
  */
-export function updateSupabaseClient(url: string, key: string): boolean {
-  const cleanUrl = url.trim();
-  const cleanKey = key.trim();
+export async function refreshSupabaseStatus(): Promise<SupabaseServerStatus> {
+  try {
+    const res = await fetch('/api/auth/mode', { credentials: 'include' });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const json = await res.json();
+    const data = json?.data as SupabaseServerStatus | undefined;
+    if (!data) throw new Error('Respuesta sin estado');
 
-  if (!isValidSupabaseUrl(cleanUrl) || !isValidSupabaseKey(cleanKey)) {
-    return false;
+    supabaseServerStatus = data;
+    isSupabaseConfigured = Boolean(data.supabaseConfigured && data.supabaseConnected);
+    SUPABASE_URL = data.supabaseUrl || DEFAULT_SUPABASE_URL;
+
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('frenyer:supabase-status', { detail: supabaseServerStatus }));
+    }
+
+    return supabaseServerStatus;
+  } catch {
+    supabaseServerStatus = {
+      supabaseConfigured: false,
+      supabaseConnected: false,
+      missingTables: [],
+      supabaseUrl: '',
+      localAccessEnabled: false,
+      credentialsSource: 'sin conexion'
+    };
+    isSupabaseConfigured = false;
+    return supabaseServerStatus;
   }
-
-  SUPABASE_URL = cleanUrl;
-  SUPABASE_ANON_KEY = cleanKey;
-  isSupabaseConfigured = true;
-
-  if (typeof window !== 'undefined') {
-    localStorage.setItem('frenyer_supabase_url', cleanUrl);
-    localStorage.setItem('frenyer_supabase_anon_key', cleanKey);
-  }
-
-  supabase = createSupabaseInstance(SUPABASE_URL, SUPABASE_ANON_KEY);
-
-  if (typeof window !== 'undefined') {
-    window.dispatchEvent(new CustomEvent('frenyer:supabase-configured', {
-      detail: { url: cleanUrl }
-    }));
-  }
-
-  return true;
 }
 
+/** Verifica la conexion consultando al servidor (no se usa la clave del navegador). */
 export const isSupabaseConnected = async (): Promise<boolean> => {
-  if (!isSupabaseConfigured) {
-    return false;
-  }
-  try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 4000);
-
-    const { error } = await supabase
-      .from('organizations')
-      .select('id')
-      .limit(1)
-      .abortSignal(controller.signal);
-
-    clearTimeout(timeoutId);
-    return !error;
-  } catch {
-    return false;
-  }
+  const status = await refreshSupabaseStatus();
+  return status.supabaseConnected;
 };

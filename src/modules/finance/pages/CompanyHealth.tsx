@@ -33,6 +33,7 @@ import {
 import { Card } from '../../../components/ui/Card';
 import { Button } from '../../../components/ui/Button';
 import { supabase, isSupabaseConfigured } from '../../../lib/supabase/client';
+import { authenticatedFetch } from '../../../lib/supabase/api';
 import { getActiveExchangeRate, formatUSD, formatVES } from '../../../lib/currency';
 import { getBusinessProfile } from '../../../lib/businessProfile';
 
@@ -122,15 +123,26 @@ export const CompanyHealthPage = () => {
       const detectedYears = new Set<string>([new Date().getFullYear().toString()]);
 
       if (isSupabaseConfigured) {
-        // Consultar productos, bancos, cxc, cxp, ventas, gastos e items de venta
+        // Todas las consultas van por el servidor: el navegador no maneja credenciales.
+        const fetchTable = async (url: string): Promise<{ data: Array<Record<string, any>> }> => {
+          try {
+            const res = await authenticatedFetch(url);
+            if (!res.ok) return { data: [] };
+            const json = await res.json();
+            return { data: Array.isArray(json?.data) ? json.data : [] };
+          } catch {
+            return { data: [] };
+          }
+        };
+
         const [productsRes, banksRes, cxcRes, cxpRes, salesRes, expensesRes, saleItemsRes] = await Promise.all([
-          supabase.from('products').select('id, sku, name, stock, cost_usd, price_usd'),
-          supabase.from('bank_accounts').select('balance, currency'),
-          supabase.from('accounts_receivable').select('balance_usd, status'),
-          supabase.from('accounts_payable').select('balance_usd, status'),
-          supabase.from('sales').select('id, total_usd, created_at, status').eq('status', 'COMPLETADA'),
-          supabase.from('expenses').select('amount, currency, exchange_rate, created_at'),
-          supabase.from('sale_items').select('sale_id, sku, quantity, unit_price_usd, total_usd')
+          fetchTable('/api/products'),
+          fetchTable('/api/bank-accounts'),
+          fetchTable('/api/accounts-receivable'),
+          fetchTable('/api/accounts-payable'),
+          fetchTable('/api/sales'),
+          fetchTable('/api/expenses'),
+          fetchTable('/api/sale-items')
         ]);
 
         // 1. Inventario Real
@@ -183,8 +195,9 @@ export const CompanyHealthPage = () => {
         }
 
         // 6. Ventas Reales y Distribución Mensual por Año Seleccionado
-        if (salesRes.data && salesRes.data.length > 0) {
-          salesRes.data.forEach((s) => {
+        const completedSales = salesRes.data.filter((s: any) => !s.status || s.status === 'COMPLETADA');
+        if (completedSales.length > 0) {
+          completedSales.forEach((s: any) => {
             const amount = Number(s.total_usd) || 0;
             if (!s.created_at) return;
             const saleDate = new Date(s.created_at);
@@ -264,19 +277,13 @@ export const CompanyHealthPage = () => {
   useEffect(() => {
     if (!isSupabaseConfigured) return;
 
-    const channel = supabase
-      .channel('company-health-realtime')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'sales' }, () => fetchData())
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'products' }, () => fetchData())
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'bank_accounts' }, () => fetchData())
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'accounts_receivable' }, () => fetchData())
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'accounts_payable' }, () => fetchData())
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'expenses' }, () => fetchData())
-      .subscribe();
+    // Sin credencial en el navegador no hay canal realtime de Supabase:
+    // se refresca periodicamente contra el servidor.
+    const interval = setInterval(() => {
+      void fetchData();
+    }, 60_000);
 
-    return () => {
-      supabase.removeChannel(channel);
-    };
+    return () => clearInterval(interval);
   }, [fetchData]);
 
   // Cálculo del Capital Total

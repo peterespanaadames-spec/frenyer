@@ -33,7 +33,6 @@ import { Button } from '../../../components/ui/Button';
 import { Badge } from '../../../components/ui/Badge';
 import { getActiveExchangeRate, setActiveExchangeRate, formatUSD, formatVES } from '../../../lib/currency';
 import { authenticatedFetch } from '../../../lib/supabase/api';
-import { isSupabaseConfigured, SUPABASE_URL } from '../../../lib/supabase/client';
 import { SupabaseConnectionModal } from '../../../components/modals/SupabaseConnectionModal';
 import { getBusinessProfile, saveBusinessProfile } from '../../../lib/businessProfile';
 import {
@@ -3390,7 +3389,6 @@ GRANT ALL ON TABLE public.branches TO anon;`}</pre>
       <SupabaseConnectionModal
         isOpen={isDbModalOpen}
         onClose={() => setIsDbModalOpen(false)}
-        onConnected={() => loadRateHistory()}
       />
     </div>
   );

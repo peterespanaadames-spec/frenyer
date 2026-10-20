@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
 import { X, AlertTriangle, CheckCircle, ShieldAlert } from 'lucide-react';
 import { Button } from '../ui/Button';
-import { supabase } from '../../lib/supabase/client';
 import { setActiveExchangeRate } from '../../lib/currency';
 import { authenticatedFetch } from '../../lib/supabase/api';
 import { getActiveOrgId } from '../../lib/supabase/db';
@@ -36,21 +35,17 @@ export function ManualBcvRateModal({
     setIsCheckingRole(true);
     void (async () => {
       try {
-        const { data: userData, error: userError } = await supabase.auth.getUser();
-        if (userError) throw userError;
+        // El rol lo resuelve el servidor a partir de la cookie de sesion.
+        const sessionRes = await fetch('/api/auth/session', { credentials: 'include' });
+        if (!sessionRes.ok) throw new Error('Sesion requerida.');
+        const sessionJson = await sessionRes.json();
+        const role = sessionJson?.data?.role || '';
         const organizationId = await getActiveOrgId();
-        if (!userData.user || !organizationId) {
+        if (!organizationId) {
           if (isCurrent) setUserRole('');
           return;
         }
-        const { data, error } = await supabase
-          .from('organization_members')
-          .select('role')
-          .eq('organization_id', organizationId)
-          .eq('user_id', userData.user.id)
-          .maybeSingle();
-        if (error) throw error;
-        if (isCurrent) setUserRole(data?.role || '');
+        if (isCurrent) setUserRole(role);
       } catch (error) {
         if (isCurrent) {
           setUserRole('');

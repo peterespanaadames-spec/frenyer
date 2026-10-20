@@ -134,6 +134,21 @@ function CompuRepuestosLogo({ className = '', size = 44 }: { className?: string;
   );
 }
 
+/**
+ * La sesion vive en el servidor (cookie httpOnly): se consulta por HTTP.
+ * El navegador nunca maneja la credencial de Supabase.
+ */
+async function fetchServerSession(): Promise<any | null> {
+  try {
+    const res = await fetch('/api/auth/session', { credentials: 'include' });
+    if (!res.ok) return null;
+    const json = await res.json();
+    return json?.data?.user || null;
+  } catch {
+    return null;
+  }
+}
+
 export function ShopPage() {
   const navigate = useNavigate();
 
@@ -250,7 +265,7 @@ export function ShopPage() {
       if (!isCustomer) {
         // --- ES USUARIO ASOCIADO / ADMINISTRATIVO DEL ERP ---
         if (matched && matched.active === false) {
-          await supabase.auth.signOut();
+          await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' });
           localStorage.removeItem('frenyer_active_user');
           localStorage.removeItem('frenyer_user_role');
           localStorage.removeItem('frenyer_user_permissions');
@@ -326,7 +341,7 @@ export function ShopPage() {
 
   const handleSignOutUser = async (openLoginAfter = false) => {
     try {
-      await supabase.auth.signOut({ scope: 'local' });
+      await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' });
     } catch (err) {
       console.warn('Error en signOut:', err);
     }
@@ -366,10 +381,10 @@ export function ShopPage() {
   useEffect(() => {
     const checkSession = async () => {
       try {
-        const { data: { session }, error } = await supabase.auth.getSession();
-        if (error || !session?.user) {
+        // La sesion se consulta al servidor: la cookie httpOnly no es legible desde JS.
+        const res = await fetch('/api/auth/session', { credentials: 'include' });
+        if (!res.ok) {
           setCurrentAuthUser(null);
-          // Si no hay sesión válida en Supabase ni rol explícito activo, resetear a visitante
           const storedRole = localStorage.getItem('frenyer_user_role');
           const storedUser = localStorage.getItem('frenyer_active_user');
           if (!storedRole && !storedUser) {
@@ -379,8 +394,15 @@ export function ShopPage() {
           return;
         }
 
-        setCurrentAuthUser(session.user);
-        await handleVerifyUserRoleAndConfigure(session.user, false);
+        const json = await res.json();
+        const sessionUser = json?.data?.user;
+        if (!sessionUser) {
+          setCurrentAuthUser(null);
+          return;
+        }
+
+        setCurrentAuthUser(sessionUser);
+        await handleVerifyUserRoleAndConfigure(sessionUser, false);
       } catch (err) {
         console.warn('Error verificando sesión:', err);
       }
@@ -388,19 +410,13 @@ export function ShopPage() {
 
     checkSession();
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
-      if (event === 'SIGNED_OUT' || !session?.user) {
-        setCurrentAuthUser(null);
-        setCurrentUserRole(null);
-        setAssociatedUserData(null);
-      } else if (event === 'SIGNED_IN' && session?.user) {
-        setCurrentAuthUser(session.user);
-        handleVerifyUserRoleAndConfigure(session.user, false).catch(() => {});
-      }
-    });
+    const handleAuthChanged = () => {
+      void checkSession();
+    };
+    window.addEventListener('frenyer:auth-changed', handleAuthChanged);
 
     return () => {
-      subscription.unsubscribe();
+      window.removeEventListener('frenyer:auth-changed', handleAuthChanged);
     };
   }, []);
 
@@ -1874,8 +1890,8 @@ export function ShopPage() {
               <button
                 type="button"
                 onClick={async () => {
-                  const { data: { session } } = await supabase.auth.getSession();
-                  if (session?.user || currentAuthUser || currentUserRole) {
+                  const sessionUser = await fetchServerSession();
+                  if (sessionUser || currentAuthUser || currentUserRole) {
                     setIsUserMenuOpen((prev) => !prev);
                   } else {
                     navigate('/login');
@@ -2661,8 +2677,8 @@ export function ShopPage() {
           type="button"
           className={`cr-bottom-item ${isUserMenuOpen ? 'active' : ''}`}
           onClick={async () => {
-            const { data: { session } } = await supabase.auth.getSession();
-            if (session?.user || currentAuthUser || currentUserRole) {
+            const sessionUser = await fetchServerSession();
+            if (sessionUser || currentAuthUser || currentUserRole) {
               setIsUserMenuOpen(true);
             } else {
               setIsAuthRegisterMode(false);
@@ -3080,13 +3096,7 @@ export function ShopPage() {
                   <button
                     type="button"
                     onClick={async () => {
-                      const { data: { session } } = await supabase.auth.getSession();
-                      if (!session) {
-                        showToast('Debes iniciar sesión para finalizar la compra.');
-                        setIsCartOpen(false);
-                        setIsTrackerOpen(true); // Reutilizar modal de seguimiento/login
-                        return;
-                      }
+                      // La compra es publica: no se exige cuenta para comprar.
                       setIsCartOpen(false);
                       setCheckoutStep(1);
                       setIsCheckoutOpen(true);
@@ -3719,65 +3729,57 @@ export function ShopPage() {
                       throw new Error('Las contraseñas no coinciden.');
                     }
 
-                    // Alternativa 3: Registro directo con el cliente Supabase (signUp) usando la clave anónima
-                    const { data: signUpData, error: signUpErr } = await supabase.auth.signUp({
-                      email: authEmail.trim(),
-                      password: authPassword,
-                      options: {
-                        data: {
-                          full_name: authFullName.trim(),
-                          company_name: authCompany.trim(),
-                          role: 'cliente'
-                        }
-                      }
+                    // El registro lo resuelve el servidor: el navegador no maneja claves.
+                    const registerRes = await fetch('/api/auth/register', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      credentials: 'include',
+                      body: JSON.stringify({
+                        email: authEmail.trim(),
+                        password: authPassword,
+                        fullName: authFullName.trim(),
+                        companyName: authCompany.trim()
+                      })
                     });
+                    const registerJson = await registerRes.json().catch(() => null);
 
-                    if (signUpErr) {
-                      throw signUpErr;
+                    if (!registerRes.ok || !registerJson?.success) {
+                      throw new Error(registerJson?.error || 'No se pudo crear la cuenta.');
                     }
 
-                    // Si Supabase inicia la sesión de inmediato:
-                    if (signUpData.session) {
-                      setAuthFullName('');
-                      setAuthCompany('');
-                      setAuthPassword('');
-                      setAuthConfirmPassword('');
-                      if (signUpData.user) {
-                        await handleVerifyUserRoleAndConfigure(signUpData.user, true);
-                      }
-                    } else {
-                      // Intentar inicio de sesión directo
-                      const { data: directSignIn, error: signInErr } = await supabase.auth.signInWithPassword({
-                        email: authEmail.trim(),
-                        password: authPassword
-                      });
+                    setAuthFullName('');
+                    setAuthCompany('');
+                    setAuthPassword('');
+                    setAuthConfirmPassword('');
 
-                      if (signInErr) {
-                        showToast('¡Cuenta creada exitosamente! Ya puedes iniciar sesión con tus credenciales.');
-                        setIsAuthRegisterMode(false);
-                      } else {
-                        setAuthFullName('');
-                        setAuthCompany('');
-                        setAuthPassword('');
-                        setAuthConfirmPassword('');
-                        if (directSignIn?.user) {
-                          await handleVerifyUserRoleAndConfigure(directSignIn.user, true);
-                        }
+                    if (registerJson.requiresEmailConfirmation) {
+                      showToast('¡Cuenta creada exitosamente! Revisa tu correo para confirmar tu cuenta.');
+                      setIsAuthRegisterMode(false);
+                    } else {
+                      const sessionUser = await fetchServerSession();
+                      if (sessionUser) {
+                        await handleVerifyUserRoleAndConfigure(sessionUser, true);
                       }
                     }
                   } else {
                     if (!authEmail.trim() || !authPassword) {
                       throw new Error('Por favor ingresa tu correo y contraseña.');
                     }
-                    const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
-                      email: authEmail.trim(),
-                      password: authPassword
+                    const loginRes = await fetch('/api/auth/login', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      credentials: 'include',
+                      body: JSON.stringify({ email: authEmail.trim(), password: authPassword })
                     });
-                    if (signInError) {
-                      throw signInError;
+                    const loginJson = await loginRes.json().catch(() => null);
+
+                    if (!loginRes.ok || !loginJson?.success) {
+                      throw new Error(loginJson?.error || 'Credenciales inválidas');
                     }
-                    if (signInData?.user) {
-                      await handleVerifyUserRoleAndConfigure(signInData.user, true);
+
+                    const sessionUser = await fetchServerSession();
+                    if (sessionUser) {
+                      await handleVerifyUserRoleAndConfigure(sessionUser, true);
                     }
                   }
                 } catch (err: any) {

@@ -5,7 +5,7 @@ import { Sidebar } from '../components/ui/Sidebar';
 import { ManualBcvRateModal } from '../components/modals/ManualBcvRateModal';
 import { SupabaseConnectionModal } from '../components/modals/SupabaseConnectionModal';
 import { getActiveExchangeRate, setActiveExchangeRate, isFutureExchangeRate } from '../lib/currency';
-import { isSupabaseConfigured, supabase } from '../lib/supabase/client';
+import { isSupabaseConfigured, refreshSupabaseStatus } from '../lib/supabase/client';
 import { getActiveOrgId } from '../lib/supabase/db';
 import { getBusinessProfile, BusinessProfile } from '../lib/businessProfile';
 import { useAuth } from '../context/AuthContext';
@@ -71,6 +71,17 @@ export function DashboardLayout() {
     return () => window.removeEventListener('frenyer:active-user-changed', handleUserChange);
   }, []);
 
+  // Estado de la conexion reportado por el servidor
+  useEffect(() => {
+    const syncStatus = async () => {
+      const status = await refreshSupabaseStatus();
+      setIsDbReady(Boolean(status.supabaseConfigured && status.supabaseConnected));
+    };
+    void syncStatus();
+    window.addEventListener('frenyer:supabase-status', syncStatus);
+    return () => window.removeEventListener('frenyer:supabase-status', syncStatus);
+  }, []);
+
   // Guard de rol: Clientes solo se quedan en la tienda e-commerce
   useEffect(() => {
     const guardRole = async () => {
@@ -80,9 +91,20 @@ export function DashboardLayout() {
         return;
       }
 
-      const { data: { session } } = await supabase.auth.getSession();
-      if (session?.user) {
-        const metaRole = (session.user.user_metadata?.role || '').toLowerCase();
+      // La sesion vive en el servidor: se consulta por HTTP, no con el cliente del navegador.
+      let sessionUser: { email?: string; name?: string; user_metadata?: { role?: string } } | null = null;
+      try {
+        const sessionRes = await fetch('/api/auth/session', { credentials: 'include' });
+        if (sessionRes.ok) {
+          const sessionJson = await sessionRes.json();
+          sessionUser = sessionJson?.data?.user || null;
+        }
+      } catch {
+        return;
+      }
+
+      if (sessionUser) {
+        const metaRole = (sessionUser.user_metadata?.role || '').toLowerCase();
         if (metaRole === 'cliente' || metaRole === 'customer') {
           localStorage.setItem('frenyer_user_role', 'cliente');
           navigate('/', { replace: true });
@@ -90,19 +112,16 @@ export function DashboardLayout() {
         }
 
         try {
-          const res = await fetch('/api/users');
+          const res = await fetch('/api/users', { credentials: 'include' });
           if (res.ok) {
             const json = await res.json();
             if (json.success && Array.isArray(json.data)) {
               const matched = json.data.find(
-                (u: any) => u.email && u.email.toLowerCase() === session.user.email?.toLowerCase()
+                (u: any) => u.email && u.email.toLowerCase() === sessionUser?.email?.toLowerCase()
               );
               if (matched) {
                 if (matched.active === false) {
-                  await supabase.auth.signOut();
-                  localStorage.removeItem('frenyer_active_user');
-                  localStorage.removeItem('frenyer_user_role');
-                  localStorage.removeItem('frenyer_user_permissions');
+                  await signOut();
                   navigate('/', { replace: true });
                   return;
                 }
@@ -267,7 +286,7 @@ export function DashboardLayout() {
             <button
               type="button"
               onClick={() => setIsSupabaseModalOpen(true)}
-              title={isDbReady ? 'Base de datos Supabase conectada. Haga clic para detalles.' : 'Haga clic para conectar la base de datos Supabase.'}
+              title={isDbReady ? 'Base de datos Supabase conectada. Haga clic para detalles.' : 'Base de datos sin conexión en el servidor. Haga clic para detalles.'}
               style={{
                 display: 'flex',
                 alignItems: 'center',
@@ -284,7 +303,7 @@ export function DashboardLayout() {
               }}
             >
               <Database size={14} style={{ color: isDbReady ? '#059669' : '#d97706' }} />
-              <span>{isDbReady ? 'Supabase' : 'Conectar BD'}</span>
+              <span>{isDbReady ? 'Supabase' : 'Sin BD'}</span>
             </button>
 
             {/* Live BCV Exchange Rate Pill (Minimalist Amount Only - Click to modify) */}
@@ -545,13 +564,10 @@ export function DashboardLayout() {
         }}
       />
 
-      {/* Supabase Connection Modal */}
+      {/* Estado de la conexión con Supabase */}
       <SupabaseConnectionModal
         isOpen={isSupabaseModalOpen}
         onClose={() => setIsSupabaseModalOpen(false)}
-        onConnected={() => {
-          setIsDbReady(true);
-        }}
       />
     </div>
   );

@@ -3,7 +3,7 @@ import { Card } from '../components/ui/Card';
 import { Badge } from '../components/ui/Badge';
 import { EmptyState } from '../components/ui/EmptyState';
 import { formatUSD, getActiveExchangeRate } from '../lib/currency';
-import { supabase, isSupabaseConfigured } from '../lib/supabase/client';
+import { refreshSupabaseStatus } from '../lib/supabase/client';
 import { authenticatedFetch } from '../lib/supabase/api';
 
 interface Product {
@@ -61,7 +61,8 @@ export function Dashboard() {
       setIsLoading(true);
       setLoadError('');
 
-      if (!isSupabaseConfigured) {
+      const status = await refreshSupabaseStatus();
+      if (!status.supabaseConnected) {
         setSummary(EMPTY_SUMMARY);
         setIsLoading(false);
         return;
@@ -70,25 +71,35 @@ export function Dashboard() {
       try {
         const activeRate = getActiveExchangeRate();
 
+        // Todas las consultas van por el servidor: el navegador no maneja credenciales.
+        const fetchTable = async (url: string): Promise<Array<Record<string, any>>> => {
+          try {
+            const res = await authenticatedFetch(url);
+            if (!res.ok) return [];
+            const json = await res.json();
+            return Array.isArray(json?.data) ? json.data : [];
+          } catch {
+            return [];
+          }
+        };
+
         // 1. Consultar todos los datos requeridos (mismo esquema de Salud de Empresa)
-        const [productsRes, salesRes, saleItemsRes, expensesRes, cxcRes, cxpRes] = await Promise.all([
-          supabase.from('products').select('id, sku, name, stock, min_stock, cost_usd, price_usd'),
-          supabase.from('sales').select('id, total_usd, created_at, status').eq('status', 'COMPLETADA'),
-          supabase.from('sale_items').select('sale_id, sku, name, quantity, unit_price_usd, total_usd'),
-          supabase.from('expenses').select('amount, currency, exchange_rate, created_at'),
-          supabase.from('accounts_receivable').select('balance_usd, status'),
-          supabase.from('accounts_payable').select('balance_usd, status')
+        const [products, allSales, saleItems, expenses, cxcRows, cxpRows] = await Promise.all([
+          fetchTable('/api/products'),
+          fetchTable('/api/sales'),
+          fetchTable('/api/sale-items'),
+          fetchTable('/api/expenses'),
+          fetchTable('/api/accounts-receivable'),
+          fetchTable('/api/accounts-payable')
         ]);
 
-        const products = (productsRes.data || []) as Product[];
-        const sales = salesRes.data || [];
-        const saleItems = saleItemsRes.data || [];
-        const expenses = expensesRes.data || [];
+        const sales = allSales.filter((s: any) => !s.status || s.status === 'COMPLETADA');
 
         // 2. Mapeo de costos de productos por SKU (idéntico a Salud de Empresa)
         const productCostMap = new Map<string, number>();
         const productMap = new Map<string, Product>();
-        products.forEach((p) => {
+        const productList = products as unknown as Product[];
+        productList.forEach((p) => {
           if (p.sku) productCostMap.set(p.sku, Number(p.cost_usd) || 0);
           if (p.id) productMap.set(p.id, p);
         });
@@ -140,7 +151,7 @@ export function Dashboard() {
           .slice(0, 5);
 
         // 8. Productos con Bajo Stock (stock actual <= min_stock configurado)
-        const lowStockProductsList = products
+        const lowStockProductsList = productList
           .filter((p) => Number(p.stock) <= Number(p.min_stock))
           .sort((a, b) => Number(a.stock) - Number(b.stock))
           .slice(0, 5);
@@ -195,8 +206,8 @@ export function Dashboard() {
           console.warn('Aviso consultando /api/accounts-receivable:', e);
         }
 
-        if (allReceivables.length === 0 && cxcRes.data && cxcRes.data.length > 0) {
-          allReceivables = cxcRes.data;
+        if (allReceivables.length === 0 && cxcRows.length > 0) {
+          allReceivables = cxcRows;
         }
 
         const filteredReceivables = allReceivables.filter(isDueSoonOrThisMonth);
@@ -223,8 +234,8 @@ export function Dashboard() {
           console.warn('Aviso consultando /api/accounts-payable:', e);
         }
 
-        if (allPayables.length === 0 && cxpRes.data && cxpRes.data.length > 0) {
-          allPayables = cxpRes.data;
+        if (allPayables.length === 0 && cxpRows.length > 0) {
+          allPayables = cxpRows;
         }
 
         const filteredPayables = allPayables.filter(isDueSoonOrThisMonth);
@@ -243,8 +254,8 @@ export function Dashboard() {
           payableDueUsd: Math.round(payableDue * 100) / 100,
           payableDueCount,
           payables: filteredPayables.slice(0, 10),
-          stockUnits: products.reduce((acc, p) => acc + Number(p.stock || 0), 0),
-          lowStockProductsCount: products.filter((p) => Number(p.stock) <= Number(p.min_stock)).length,
+          stockUnits: productList.reduce((acc, p) => acc + Number(p.stock || 0), 0),
+          lowStockProductsCount: productList.filter((p) => Number(p.stock) <= Number(p.min_stock)).length,
           topProducts,
           lowStockProductsList
         });

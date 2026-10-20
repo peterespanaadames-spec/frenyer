@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react';
-import { Database, CheckCircle, AlertCircle, RefreshCw, Copy, Check, ExternalLink, X, Shield, Key, Eye, EyeOff } from 'lucide-react';
+import { Database, CheckCircle, AlertCircle, RefreshCw, Copy, Check, X, ShieldCheck } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { Card } from '../ui/Card';
-import { updateSupabaseClient, isSupabaseConfigured, SUPABASE_URL } from '../../lib/supabase/client';
+import { refreshSupabaseStatus, type SupabaseServerStatus } from '../../lib/supabase/client';
 
 interface SupabaseConnectionModalProps {
   isOpen: boolean;
@@ -10,49 +10,26 @@ interface SupabaseConnectionModalProps {
   onConnected?: () => void;
 }
 
-export function SupabaseConnectionModal({ isOpen, onClose, onConnected }: SupabaseConnectionModalProps) {
+/**
+ * Panel de estado de la conexion con Supabase.
+ * Es de solo lectura: las credenciales viven unicamente en el servidor y
+ * esta pantalla nunca las solicita ni las expone.
+ */
+export function SupabaseConnectionModal({ isOpen, onClose }: SupabaseConnectionModalProps) {
   const [activeTab, setActiveTab] = useState<'conexion' | 'migraciones'>('conexion');
-  const [url, setUrl] = useState(() => {
-    if (SUPABASE_URL && !SUPABASE_URL.includes('your-project')) {
-      return SUPABASE_URL;
-    }
-    return typeof window !== 'undefined' ? (localStorage.getItem('frenyer_supabase_url') || '') : '';
-  });
-  const [anonKey, setAnonKey] = useState(() => {
-    return typeof window !== 'undefined' ? (localStorage.getItem('frenyer_supabase_anon_key') || '') : '';
-  });
-  const [showAnonKey, setShowAnonKey] = useState(false);
-  const [isLoading, setIsLoading] = useState(false);
-  const [serverStatus, setServerStatus] = useState<{
-    configured: boolean;
-    connected: boolean;
-    url?: string;
-    error?: string | null;
-  } | null>(null);
-  const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const [status, setStatus] = useState<SupabaseServerStatus | null>(null);
   const [migrationSql, setMigrationSql] = useState('');
   const [isCopied, setIsCopied] = useState(false);
   const [isLoadingSql, setIsLoadingSql] = useState(false);
 
   const checkStatus = async () => {
-    try {
-      const res = await fetch('/api/supabase/status');
-      if (res.ok) {
-        const data = await res.json();
-        setServerStatus(data);
-        if (data.url && !data.url.includes('your-project') && !url) {
-          setUrl(data.url);
-        }
-      }
-    } catch {
-      // ignore
-    }
+    const serverStatus = await refreshSupabaseStatus();
+    setStatus(serverStatus);
   };
 
   useEffect(() => {
     if (isOpen) {
-      checkStatus();
-      setFeedback(null);
+      void checkStatus();
     }
   }, [isOpen]);
 
@@ -79,61 +56,9 @@ export function SupabaseConnectionModal({ isOpen, onClose, onConnected }: Supaba
     setTimeout(() => setIsCopied(false), 2500);
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const cleanUrl = url.trim();
-    const cleanKey = anonKey.trim();
-
-    if (!cleanUrl || !cleanUrl.startsWith('https://')) {
-      setFeedback({ type: 'error', message: 'Ingresa una URL válida de Supabase que empiece con https://' });
-      return;
-    }
-    if (!cleanKey || cleanKey.length < 20) {
-      setFeedback({ type: 'error', message: 'Ingresa una clave anónima (anon key) válida de Supabase.' });
-      return;
-    }
-
-    setIsLoading(true);
-    setFeedback(null);
-
-    try {
-      const res = await fetch('/api/supabase/config', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: cleanUrl, anonKey: cleanKey })
-      });
-
-      const data = await res.json();
-
-      if (!res.ok || !data.success) {
-        throw new Error(data.error || 'No se pudo conectar con Supabase.');
-      }
-
-      // Update browser client
-      updateSupabaseClient(cleanUrl, cleanKey);
-      await checkStatus();
-
-      setFeedback({
-        type: 'success',
-        message: '¡Conexión exitosa! La base de datos Supabase ha sido conectada y sincronizada.'
-      });
-
-      if (onConnected) {
-        onConnected();
-      }
-    } catch (err: any) {
-      setFeedback({
-        type: 'error',
-        message: err?.message || 'Error al conectar con Supabase. Verifica tu URL y clave.'
-      });
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
   if (!isOpen) return null;
 
-  const isConnectedNow = (serverStatus?.connected || isSupabaseConfigured) && !feedback?.type?.includes('error');
+  const isConnectedNow = Boolean(status?.supabaseConfigured && status?.supabaseConnected);
 
   return (
     <div
@@ -188,10 +113,10 @@ export function SupabaseConnectionModal({ isOpen, onClose, onConnected }: Supaba
             </div>
             <div>
               <h2 style={{ margin: 0, fontSize: 17, fontWeight: 800, color: '#0f172a' }}>
-                Conexión con Supabase
+                Estado de la base de datos
               </h2>
               <span style={{ fontSize: 12, color: '#64748b' }}>
-                Base de datos PostgreSQL en tiempo real con seguridad RLS
+                Conexion administrada desde el servidor
               </span>
             </div>
           </div>
@@ -226,7 +151,7 @@ export function SupabaseConnectionModal({ isOpen, onClose, onConnected }: Supaba
               cursor: 'pointer'
             }}
           >
-            Configuración y Credenciales
+            Estado de la conexion
           </button>
           <button
             onClick={() => {
@@ -274,12 +199,12 @@ export function SupabaseConnectionModal({ isOpen, onClose, onConnected }: Supaba
                   )}
                   <div>
                     <div style={{ fontSize: 13, fontWeight: 700, color: isConnectedNow ? '#15803d' : '#b45309' }}>
-                      {isConnectedNow ? 'Base de datos conectada activamente' : 'Conexión a Supabase pendiente'}
+                      {isConnectedNow ? 'Base de datos conectada' : 'Conexion a Supabase pendiente'}
                     </div>
                     <div style={{ fontSize: 11, color: isConnectedNow ? '#166534' : '#92400e', marginTop: 2 }}>
                       {isConnectedNow
-                        ? `Conectado a ${serverStatus?.url || SUPABASE_URL}`
-                        : 'Ingresa las credenciales de tu proyecto para acceder a tus tablas y guardar información.'}
+                        ? `Servidor conectado a ${status?.supabaseUrl}`
+                        : 'El administrador debe configurar la conexion en el servidor.'}
                     </div>
                   </div>
                 </div>
@@ -304,115 +229,76 @@ export function SupabaseConnectionModal({ isOpen, onClose, onConnected }: Supaba
                 </button>
               </div>
 
-              {feedback && (
-                <div
-                  style={{
-                    padding: '12px 16px',
-                    borderRadius: 8,
-                    fontSize: 13,
-                    fontWeight: 600,
-                    background: feedback.type === 'success' ? '#ecfdf5' : '#fef2f2',
-                    color: feedback.type === 'success' ? '#065f46' : '#991b1b',
-                    border: `1px solid ${feedback.type === 'success' ? '#a7f3d0' : '#fecaca'}`,
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 8
-                  }}
-                >
-                  {feedback.type === 'success' ? <CheckCircle size={16} /> : <AlertCircle size={16} />}
-                  {feedback.message}
-                </div>
-              )}
-
-              {/* Form */}
-              <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-                <div>
-                  <label style={{ fontSize: 12, fontWeight: 700, color: '#334155', display: 'block', marginBottom: 6 }}>
-                    Project URL (URL del proyecto Supabase) *
-                  </label>
-                  <div style={{ position: 'relative' }}>
-                    <input
-                      className="input"
-                      type="url"
-                      placeholder="https://xyzcompany.supabase.co"
-                      value={url}
-                      onChange={(e) => setUrl(e.target.value)}
-                      required
-                      style={{ height: 40, fontSize: 13 }}
-                    />
-                  </div>
-                  <span style={{ fontSize: 11, color: '#64748b', marginTop: 4, display: 'block' }}>
-                    Se encuentra en Supabase Dashboard → Project Settings → API → Project URL.
+              {/* Detalle */}
+              <div
+                style={{
+                  background: '#f8fafc',
+                  padding: '16px 18px',
+                  borderRadius: 10,
+                  border: '1px solid var(--border)',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 10
+                }}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, fontSize: 12.5 }}>
+                  <span style={{ color: '#64748b' }}>Proyecto</span>
+                  <span style={{ fontWeight: 600, color: '#0f172a', textAlign: 'right' }}>
+                    {status?.supabaseUrl || 'No configurado'}
                   </span>
                 </div>
-
-                <div>
-                  <label style={{ fontSize: 12, fontWeight: 700, color: '#334155', display: 'block', marginBottom: 6 }}>
-                    Project API Anon Key (Clave pública anónima) *
-                  </label>
-                  <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
-                    <input
-                      className="input"
-                      type={showAnonKey ? 'text' : 'password'}
-                      placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
-                      value={anonKey}
-                      onChange={(e) => setAnonKey(e.target.value)}
-                      required
-                      style={{ height: 40, fontSize: 13, fontFamily: 'monospace', paddingRight: 40 }}
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowAnonKey(!showAnonKey)}
-                      style={{
-                        position: 'absolute',
-                        right: 10,
-                        background: 'transparent',
-                        border: 'none',
-                        color: '#64748b',
-                        cursor: 'pointer',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        padding: 4
-                      }}
-                      title={showAnonKey ? 'Ocultar clave' : 'Ver clave'}
-                      aria-label={showAnonKey ? 'Ocultar clave' : 'Ver clave'}
-                    >
-                      {showAnonKey ? <EyeOff size={18} /> : <Eye size={18} />}
-                    </button>
-                  </div>
-                  <span style={{ fontSize: 11, color: '#64748b', marginTop: 4, display: 'block' }}>
-                    Clave pública para el cliente (`anon` / `public`). No introduzcas `service_role`.
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, fontSize: 12.5 }}>
+                  <span style={{ color: '#64748b' }}>Origen de las credenciales</span>
+                  <span style={{ fontWeight: 600, color: '#0f172a', textAlign: 'right' }}>
+                    {status?.credentialsSource || 'No configurada'}
                   </span>
                 </div>
-
-                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 10 }}>
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    onClick={onClose}
-                    style={{ height: 40, fontSize: 13 }}
-                  >
-                    Cerrar
-                  </Button>
-                  <Button
-                    type="submit"
-                    variant="primary"
-                    disabled={isLoading}
-                    style={{
-                      height: 40,
-                      fontSize: 13,
-                      fontWeight: 700,
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 8
-                    }}
-                  >
-                    {isLoading ? <RefreshCw size={15} className="animate-spin" /> : <Key size={15} />}
-                    {isLoading ? 'Conectando...' : 'Probar y Conectar Base de Datos'}
-                  </Button>
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, fontSize: 12.5 }}>
+                  <span style={{ color: '#64748b' }}>Acceso directo con clave</span>
+                  <span style={{ fontWeight: 600, color: '#0f172a' }}>
+                    {status?.localAccessEnabled ? 'Habilitado' : 'Deshabilitado'}
+                  </span>
                 </div>
-              </form>
+                {status && status.missingTables.length > 0 && (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, fontSize: 12.5 }}>
+                    <span style={{ color: '#64748b' }}>Tablas sin permisos</span>
+                    <span style={{ fontWeight: 600, color: '#b45309', textAlign: 'right' }}>
+                      {status.missingTables.join(', ')}
+                    </span>
+                  </div>
+                )}
+              </div>
+
+              <div
+                style={{
+                  padding: '14px 18px',
+                  borderRadius: 10,
+                  background: '#f5f3ff',
+                  border: '1px solid #ddd6fe',
+                  display: 'flex',
+                  gap: 12
+                }}
+              >
+                <ShieldCheck size={18} style={{ color: '#7c3aed', flexShrink: 0, marginTop: 2 }} />
+                <div>
+                  <h4 style={{ margin: '0 0 6px', fontSize: 13, fontWeight: 800, color: '#0f172a' }}>
+                    Las claves nunca salen del servidor
+                  </h4>
+                  <p style={{ margin: 0, fontSize: 12, color: '#475569', lineHeight: 1.6 }}>
+                    La credencial de Supabase se configura una unica vez en el servidor, en{' '}
+                    <b>data/supabase-credentials.json</b> o en las variables{' '}
+                    <b>SUPABASE_URL</b> y <b>SUPABASE_ANON_KEY</b> (sin prefijo <b>VITE_</b>). El
+                    navegador no recibe la clave: todas las consultas pasan por la API del servidor,
+                    que valida la sesion y aplica las politicas RLS.
+                  </p>
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                <Button type="button" variant="secondary" onClick={onClose} style={{ height: 40, fontSize: 13 }}>
+                  Cerrar
+                </Button>
+              </div>
             </div>
           )}
 

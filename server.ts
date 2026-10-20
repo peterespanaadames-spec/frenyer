@@ -1,6 +1,7 @@
 import dns from 'node:dns';
 dns.setDefaultResultOrder('ipv4first');
 
+import crypto from 'node:crypto';
 import express from 'express';
 import cors from 'cors';
 import { createServer as createViteServer, loadEnv } from 'vite';
@@ -72,35 +73,301 @@ const localEnvFile = readEnvLocalFile();
 
 const DEFAULT_SUPABASE_URL = 'https://knyqrwpaksawuxoqcayu.supabase.co';
 
-function resolveSupabaseUrl(): string {
-  const candidates = [
-    localEnvFile.VITE_SUPABASE_URL,
-    process.env.VITE_SUPABASE_URL,
-    loadedEnv.VITE_SUPABASE_URL
-  ];
-  for (const candidate of candidates) {
-    if (isRealSupabaseUrl(candidate)) return candidate!.trim();
+/**
+ * Credenciales de Supabase resueltas SOLO en el servidor.
+ * Nunca se envian al navegador: el cliente consulta el estado via /api/supabase/status.
+ */
+interface SupabaseCredentials {
+  url: string;
+  anonKey: string;
+  serviceRoleKey: string;
+}
+
+function readCredentialsFile(): Partial<SupabaseCredentials> | null {
+  const filePath = path.resolve(process.cwd(), 'data', 'supabase-credentials.json');
+  if (!fs.existsSync(filePath)) return null;
+  try {
+    const raw = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+    return {
+      url: String(raw.url || '').trim(),
+      anonKey: String(raw.anonKey || raw.anon_key || '').trim(),
+      serviceRoleKey: String(raw.serviceRoleKey || raw.service_role_key || '').trim()
+    };
+  } catch (err) {
+    console.warn('No se pudo leer data/supabase-credentials.json:', err);
+    return null;
   }
-  return DEFAULT_SUPABASE_URL;
 }
 
-function resolveSupabaseKey(): string {
-  if (isRealSupabaseKey(localEnvFile.VITE_SUPABASE_ANON_KEY)) return localEnvFile.VITE_SUPABASE_ANON_KEY.trim();
-  if (isRealSupabaseKey(process.env.VITE_SUPABASE_ANON_KEY)) return process.env.VITE_SUPABASE_ANON_KEY!.trim();
-  if (isRealSupabaseKey(loadedEnv.VITE_SUPABASE_ANON_KEY)) return loadedEnv.VITE_SUPABASE_ANON_KEY.trim();
-  return process.env.VITE_SUPABASE_ANON_KEY || loadedEnv.VITE_SUPABASE_ANON_KEY || 'configure-supabase-publishable-key';
+const credentialsFile = readCredentialsFile();
+
+function pickFirstRealUrl(candidates: Array<string | undefined>, fallback: string): { value: string; source: string } {
+  const labels = [
+    'data/supabase-credentials.json',
+    'variable de entorno',
+    '.env.local',
+    'archivo .env',
+    'variable de entorno',
+    '.env.local',
+    'configuracion heredada VITE_'
+  ];
+  for (let i = 0; i < candidates.length; i++) {
+    if (isRealSupabaseUrl(candidates[i])) {
+      return { value: candidates[i]!.trim(), source: labels[i] || 'servidor' };
+    }
+  }
+  return { value: fallback, source: 'valor por defecto' };
 }
 
-let SUPABASE_URL = resolveSupabaseUrl();
-let SUPABASE_ANON_KEY = resolveSupabaseKey();
+function pickFirstRealKey(candidates: Array<string | undefined>): { value: string; source: string } {
+  const labels = [
+    'data/supabase-credentials.json',
+    'variable de entorno',
+    '.env.local',
+    'archivo .env',
+    'variable de entorno',
+    '.env.local',
+    'configuracion heredada VITE_'
+  ];
+  for (let i = 0; i < candidates.length; i++) {
+    if (isRealSupabaseKey(candidates[i])) {
+      return { value: candidates[i]!.trim(), source: labels[i] || 'servidor' };
+    }
+  }
+  return { value: '', source: 'no configurada' };
+}
+
+const resolvedUrl = pickFirstRealUrl(
+  [
+    credentialsFile?.url,
+    process.env.SUPABASE_URL,
+    localEnvFile.SUPABASE_URL,
+    loadedEnv.SUPABASE_URL,
+    process.env.VITE_SUPABASE_URL,
+    localEnvFile.VITE_SUPABASE_URL,
+    loadedEnv.VITE_SUPABASE_URL
+  ],
+  DEFAULT_SUPABASE_URL
+);
+
+const resolvedKey = pickFirstRealKey([
+  credentialsFile?.anonKey,
+  process.env.SUPABASE_ANON_KEY,
+  localEnvFile.SUPABASE_ANON_KEY,
+  loadedEnv.SUPABASE_ANON_KEY,
+  process.env.VITE_SUPABASE_ANON_KEY,
+  localEnvFile.VITE_SUPABASE_ANON_KEY,
+  loadedEnv.VITE_SUPABASE_ANON_KEY
+]);
+
+const resolvedServiceRoleKey = pickFirstRealKey([
+  credentialsFile?.serviceRoleKey,
+  process.env.SUPABASE_SERVICE_ROLE_KEY,
+  localEnvFile.SUPABASE_SERVICE_ROLE_KEY,
+  loadedEnv.SUPABASE_SERVICE_ROLE_KEY
+]);
+
+let SUPABASE_URL = resolvedUrl.value;
+let SUPABASE_ANON_KEY = resolvedKey.value;
+const SUPABASE_SERVICE_ROLE_KEY = resolvedServiceRoleKey.value;
+const SUPABASE_CREDENTIALS_SOURCE = resolvedKey.source;
 
 let isSupabaseConfigured = isRealSupabaseUrl(SUPABASE_URL) && isRealSupabaseKey(SUPABASE_ANON_KEY);
 let supabaseServer = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+// Cliente administrativo: solo para operaciones puntuales de Supabase Auth.
+// Nunca se usa para consultas de negocio, de modo que no se bypassan las RLS.
+function getSupabaseAdminClient() {
+  if (!SUPABASE_SERVICE_ROLE_KEY) return null;
+  return createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false }
+  });
+}
+
+// ---------------------------------------------------------------------------
+// RATE LIMITER EN MEMORIA (sin dependencias externas)
+// ---------------------------------------------------------------------------
+interface RateLimitEntry {
+  count: number;
+  resetAt: number;
+  blockedUntil: number;
+}
+
+const rateLimitStore = new Map<string, RateLimitEntry>();
+
+function getClientIp(req: Request): string {
+  const forwarded = req.headers['x-forwarded-for'];
+  if (typeof forwarded === 'string' && forwarded.length > 0) {
+    return forwarded.split(',')[0].trim();
+  }
+  return req.ip || req.socket?.remoteAddress || 'desconocido';
+}
+
+function checkRateLimit(key: string, limit: number, windowMs: number): { allowed: boolean; retryAfterSeconds: number } {
+  const now = Date.now();
+
+  if (rateLimitStore.size > 5000) {
+    for (const [k, v] of rateLimitStore) {
+      if (v.resetAt <= now && v.blockedUntil <= now) rateLimitStore.delete(k);
+    }
+  }
+
+  const entry = rateLimitStore.get(key);
+  if (!entry || (entry.resetAt <= now && entry.blockedUntil <= now)) {
+    rateLimitStore.set(key, { count: 1, resetAt: now + windowMs, blockedUntil: 0 });
+    return { allowed: true, retryAfterSeconds: 0 };
+  }
+
+  if (entry.blockedUntil > now) {
+    return { allowed: false, retryAfterSeconds: Math.ceil((entry.blockedUntil - now) / 1000) };
+  }
+
+  entry.count += 1;
+  if (entry.count > limit) {
+    const penalty = Math.min((entry.count - limit) * 30_000, 15 * 60_000);
+    entry.blockedUntil = now + penalty;
+    return { allowed: false, retryAfterSeconds: Math.ceil(penalty / 1000) };
+  }
+
+  return { allowed: true, retryAfterSeconds: 0 };
+}
+
+// ---------------------------------------------------------------------------
+// SESIONES: COOKIES HTTPONLY + MODO LOCAL CON CLAVE DE ACCESO
+// ---------------------------------------------------------------------------
+const SESSION_COOKIE = 'frenyer_session';
+const REFRESH_COOKIE = 'frenyer_refresh';
+const SESSION_MAX_AGE_MS = 12 * 60 * 60 * 1000; // 12 horas
+const LOCAL_TOKEN_PREFIX = 'local';
+
+function setSessionCookie(res: Response, name: string, value: string, maxAgeMs: number): void {
+  res.cookie(name, value, {
+    httpOnly: true,
+    sameSite: 'strict',
+    secure: process.env.NODE_ENV === 'production',
+    maxAge: maxAgeMs,
+    path: '/'
+  });
+}
+
+function clearSessionCookie(res: Response, name: string): void {
+  res.clearCookie(name, { httpOnly: true, sameSite: 'strict', path: '/' });
+}
+
+function readCookie(req: Request, name: string): string {
+  const header = req.headers.cookie;
+  if (!header) return '';
+  for (const part of header.split(';')) {
+    const [rawName, ...rest] = part.trim().split('=');
+    if (rawName === name) return decodeURIComponent(rest.join('='));
+  }
+  return '';
+}
+
+/** Secreto de firma de sesiones locales: variable de entorno o archivo local persistido. */
+function resolveSessionSecret(): string {
+  const fromEnv =
+    process.env.FRENYER_SESSION_SECRET ||
+    localEnvFile.FRENYER_SESSION_SECRET ||
+    loadedEnv.FRENYER_SESSION_SECRET;
+  if (fromEnv && fromEnv.trim().length >= 16) return fromEnv.trim();
+
+  const secretPath = path.resolve(process.cwd(), 'data', '.session-secret');
+  try {
+    if (fs.existsSync(secretPath)) {
+      const stored = fs.readFileSync(secretPath, 'utf-8').trim();
+      if (stored.length >= 32) return stored;
+    }
+    const generated = crypto.randomBytes(48).toString('hex');
+    fs.mkdirSync(path.dirname(secretPath), { recursive: true });
+    fs.writeFileSync(secretPath, generated, 'utf-8');
+    return generated;
+  } catch {
+    return crypto.randomBytes(48).toString('hex');
+  }
+}
+
+const SESSION_SECRET = resolveSessionSecret();
+
+function resolveAccessKey(): string {
+  const raw =
+    process.env.FRENYER_ACCESS_KEY ||
+    localEnvFile.FRENYER_ACCESS_KEY ||
+    loadedEnv.FRENYER_ACCESS_KEY ||
+    '';
+  return raw.trim();
+}
+
+const ACCESS_KEY = resolveAccessKey();
+
+interface LocalSessionPayload {
+  sub: string;
+  email: string;
+  role: string;
+  organizationId: string;
+  exp: number;
+}
+
+function signLocalSession(payload: LocalSessionPayload): string {
+  const body = Buffer.from(JSON.stringify(payload)).toString('base64url');
+  const signature = crypto.createHmac('sha256', SESSION_SECRET).update(body).digest('base64url');
+  return `${LOCAL_TOKEN_PREFIX}.${body}.${signature}`;
+}
+
+function verifyLocalSessionToken(token: string): LocalSessionPayload | null {
+  if (!token || !token.startsWith(`${LOCAL_TOKEN_PREFIX}.`)) return null;
+  const parts = token.split('.');
+  if (parts.length !== 3) return null;
+
+  const body = parts[1];
+  const signature = parts[2];
+  const expected = crypto.createHmac('sha256', SESSION_SECRET).update(body).digest('base64url');
+
+  const givenBuffer = Buffer.from(signature);
+  const expectedBuffer = Buffer.from(expected);
+  if (givenBuffer.length !== expectedBuffer.length) return null;
+  if (!crypto.timingSafeEqual(givenBuffer, expectedBuffer)) return null;
+
+  try {
+    const payload = JSON.parse(Buffer.from(body, 'base64url').toString('utf-8')) as LocalSessionPayload;
+    if (!payload.exp || payload.exp < Date.now()) return null;
+    return payload;
+  } catch {
+    return null;
+  }
+}
+
+/** Comparacion en tiempo constante para no filtrar informacion por temporizacion. */
+function safeCompare(a: string, b: string): boolean {
+  const bufferA = Buffer.from(a);
+  const bufferB = Buffer.from(b);
+  if (bufferA.length !== bufferB.length) {
+    // Se compara contra algo del mismo largo para no filtrar la longitud real.
+    crypto.timingSafeEqual(bufferA, bufferA);
+    return false;
+  }
+  return crypto.timingSafeEqual(bufferA, bufferB);
+}
+
+function logAuthEvent(event: string, ip: string, detail: string): void {
+  const line = `${new Date().toISOString()} [${event}] ip=${ip} ${detail}\n`;
+  console.log(`[AUTH] ${event} ip=${ip} ${detail}`);
+  try {
+    const logPath = path.resolve(process.cwd(), 'data', 'auth-audit.log');
+    fs.mkdirSync(path.dirname(logPath), { recursive: true });
+    fs.appendFileSync(logPath, line, 'utf-8');
+  } catch {
+    // La auditoria nunca debe impedir el flujo de autenticacion.
+  }
+}
+
 
 interface SupabaseRequestContext {
   accessToken: string;
   organizationId: string;
   role: string;
+  userEmail?: string;
+  isLocalSession?: boolean;
 }
 
 type AuthenticatedResponse = Response & {
@@ -127,70 +394,65 @@ const tenantScopedTables = new Set([
   'inventory_movements'
 ]);
 
+/** Lee el token de sesion desde la cookie httpOnly o la cabecera Authorization. */
+function readSessionToken(req: Request): string {
+  const fromCookie = readCookie(req, SESSION_COOKIE);
+  if (fromCookie) return fromCookie;
+  const match = (req.header('Authorization') || '').match(/^Bearer\s+(.+)$/i);
+  return match ? match[1].trim() : '';
+}
+
+/** Resuelve el usuario y su membresia de organizacion a partir de un token de Supabase. */
+async function resolveSessionUser(accessToken: string): Promise<{ user: any; role: string; organizationId: string } | null> {
+  const { data: userData, error: userError } = await supabaseServer.auth.getUser(accessToken);
+  if (userError || !userData?.user) return null;
+
+  const userSupabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false },
+    global: { headers: { Authorization: `Bearer ${accessToken}` } }
+  });
+  const { data: membership } = await userSupabase
+    .from('organization_members')
+    .select('organization_id, role')
+    .eq('user_id', userData.user.id)
+    .order('created_at', { ascending: true })
+    .limit(1)
+    .maybeSingle();
+
+  return {
+    user: userData.user,
+    role: membership?.role || 'admin',
+    organizationId: membership?.organization_id || '00000000-0000-0000-0000-000000000001'
+  };
+}
+
 async function authenticateSupabaseRequest(
   req: Request,
   res: AuthenticatedResponse,
   next: NextFunction
 ): Promise<void> {
-  if (!isSupabaseConfigured) {
-    res.status(503).json({ success: false, error: 'La conexión con Supabase no está configurada.' });
+  const session = await resolveRequestSession(req, res);
+  if (!session) {
+    res.status(401).json({
+      success: false,
+      error: 'SesiÃ³n requerida. Inicia sesiÃ³n para acceder a esta informaciÃ³n.'
+    });
     return;
   }
 
-  const match = (req.header('Authorization') || '').match(/^Bearer\s+(.+)$/i);
-  if (!match) {
-    res.locals.supabaseContext = {
-      accessToken: SUPABASE_ANON_KEY,
-      organizationId: '00000000-0000-0000-0000-000000000001',
-      role: 'admin'
-    };
-    next();
-    return;
-  }
+  applySessionContext(res, session);
+  next();
+}
 
-  try {
-    const accessToken = match[1];
-    const { data: userData, error: userError } = await supabaseServer.auth.getUser(accessToken);
-    if (userError || !userData?.user) {
-      // Fallback transparente al contexto de la organización activa
-      res.locals.supabaseContext = {
-        accessToken: SUPABASE_ANON_KEY,
-        organizationId: '00000000-0000-0000-0000-000000000001',
-        role: 'admin'
-      };
+/** Middleware de solo lectura/escritura: permite pasar los metodos no indicados. */
+function requireAuthForMethods(methods: string[]) {
+  return (req: Request, res: AuthenticatedResponse, next: NextFunction): void => {
+    if (!methods.includes(req.method)) {
       next();
       return;
     }
-
-    const userSupabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-      auth: { persistSession: false, autoRefreshToken: false },
-      global: { headers: { Authorization: `Bearer ${accessToken}` } }
-    });
-    const { data: membership } = await userSupabase
-      .from('organization_members')
-      .select('organization_id, role')
-      .eq('user_id', userData.user.id)
-      .order('created_at', { ascending: true })
-      .limit(1)
-      .maybeSingle();
-
-    const orgId = membership?.organization_id || '00000000-0000-0000-0000-000000000001';
-
-    res.locals.supabaseContext = {
-      accessToken,
-      organizationId: orgId,
-      role: membership?.role || 'admin'
-    };
-    next();
-  } catch (error) {
-    console.warn('Aviso en validación de sesión (aplicando contexto por defecto):', error);
-    res.locals.supabaseContext = {
-      accessToken: SUPABASE_ANON_KEY,
-      organizationId: '00000000-0000-0000-0000-000000000001',
-      role: 'admin'
-    };
-    next();
-  }
+    authenticateSupabaseRequest(req, res, next);
+  };
 }
 
 app.use([
@@ -212,6 +474,12 @@ app.use([
   '/api/expenses',
   '/api/expense-categories'
 ], authenticateSupabaseRequest);
+
+// Lectura y actualizacion de pedidos quedan protegidas; el POST sigue publico
+// porque es el canal de compra de la tienda web.
+app.use('/api/orders', requireAuthForMethods(['GET', 'PUT', 'PATCH', 'DELETE']));
+app.use('/api/users', requireAuthForMethods(['GET', 'PUT', 'PATCH', 'DELETE']));
+app.use('/api/inventory-movements', requireAuthForMethods(['GET', 'PUT', 'PATCH', 'DELETE']));
 
 // HTTPS Agent for BCV
 const bcvHttpsAgent = new https.Agent({
@@ -335,7 +603,7 @@ app.get('/api/bcv/rates', async (req, res) => {
   let eurRate = 0;
   let valueDate = timeInfo.todayCaracasStr;
   let source: 'BCV_DIRECT' | 'DOLAR_API_FALLBACK' | 'MANUAL' = 'BCV_DIRECT';
-  let sourceDetails = 'Extracción directa portal oficial BCV';
+  let sourceDetails = 'ExtracciÃ³n directa portal oficial BCV';
 
   let bcvSuccess = false;
   try {
@@ -377,7 +645,7 @@ app.get('/api/bcv/rates', async (req, res) => {
   if (!bcvSuccess) {
     try {
       source = 'DOLAR_API_FALLBACK';
-      sourceDetails = 'Fallback automático ve.dolarapi.com/v1/dolares/oficial';
+      sourceDetails = 'Fallback automÃ¡tico ve.dolarapi.com/v1/dolares/oficial';
 
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 5000);
@@ -406,13 +674,13 @@ app.get('/api/bcv/rates', async (req, res) => {
       if (lastCertifiedRate && lastCertifiedRate.source !== 'MANUAL') {
         return res.json({
           ...lastCertifiedRate,
-          sourceDetails: 'Última tasa externa certificada disponible en caché',
+          sourceDetails: 'Ãšltima tasa externa certificada disponible en cachÃ©',
           checkedAt: new Date().toISOString()
         });
       }
       return res.status(503).json({
         success: false,
-        error: 'No hay una tasa BCV disponible. Intenta de nuevo cuando el servicio esté accesible.'
+        error: 'No hay una tasa BCV disponible. Intenta de nuevo cuando el servicio estÃ© accesible.'
       });
     }
   }
@@ -421,13 +689,13 @@ app.get('/api/bcv/rates', async (req, res) => {
     if (lastCertifiedRate && lastCertifiedRate.source !== 'MANUAL') {
       return res.json({
         ...lastCertifiedRate,
-        sourceDetails: 'Última tasa externa certificada disponible en caché',
+        sourceDetails: 'Ãšltima tasa externa certificada disponible en cachÃ©',
         checkedAt: new Date().toISOString()
       });
     }
     return res.status(503).json({
       success: false,
-      error: 'El servicio de tasas no devolvió un valor válido.'
+      error: 'El servicio de tasas no devolviÃ³ un valor vÃ¡lido.'
     });
   }
 
@@ -490,11 +758,13 @@ app.get('/api/exchange-rates/history', async (_req, res: AuthenticatedResponse) 
       `exchange_rates?organization_id=eq.${encodeURIComponent(res.locals.supabaseContext!.organizationId)}&select=*&order=created_at.desc&limit=30`
     );
     if (result.error) {
-      return res.status(result.status).json({ success: false, error: result.error });
+      const local = localExchangeRateHistory.load(res.locals.supabaseContext!.organizationId);
+      return res.json({ success: true, data: local, source: 'local' });
     }
     return res.json({ success: true, data: result.data || [] });
   } catch {
-    return res.status(500).json({ success: false, error: 'Error cargando el historial de tasas.' });
+    const local = localExchangeRateHistory.load(res.locals.supabaseContext!.organizationId);
+    return res.json({ success: true, data: local, source: 'local' });
   }
 });
 
@@ -507,19 +777,19 @@ app.post('/api/bcv/rates/manual', async (req, res: AuthenticatedResponse) => {
 
   if (!role || !['admin', 'superadmin', 'gerente', 'gerente general', 'manager', 'owner'].includes(role)) {
     return res.status(403).json({
-      error: 'Acción restringida: La intervención manual de tasas requiere privilegios de Administrador.'
+      error: 'AcciÃ³n restringida: La intervenciÃ³n manual de tasas requiere privilegios de Administrador.'
     });
   }
 
   const numCurrent = parseFloat(rate);
   if (!numCurrent || numCurrent <= 0) {
-    return res.status(400).json({ error: 'La tasa manual ingresada debe ser un número positivo válido.' });
+    return res.status(400).json({ error: 'La tasa manual ingresada debe ser un nÃºmero positivo vÃ¡lido.' });
   }
 
   const numFuture = manualFutureRate ? parseFloat(manualFutureRate) : null;
   const timeInfo = getCaracasTimeInfo();
 
-  // Rule: Si existe una tasa futura es la que se grabará, de lo contrario se queda con la tasa actual
+  // Rule: Si existe una tasa futura es la que se grabarÃ¡, de lo contrario se queda con la tasa actual
   let appliedRate = numCurrent;
   let isFutureApplied = false;
 
@@ -673,6 +943,65 @@ function supabaseRestRequest(
   });
 }
 
+/**
+ * Llamada directa a la API de autenticacion de Supabase usando la credencial
+ * que solo existe en el servidor. El navegador nunca la ve.
+ */
+function supabaseAuthRequest(
+  endpoint: string,
+  body: any,
+  method: 'POST' | 'GET' = 'POST'
+): Promise<{ status: number; data: any; error?: string }> {
+  return new Promise((resolve) => {
+    const url = new URL(`${SUPABASE_URL}/auth/v1/${endpoint.replace(/^\//, '')}`);
+    const bodyStr = body ? JSON.stringify(body) : null;
+    const headers: Record<string, string> = {
+      'apikey': SUPABASE_ANON_KEY,
+      'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+      'Accept': 'application/json'
+    };
+
+    if (bodyStr) {
+      headers['Content-Type'] = 'application/json';
+      headers['Content-Length'] = Buffer.byteLength(bodyStr).toString();
+    }
+
+    const req = https.request(url, { method, headers, timeout: 15000 }, (res) => {
+      let raw = '';
+      res.on('data', (c) => (raw += c));
+      res.on('end', () => {
+        let parsed: any = null;
+        try {
+          parsed = raw ? JSON.parse(raw) : null;
+        } catch {
+          parsed = raw;
+        }
+
+        if (res.statusCode && res.statusCode >= 400) {
+          const message =
+            (parsed && typeof parsed === 'object' && (parsed.error_description || parsed.msg || parsed.message || parsed.error)) ||
+            `HTTP ${res.statusCode}`;
+          resolve({ status: res.statusCode, data: parsed, error: message });
+        } else {
+          resolve({ status: res.statusCode || 200, data: parsed });
+        }
+      });
+    });
+
+    req.on('timeout', () => {
+      req.destroy();
+      resolve({ status: 504, data: null, error: 'Tiempo de espera agotado con el servicio de autenticacion.' });
+    });
+
+    req.on('error', (err) => {
+      resolve({ status: 500, data: null, error: err.message });
+    });
+
+    if (bodyStr) req.write(bodyStr);
+    req.end();
+  });
+}
+
 function authenticatedSupabaseRestRequest(
   res: AuthenticatedResponse,
   endpoint: string,
@@ -691,11 +1020,11 @@ function authenticatedSupabaseRestRequest(
     const rows = Array.isArray(body) ? body : [body];
     for (const row of rows) {
       if (!row || typeof row !== 'object') {
-        return Promise.resolve({ status: 400, data: null, error: 'El cuerpo de la solicitud no es válido.' });
+        return Promise.resolve({ status: 400, data: null, error: 'El cuerpo de la solicitud no es vÃ¡lido.' });
       }
       const rowOrgId = (row as { organization_id?: string }).organization_id;
       if (rowOrgId && rowOrgId !== context.organizationId) {
-        return Promise.resolve({ status: 403, data: null, error: 'No puede modificar datos de otra organización.' });
+        return Promise.resolve({ status: 403, data: null, error: 'No puede modificar datos de otra organizaciÃ³n.' });
       }
       (row as { organization_id?: string }).organization_id = context.organizationId;
     }
@@ -713,7 +1042,7 @@ const DEFAULT_CATALOG_PRODUCTS = [
     name: 'Amortiguador Delantero Reforzado Gas',
     category: 'Repuestos',
     brand: 'Monroe',
-    description: 'Amortiguador delantero presurizado con nitrógeno de alta durabilidad para vías venezolanas.',
+    description: 'Amortiguador delantero presurizado con nitrÃ³geno de alta durabilidad para vÃ­as venezolanas.',
     unit: 'UND',
     cost_usd: 25.15,
     price_usd: 35.00,
@@ -725,10 +1054,10 @@ const DEFAULT_CATALOG_PRODUCTS = [
     id: '6f0de534-ca1e-4981-a070-55443e2f5290',
     sku: 'BAT-0002',
     barcode: '7591001000229',
-    name: 'Batería Automotriz 12V 800AMP Libre Mantenimiento',
+    name: 'BaterÃ­a Automotriz 12V 800AMP Libre Mantenimiento',
     category: 'Electricidad',
     brand: 'Duncan',
-    description: 'Batería sellada de alta capacidad de arranque en frío 800AMP con garantía nacional.',
+    description: 'BaterÃ­a sellada de alta capacidad de arranque en frÃ­o 800AMP con garantÃ­a nacional.',
     unit: 'UND',
     cost_usd: 72.00,
     price_usd: 95.00,
@@ -740,10 +1069,10 @@ const DEFAULT_CATALOG_PRODUCTS = [
     id: '7a1ef645-db2f-4a92-b181-66554f306301',
     sku: 'LUB-0003',
     barcode: '7591001000336',
-    name: 'Aceite de Motor Sintético 20W50 1 Galón',
+    name: 'Aceite de Motor SintÃ©tico 20W50 1 GalÃ³n',
     category: 'Lubricantes',
     brand: 'Castrol',
-    description: 'Lubricante sintético con aditivos antidesgaste para máxima protección térmica y antifricción.',
+    description: 'Lubricante sintÃ©tico con aditivos antidesgaste para mÃ¡xima protecciÃ³n tÃ©rmica y antifricciÃ³n.',
     unit: 'GLN',
     cost_usd: 8.50,
     price_usd: 12.00,
@@ -755,10 +1084,10 @@ const DEFAULT_CATALOG_PRODUCTS = [
     id: '8b2fa756-ec30-4b03-c292-776650417412',
     sku: 'FRE-0004',
     barcode: '7591001000443',
-    name: 'Pastillas de Freno Cerámica Delanteras',
+    name: 'Pastillas de Freno CerÃ¡mica Delanteras',
     category: 'Frenos',
     brand: 'Wagner',
-    description: 'Juego de pastillas cerámicas de bajo desprendimiento de polvo y frenado suave sin chirridos.',
+    description: 'Juego de pastillas cerÃ¡micas de bajo desprendimiento de polvo y frenado suave sin chirridos.',
     unit: 'JGO',
     cost_usd: 19.00,
     price_usd: 28.00,
@@ -773,7 +1102,7 @@ const DEFAULT_CATALOG_PRODUCTS = [
     name: 'Filtro de Aire Alto Rendimiento Flujo Directo',
     category: 'Filtros',
     brand: 'K&N',
-    description: 'Filtro de aire de algodón de alta permeabilidad lavable y de flujo óptimo.',
+    description: 'Filtro de aire de algodÃ³n de alta permeabilidad lavable y de flujo Ã³ptimo.',
     unit: 'UND',
     cost_usd: 9.80,
     price_usd: 15.00,
@@ -785,10 +1114,10 @@ const DEFAULT_CATALOG_PRODUCTS = [
     id: '0d41c978-0e52-4d25-e4b4-998872639634',
     sku: 'BUJ-0006',
     barcode: '7591001000667',
-    name: 'Bujías de Iridio Punta Platino (Pack x4)',
+    name: 'BujÃ­as de Iridio Punta Platino (Pack x4)',
     category: 'Encendido',
     brand: 'NGK',
-    description: 'Juego de 4 bujías láser con electrodo central de iridio para encendido instantáneo.',
+    description: 'Juego de 4 bujÃ­as lÃ¡ser con electrodo central de iridio para encendido instantÃ¡neo.',
     unit: 'PACK',
     cost_usd: 16.50,
     price_usd: 24.00,
@@ -800,10 +1129,10 @@ const DEFAULT_CATALOG_PRODUCTS = [
     id: '1e52da89-1f63-4e36-f5c5-0a998374a745',
     sku: 'LMP-0007',
     barcode: '7591001000774',
-    name: 'Bombillo LED H4 Alta y Baja 6000K Blanco Frío',
-    category: 'Iluminación',
+    name: 'Bombillo LED H4 Alta y Baja 6000K Blanco FrÃ­o',
+    category: 'IluminaciÃ³n',
     brand: 'Philips',
-    description: 'Kit de 2 bombillos LED de alta intensidad 12.000 lúmenes con disipador pasivo.',
+    description: 'Kit de 2 bombillos LED de alta intensidad 12.000 lÃºmenes con disipador pasivo.',
     unit: 'PAR',
     cost_usd: 11.20,
     price_usd: 18.00,
@@ -815,10 +1144,10 @@ const DEFAULT_CATALOG_PRODUCTS = [
     id: '2f63eb90-2074-4f47-06d6-1ba09485b856',
     sku: 'COR-0008',
     barcode: '7591001000881',
-    name: 'Correa de Distribución Reforzada HNBR',
+    name: 'Correa de DistribuciÃ³n Reforzada HNBR',
     category: 'Motor',
     brand: 'Gates',
-    description: 'Correa dentada de caucho sintético reforzado resistente a altas temperaturas y aceites.',
+    description: 'Correa dentada de caucho sintÃ©tico reforzado resistente a altas temperaturas y aceites.',
     unit: 'UND',
     cost_usd: 14.00,
     price_usd: 22.00,
@@ -830,10 +1159,10 @@ const DEFAULT_CATALOG_PRODUCTS = [
     id: '3a74fc01-3185-4058-17e7-2cb10596c967',
     sku: 'REF-0009',
     barcode: '7591001000998',
-    name: 'Refrigerante Anticorrosivo 50/50 1 Galón Verde',
+    name: 'Refrigerante Anticorrosivo 50/50 1 GalÃ³n Verde',
     category: 'Lubricantes',
     brand: 'Prestone',
-    description: 'Líquido refrigerante y anticongelante formulado para evitar corrosión y cavitación de bomba.',
+    description: 'LÃ­quido refrigerante y anticongelante formulado para evitar corrosiÃ³n y cavitaciÃ³n de bomba.',
     unit: 'GLN',
     cost_usd: 9.50,
     price_usd: 14.50,
@@ -848,7 +1177,7 @@ const DEFAULT_CATALOG_PRODUCTS = [
     name: 'Disco de Freno Ventilado Delantero',
     category: 'Frenos',
     brand: 'Brembo',
-    description: 'Rotor de disco de freno en hierro fundido tratado contra deformaciones térmicas.',
+    description: 'Rotor de disco de freno en hierro fundido tratado contra deformaciones tÃ©rmicas.',
     unit: 'UND',
     cost_usd: 28.00,
     price_usd: 42.00,
@@ -877,7 +1206,7 @@ app.get('/api/products', async (req, res: AuthenticatedResponse) => {
       return res.json({ success: true, data: Array.from(map.values()) });
     }
 
-    // Fallback resiliente si la tabla está vacía o inaccesible sin sesión
+    // Fallback resiliente si la tabla estÃ¡ vacÃ­a o inaccesible sin sesiÃ³n
     return res.json({ success: true, data: DEFAULT_CATALOG_PRODUCTS });
   } catch (err: any) {
     return res.status(200).json({ success: true, data: DEFAULT_CATALOG_PRODUCTS });
@@ -907,7 +1236,7 @@ app.post('/api/products', authenticateSupabaseRequest, async (req, res) => {
     const rawProduct = req.body || {};
     let productPayload: Record<string, any> = { ...rawProduct };
 
-    // Sanitizar branch_id si no es UUID válido
+    // Sanitizar branch_id si no es UUID vÃ¡lido
     const isValidUuid = (val?: string | null) => typeof val === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val);
     if (productPayload.branch_id && !isValidUuid(productPayload.branch_id)) {
       delete productPayload.branch_id;
@@ -1018,11 +1347,13 @@ app.delete('/api/products/:sku', authenticateSupabaseRequest, async (req, res) =
     });
 
     if (result.error) {
-      return res.status(200).json({ success: false, error: result.error });
+      const local = localQuotes.load(orgId);
+      return res.status(200).json({ success: true, data: local, source: 'local' });
     }
-    return res.json({ success: true, data: result.data });
+    return res.json({ success: true, data: result.data || [] });
   } catch (err: any) {
-    return res.status(200).json({ success: false, error: err?.message });
+    const local = localQuotes.load(res.locals.supabaseContext?.organizationId);
+    return res.status(200).json({ success: true, data: local, source: 'local' });
   }
 });
 
@@ -1153,7 +1484,7 @@ function savePersistedAdjustment(adjustment: any) {
 app.get('/api/inventory/movements', async (req, res) => {
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
   try {
-    // Resolver orgId y token (ya sea desde sesión de usuario o entorno predeterminado)
+    // Resolver orgId y token (ya sea desde sesiÃ³n de usuario o entorno predeterminado)
     let orgId = (res as AuthenticatedResponse).locals?.supabaseContext?.organizationId;
     let token = (res as AuthenticatedResponse).locals?.supabaseContext?.accessToken;
 
@@ -1209,11 +1540,11 @@ app.get('/api/inventory/movements', async (req, res) => {
       rawMovements = [];
     }
 
-    // Cargar ajustes históricos y persistentes locales
+    // Cargar ajustes histÃ³ricos y persistentes locales
     const persistedAdjustments = loadPersistedAdjustments(orgId);
     const loggedKeys = new Set(rawMovements.map((m: any) => `${m.doc_number}-${m.sku}`));
     
-    // Integrar ajustes persistentes que no estén ya en la tabla de Supabase
+    // Integrar ajustes persistentes que no estÃ©n ya en la tabla de Supabase
     for (const adj of persistedAdjustments) {
       const key = `${adj.doc_number}-${adj.sku}`;
       if (!loggedKeys.has(key)) {
@@ -1224,7 +1555,7 @@ app.get('/api/inventory/movements', async (req, res) => {
 
     const loggedDocKeys = new Set(rawMovements.map((m: any) => `${m.doc_number}-${m.sku}`));
 
-    // 2. Consultar ventas reales para integrar sus líneas al kárdex si no están registradas
+    // 2. Consultar ventas reales para integrar sus lÃ­neas al kÃ¡rdex si no estÃ¡n registradas
     const salesRes = await queryDb(
       `sales?organization_id=eq.${encodeURIComponent(orgId)}&status=eq.COMPLETADA&select=id,doc_number,doc_type,created_at,exchange_rate,customers(id,name),sale_items(*)&order=created_at.desc&limit=250`
     );
@@ -1264,7 +1595,7 @@ app.get('/api/inventory/movements', async (req, res) => {
       }
     }
 
-    // 3. Consultar compras reales para integrar sus líneas al kárdex si no están registradas
+    // 3. Consultar compras reales para integrar sus lÃ­neas al kÃ¡rdex si no estÃ¡n registradas
     const purchasesRes = await queryDb(
       `purchases?organization_id=eq.${encodeURIComponent(orgId)}&status=eq.COMPLETADA&select=id,doc_number,invoice_number,purchase_date,created_at,exchange_rate,suppliers(id,name),purchase_items(*)&order=created_at.desc&limit=250`
     );
@@ -1304,7 +1635,7 @@ app.get('/api/inventory/movements', async (req, res) => {
       }
     }
 
-    // 4. Unificar y ordenar cronológicamente
+    // 4. Unificar y ordenar cronolÃ³gicamente
     const allMovements = [...rawMovements, ...syntheticSalesMovements, ...syntheticPurchasesMovements].sort((a, b) => {
       const timeA = new Date(a.created_at).getTime() || 0;
       const timeB = new Date(b.created_at).getTime() || 0;
@@ -1382,7 +1713,7 @@ app.post('/api/inventory/adjustments', async (req, res) => {
     );
 
     if (prodRes.error || !Array.isArray(prodRes.data) || prodRes.data.length === 0) {
-      return res.status(404).json({ success: false, error: `Producto con código ${sku} no encontrado en catálogo.` });
+      return res.status(404).json({ success: false, error: `Producto con cÃ³digo ${sku} no encontrado en catÃ¡logo.` });
     }
 
     const product = prodRes.data[0];
@@ -1570,6 +1901,15 @@ app.get('/api/orders', async (req, res) => {
 });
 
 app.post('/api/orders', async (req, res) => {
+  // Compra publica: cualquiera puede comprar, pero no se permite inundar el endpoint.
+  const orderLimit = checkRateLimit(`orders:${getClientIp(req)}`, 10, 60 * 60_000);
+  if (!orderLimit.allowed) {
+    return res.status(429).json({
+      success: false,
+      error: `Has alcanzado el lÃ­mite de pedidos por hora. Espera ${orderLimit.retryAfterSeconds} segundos.`
+    });
+  }
+
   try {
     const {
       customer_name,
@@ -1600,7 +1940,7 @@ app.post('/api/orders', async (req, res) => {
 
     const effectiveRate = Number(exchange_rate) || lastCertifiedRate?.appliedRate || 877.90;
 
-    // 0. Validación previa de existencia en inventario (bloquear stock insuficiente o negativo)
+    // 0. ValidaciÃ³n previa de existencia en inventario (bloquear stock insuficiente o negativo)
     for (const rawItem of items) {
       const itemSku = rawItem.sku;
       const reqQty = Math.max(1, Number(rawItem.quantity) || 1);
@@ -1735,7 +2075,7 @@ app.post('/api/orders', async (req, res) => {
               body: movementData
             });
           } catch {
-            // Guardar en respaldo persistente local si tabla aún no existe en Supabase
+            // Guardar en respaldo persistente local si tabla aÃºn no existe en Supabase
             savePersistedAdjustment({ ...movementData, id: `mov-order-${it.sku}-${orderId}` });
           }
         }
@@ -1744,7 +2084,7 @@ app.post('/api/orders', async (req, res) => {
       }
     }
 
-    // 3. Intentar inserción en Supabase si la tabla orders existe
+    // 3. Intentar inserciÃ³n en Supabase si la tabla orders existe
     try {
       const sbOrderPayload = {
         id: orderId,
@@ -1808,7 +2148,7 @@ app.patch('/api/orders/:id/delivery-status', async (req, res) => {
     const { status, user = 'Operador', notes } = req.body || {};
     const validStatuses = ['RECIBIDO', 'PREPARADO', 'LISTO_PARA_ENTREGAR', 'EN_CAMINO', 'ENTREGADO', 'CANCELADO'];
     if (!status || !validStatuses.includes(status)) {
-      return res.status(400).json({ success: false, error: 'Estado de entrega no válido.' });
+      return res.status(400).json({ success: false, error: 'Estado de entrega no vÃ¡lido.' });
     }
 
     const currentOrders = loadPersistedOrders();
@@ -1820,7 +2160,7 @@ app.patch('/api/orders/:id/delivery-status', async (req, res) => {
     const order = currentOrders[orderIdx];
     const prevStatus = order.delivery_status;
 
-    // Reglas de transición de estado
+    // Reglas de transiciÃ³n de estado
     if (prevStatus === 'CANCELADO' && status !== 'CANCELADO') {
       return res.status(400).json({ success: false, error: 'Un pedido cancelado no puede reactivarse directamente.' });
     }
@@ -1838,7 +2178,7 @@ app.patch('/api/orders/:id/delivery-status', async (req, res) => {
     const auditEntry = {
       timestamp: nowIso,
       action: 'CAMBIO_ESTADO_ENTREGA',
-      description: `Estado de entrega actualizado: ${prevStatus} → ${status}${notes ? ` (${notes})` : ''}`,
+      description: `Estado de entrega actualizado: ${prevStatus} â†’ ${status}${notes ? ` (${notes})` : ''}`,
       user: String(user)
     };
     if (!Array.isArray(order.activity_history)) order.activity_history = [];
@@ -1846,7 +2186,7 @@ app.patch('/api/orders/:id/delivery-status', async (req, res) => {
 
     savePersistedOrder(order);
 
-    // Intentar actualizar en Supabase si está disponible
+    // Intentar actualizar en Supabase si estÃ¡ disponible
     try {
       await supabaseRestRequest(`orders?id=eq.${encodeURIComponent(order.id)}`, {
         method: 'PATCH',
@@ -1873,7 +2213,7 @@ app.patch('/api/orders/:id/payment-status', async (req, res) => {
     const { status, user = 'Operador', reference } = req.body || {};
     const validStatuses = ['PENDIENTE', 'PAGADO', 'REEMBOLSADO'];
     if (!status || !validStatuses.includes(status)) {
-      return res.status(400).json({ success: false, error: 'Estado de pago no válido.' });
+      return res.status(400).json({ success: false, error: 'Estado de pago no vÃ¡lido.' });
     }
 
     const currentOrders = loadPersistedOrders();
@@ -1893,7 +2233,7 @@ app.patch('/api/orders/:id/payment-status', async (req, res) => {
     const auditEntry = {
       timestamp: nowIso,
       action: 'CAMBIO_ESTADO_PAGO',
-      description: `Estado del pago actualizado: ${prevStatus} → ${status}${reference ? ` (Ref: ${reference})` : ''}`,
+      description: `Estado del pago actualizado: ${prevStatus} â†’ ${status}${reference ? ` (Ref: ${reference})` : ''}`,
       user: String(user)
     };
     if (!Array.isArray(order.activity_history)) order.activity_history = [];
@@ -1922,6 +2262,19 @@ app.patch('/api/orders/:id/payment-status', async (req, res) => {
   }
 });
 
+app.get('/api/public/organization', async (_req, res) => {
+  let organizationId = '00000000-0000-0000-0000-000000000001';
+
+  if (isSupabaseConfigured) {
+    const result = await supabaseRestRequest('organizations?select=id&limit=1');
+    if (!result.error && Array.isArray(result.data) && result.data[0]?.id) {
+      organizationId = result.data[0].id;
+    }
+  }
+
+  res.json({ success: true, data: { organizationId } });
+});
+
 app.get('/api/public/config', async (_req, res) => {
   const effectiveRate = lastCertifiedRate?.appliedRate || 877.90;
   const rateDate = lastCertifiedRate?.valueDate || 'Hoy';
@@ -1940,29 +2293,100 @@ app.get('/api/public/config', async (_req, res) => {
       bcvRateDate: rateDate,
       branches: [
         { id: 'suc-01', name: 'Sede Principal - Despacho Central', address: 'Av. Francisco de Miranda, Caracas' },
-        { id: 'suc-02', name: 'Sucursal Chacao', address: 'Calle Bolívar, Chacao' },
-        { id: 'suc-03', name: 'Almacén Los Ruices', address: 'Zona Industrial Los Ruices' }
+        { id: 'suc-02', name: 'Sucursal Chacao', address: 'Calle BolÃ­var, Chacao' },
+        { id: 'suc-03', name: 'AlmacÃ©n Los Ruices', address: 'Zona Industrial Los Ruices' }
       ]
     }
   });
 });
 
 // ---------------------------------------------------------------------------
+// PERSISTENCIA LOCAL GENERICA
+// Respaldo en disco de las colecciones que todavia no tienen archivo propio.
+// Permite operar el ERP aunque Supabase no este disponible.
+// ---------------------------------------------------------------------------
+interface LocalCollection {
+  file: string;
+  load(orgId?: string): any[];
+  save(items: any[]): void;
+  upsert(item: any, matchKeys: string[]): any;
+  remove(predicate: (row: any) => boolean): void;
+}
+
+function createLocalCollection(fileName: string): LocalCollection {
+  const file = path.resolve(process.cwd(), 'data', fileName);
+
+  const readAll = (): any[] => {
+    try {
+      if (fs.existsSync(file)) {
+        const list = JSON.parse(fs.readFileSync(file, 'utf-8'));
+        if (Array.isArray(list)) return list;
+      }
+    } catch (err) {
+      console.warn(`Aviso cargando ${fileName}:`, err);
+    }
+    return [];
+  };
+
+  const writeAll = (items: any[]) => {
+    try {
+      const dir = path.dirname(file);
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(file, JSON.stringify(items, null, 2), 'utf-8');
+    } catch (err) {
+      console.warn(`Aviso guardando ${fileName}:`, err);
+    }
+  };
+
+  return {
+    file,
+    load(orgId?: string) {
+      const list = readAll();
+      if (!orgId) return list;
+      return list.filter((row: any) => !row.organization_id || row.organization_id === orgId);
+    },
+    save: writeAll,
+    upsert(item: any, matchKeys: string[]) {
+      const list = readAll();
+      const idx = list.findIndex((row: any) =>
+        matchKeys.some((key) => row[key] !== undefined && row[key] === item[key])
+      );
+      if (idx >= 0) list[idx] = { ...list[idx], ...item };
+      else list.unshift(item);
+      writeAll(list);
+      return item;
+    },
+    remove(predicate: (row: any) => boolean) {
+      writeAll(readAll().filter((row: any) => !predicate(row)));
+    }
+  };
+}
+
+const localCustomers = createLocalCollection('customers.json');
+const localSales = createLocalCollection('sales.json');
+const localQuotes = createLocalCollection('quotes.json');
+const localExpenses = createLocalCollection('expenses.json');
+const localExpenseCategories = createLocalCollection('expense_categories.json');
+const localExchangeRateHistory = createLocalCollection('exchange_rate_history.json');
+
+// ---------------------------------------------------------------------------
 // 5. CUSTOMERS BACKEND PROXY
 // ---------------------------------------------------------------------------
-app.get('/api/customers', async (_req, res) => {
+app.get('/api/customers', async (_req, res: AuthenticatedResponse) => {
   try {
     const result = await authenticatedSupabaseRestRequest(res, 'customers?select=*&order=name.asc');
     if (result.error) {
-      return res.status(200).json({ success: false, error: result.error, data: [] });
+      const local = localCustomers.load(res.locals.supabaseContext?.organizationId);
+      return res.status(200).json({ success: true, data: local, source: 'local' });
     }
     return res.json({ success: true, data: result.data || [] });
   } catch (err: any) {
-    return res.status(200).json({ success: false, error: err?.message, data: [] });
+    const local = localCustomers.load(res.locals.supabaseContext?.organizationId);
+    return res.status(200).json({ success: true, data: local, source: 'local' });
   }
 });
 
-app.post('/api/customers', async (req, res) => {
+app.post('/api/customers', async (req, res: AuthenticatedResponse) => {
   try {
     const customer = req.body;
     const result = await authenticatedSupabaseRestRequest(res, 'customers', {
@@ -1972,7 +2396,11 @@ app.post('/api/customers', async (req, res) => {
     });
 
     if (result.error) {
-      return res.status(200).json({ success: false, error: result.error });
+      const saved = localCustomers.upsert(
+        { ...customer, organization_id: customer.organization_id || res.locals.supabaseContext?.organizationId },
+        ['id', 'code']
+      );
+      return res.json({ success: true, data: saved, source: 'local' });
     }
 
     const created = Array.isArray(result.data) ? result.data[0] : result.data;
@@ -1982,16 +2410,55 @@ app.post('/api/customers', async (req, res) => {
   }
 });
 
+app.patch('/api/customers/:id', async (req, res: AuthenticatedResponse) => {
+  try {
+    const customerId = req.params.id;
+    const result = await authenticatedSupabaseRestRequest(res, `customers?id=eq.${encodeURIComponent(customerId)}`, {
+      method: 'PATCH',
+      headers: { 'Prefer': 'return=representation' },
+      body: req.body
+    });
+
+    if (result.error) {
+      const saved = localCustomers.upsert({ ...req.body, id: customerId }, ['id']);
+      return res.json({ success: true, data: saved, source: 'local' });
+    }
+
+    const updated = Array.isArray(result.data) ? result.data[0] : result.data;
+    return res.json({ success: true, data: updated });
+  } catch (err: any) {
+    return res.status(200).json({ success: false, error: err?.message || 'Error en servidor' });
+  }
+});
+
+app.delete('/api/customers/:id', async (req, res: AuthenticatedResponse) => {
+  try {
+    const customerId = req.params.id;
+    const result = await authenticatedSupabaseRestRequest(res, `customers?id=eq.${encodeURIComponent(customerId)}`, {
+      method: 'DELETE'
+    });
+
+    if (result.error) {
+      localCustomers.remove((row: any) => row.id === customerId);
+      return res.json({ success: true, source: 'local' });
+    }
+
+    return res.json({ success: true });
+  } catch (err: any) {
+    return res.status(200).json({ success: false, error: err?.message || 'Error en servidor' });
+  }
+});
+
 app.get('/api/quotes', async (_req, res: AuthenticatedResponse) => {
   try {
     const orgId = res.locals.supabaseContext!.organizationId;
-    // 1. Intentar consulta completa con columnas de ciclo de vida (migración 0011)
+    // 1. Intentar consulta completa con columnas de ciclo de vida (migraciÃ³n 0011)
     let result = await authenticatedSupabaseRestRequest(
       res,
       `sales?organization_id=eq.${encodeURIComponent(orgId)}&doc_type=eq.COTIZACION&select=id,organization_id,customer_id,doc_number,status,payment_type,exchange_rate,subtotal_usd,total_usd,total_ves,notes,quote_status,expires_at,converted_to_sale_id,created_at,customers(id,name,phone,doc_type,doc_number,email),sale_items(id,sku,name,quantity,unit_price_usd,total_usd,total_ves)&order=created_at.desc`
     );
 
-    // 2. Si la columna quote_status aún no existe en Supabase, reintentar sin las columnas opcionales
+    // 2. Si la columna quote_status aÃºn no existe en Supabase, reintentar sin las columnas opcionales
     if (
       result.error &&
       typeof result.error === 'string' &&
@@ -2030,7 +2497,7 @@ app.get('/api/quotes/migration-sql', (_req, res) => {
       res.setHeader('Content-Type', 'text/plain; charset=utf-8');
       return res.send(sql);
     }
-    return res.status(404).json({ success: false, error: 'Migración de cotizaciones no encontrada' });
+    return res.status(404).json({ success: false, error: 'MigraciÃ³n de cotizaciones no encontrada' });
   } catch (err: any) {
     return res.status(500).json({ success: false, error: err?.message });
   }
@@ -2042,14 +2509,14 @@ app.post('/api/quotes', async (req, res: AuthenticatedResponse) => {
     const { customerId, validityDays, notes, items, exchangeRate, rateSource, isFutureRate, rateValueDate } = req.body;
 
     if (!customerId || !Array.isArray(items) || items.length === 0) {
-      return res.status(400).json({ success: false, error: 'Datos de cotización incompletos (cliente e ítems requeridos).' });
+      return res.status(400).json({ success: false, error: 'Datos de cotizaciÃ³n incompletos (cliente e Ã­tems requeridos).' });
     }
 
     const rate = Number(exchangeRate) || 1;
     const subtotal = items.reduce((acc: number, it: any) => acc + (Number(it.quantity) || 1) * (Number(it.unit_price_usd) || 0), 0);
     const totalVes = Math.round(subtotal * rate * 100) / 100;
 
-    // Obtener siguiente correlativo de cotización
+    // Obtener siguiente correlativo de cotizaciÃ³n
     const latestSales = await authenticatedSupabaseRestRequest(
       res,
       `sales?organization_id=eq.${encodeURIComponent(orgId)}&doc_type=eq.COTIZACION&select=doc_number&order=created_at.desc&limit=1`
@@ -2087,7 +2554,7 @@ app.post('/api/quotes', async (req, res: AuthenticatedResponse) => {
       body: salePayload
     });
 
-    // Si falló por falta de la columna quote_status o expires_at, reintentar sin ellas
+    // Si fallÃ³ por falta de la columna quote_status o expires_at, reintentar sin ellas
     if (
       insertSale.error &&
       typeof insertSale.error === 'string' &&
@@ -2103,17 +2570,48 @@ app.post('/api/quotes', async (req, res: AuthenticatedResponse) => {
     }
 
     if (insertSale.error) {
-      return res.status(200).json({ success: false, error: insertSale.error });
+      // Respaldo local: la cotizacion queda registrada en disco.
+      const localId = `quote-${Date.now()}`;
+      const localItems = items.map((it: any) => {
+        const q = Math.max(1, Number(it.quantity) || 1);
+        const p = Math.max(0, Number(it.unit_price_usd) || 0);
+        return {
+          sale_id: localId,
+          sku: it.sku || null,
+          name: it.name || 'Producto',
+          quantity: q,
+          unit_price_usd: p,
+          total_usd: Math.round(p * q * 100) / 100,
+          total_ves: Math.round(p * q * rate * 100) / 100
+        };
+      });
+
+      const localQuote = {
+        ...salePayload,
+        id: localId,
+        doc_type: 'COTIZACION',
+        sale_items: localItems
+      };
+      localQuotes.upsert(localQuote, ['id']);
+      localSales.upsert(localQuote, ['id']);
+
+      return res.json({
+        success: true,
+        quoteId: localId,
+        docNumber,
+        source: 'local',
+        data: { ...localQuote, sale_items: localItems }
+      });
     }
 
     const createdSale = Array.isArray(insertSale.data) ? insertSale.data[0] : insertSale.data;
     const saleId = createdSale?.id;
 
     if (!saleId) {
-      return res.status(200).json({ success: false, error: 'No se obtuvo el identificador de la cotización generada.' });
+      return res.status(200).json({ success: false, error: 'No se obtuvo el identificador de la cotizaciÃ³n generada.' });
     }
 
-    // Insertar ítems en sale_items
+    // Insertar Ã­tems en sale_items
     const itemsPayload = items.map((it: any) => {
       const q = Math.max(1, Number(it.quantity) || 1);
       const p = Math.max(0, Number(it.unit_price_usd) || 0);
@@ -2145,7 +2643,156 @@ app.post('/api/quotes', async (req, res: AuthenticatedResponse) => {
       }
     });
   } catch (err: any) {
-    return res.status(500).json({ success: false, error: err?.message || 'Error en servidor registrando cotización.' });
+    return res.status(500).json({ success: false, error: err?.message || 'Error en servidor registrando cotizaciÃ³n.' });
+  }
+});
+
+// Actualizacion de una cotizacion (cabecera e items) resuelta por el servidor
+app.patch('/api/quotes/:id', async (req, res: AuthenticatedResponse) => {
+  try {
+    const quoteId = req.params.id;
+    const orgId = res.locals.supabaseContext?.organizationId || '00000000-0000-0000-0000-000000000001';
+    const { customerId, validityDays, notes, items, exchangeRate } = req.body || {};
+
+    if (!Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({ success: false, error: 'La cotizaciÃ³n debe tener al menos un Ã­tem.' });
+    }
+
+    const rate = Number(exchangeRate) || 1;
+    const subtotal = items.reduce((acc: number, it: any) => acc + (Number(it.quantity) || 1) * (Number(it.unit_price_usd) || 0), 0);
+    const totalVes = Math.round(subtotal * rate * 100) / 100;
+
+    const updateData: Record<string, any> = {
+      customer_id: customerId || null,
+      exchange_rate: rate,
+      subtotal_usd: subtotal,
+      total_usd: subtotal,
+      total_ves: totalVes,
+      notes: notes ? String(notes).trim() : null
+    };
+
+    if (validityDays) {
+      updateData.expires_at = new Date(Date.now() + Number(validityDays) * 86400000).toISOString();
+    }
+
+    const updated = await authenticatedSupabaseRestRequest(
+      res,
+      `sales?id=eq.${encodeURIComponent(quoteId)}&organization_id=eq.${encodeURIComponent(orgId)}`,
+      {
+        method: 'PATCH',
+        headers: { 'Prefer': 'return=representation' },
+        body: updateData
+      }
+    );
+
+    if (updated.error) {
+      const saved = localQuotes.upsert({ ...updateData, id: quoteId }, ['id']);
+      return res.json({ success: true, data: { id: quoteId, ...saved }, source: 'local' });
+    }
+
+    await authenticatedSupabaseRestRequest(res, `sale_items?sale_id=eq.${encodeURIComponent(quoteId)}`, {
+      method: 'DELETE'
+    });
+
+    const itemsPayload = items.map((it: any) => {
+      const q = Math.max(1, Number(it.quantity) || 1);
+      const p = Math.max(0, Number(it.unit_price_usd) || 0);
+      return {
+        sale_id: quoteId,
+        sku: it.sku || null,
+        name: it.name || 'Producto',
+        quantity: q,
+        unit_price_usd: p,
+        total_usd: Math.round(p * q * 100) / 100,
+        total_ves: Math.round(p * q * rate * 100) / 100
+      };
+    });
+
+    const insertItems = await authenticatedSupabaseRestRequest(res, 'sale_items', {
+      method: 'POST',
+      headers: { 'Prefer': 'return=representation' },
+      body: itemsPayload
+    });
+
+    return res.json({
+      success: true,
+      data: { id: quoteId, ...updateData, sale_items: insertItems.data || itemsPayload }
+    });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message || 'Error en servidor actualizando cotizaciÃ³n.' });
+  }
+});
+
+// Cambio de estado de una cotizacion (rechazar, aceptar, etc.)
+app.patch('/api/quotes/:id/status', async (req, res: AuthenticatedResponse) => {
+  try {
+    const quoteId = req.params.id;
+    const orgId = res.locals.supabaseContext?.organizationId || '00000000-0000-0000-0000-000000000001';
+    const { status } = req.body || {};
+
+    if (!status) {
+      return res.status(400).json({ success: false, error: 'Debe indicar el estado de la cotizaciÃ³n.' });
+    }
+
+    const updated = await authenticatedSupabaseRestRequest(
+      res,
+      `sales?id=eq.${encodeURIComponent(quoteId)}&organization_id=eq.${encodeURIComponent(orgId)}`,
+      {
+        method: 'PATCH',
+        headers: { 'Prefer': 'return=representation' },
+        body: { quote_status: String(status) }
+      }
+    );
+
+    if (updated.error) {
+      // Some projects do not expose quote_status: fall back to the sale status.
+      const fallback = await authenticatedSupabaseRestRequest(
+        res,
+        `sales?id=eq.${encodeURIComponent(quoteId)}&organization_id=eq.${encodeURIComponent(orgId)}`,
+        {
+          method: 'PATCH',
+          headers: { 'Prefer': 'return=representation' },
+          body: { status: String(status) === 'Rechazada' ? 'CANCELADA' : String(status) }
+        }
+      );
+      if (fallback.error) {
+        const saved = localQuotes.upsert({ quote_status: String(status), id: quoteId }, ['id']);
+        return res.json({ success: true, data: saved, source: 'local' });
+      }
+      return res.json({ success: true, data: fallback.data });
+    }
+
+    return res.json({ success: true, data: updated.data });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message || 'Error en servidor cambiando el estado de la cotizaciÃ³n.' });
+  }
+});
+
+// Eliminacion de una cotizacion
+app.delete('/api/quotes/:id', async (req, res: AuthenticatedResponse) => {
+  try {
+    const quoteId = req.params.id;
+    const orgId = res.locals.supabaseContext?.organizationId || '00000000-0000-0000-0000-000000000001';
+
+    await authenticatedSupabaseRestRequest(res, `sale_items?sale_id=eq.${encodeURIComponent(quoteId)}`, {
+      method: 'DELETE'
+    });
+
+    const deleted = await authenticatedSupabaseRestRequest(
+      res,
+      `sales?id=eq.${encodeURIComponent(quoteId)}&organization_id=eq.${encodeURIComponent(orgId)}`,
+      { method: 'DELETE' }
+    );
+
+    if (deleted.error) {
+      localQuotes.remove((row: any) => row.id === quoteId);
+      localSales.remove((row: any) => row.id === quoteId);
+      return res.json({ success: true, source: 'local' });
+    }
+
+    return res.json({ success: true, data: { id: quoteId } });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message || 'Error en servidor eliminando cotizaciÃ³n.' });
   }
 });
 
@@ -2390,13 +3037,13 @@ function loadPersistedPaymentMethods(): any[] {
       }
     }
   } catch (err) {
-    console.warn('Aviso cargando métodos de pago locales:', err);
+    console.warn('Aviso cargando mÃ©todos de pago locales:', err);
   }
   return [
-    { id: 'pm-1', name: 'Pago Móvil Banesco', currency: 'VES', type: 'Pago Móvil', bank_account_id: 'a37f2b1e-2ee8-46ef-b76b-44a4f3d6b517' },
+    { id: 'pm-1', name: 'Pago MÃ³vil Banesco', currency: 'VES', type: 'Pago MÃ³vil', bank_account_id: 'a37f2b1e-2ee8-46ef-b76b-44a4f3d6b517' },
     { id: 'pm-2', name: 'Transferencia Banesco', currency: 'VES', type: 'Transferencia', bank_account_id: 'a37f2b1e-2ee8-46ef-b76b-44a4f3d6b517' },
     { id: 'pm-3', name: 'Punto de Venta Banesco', currency: 'VES', type: 'Punto de Venta', bank_account_id: 'a37f2b1e-2ee8-46ef-b76b-44a4f3d6b517' },
-    { id: 'pm-4', name: 'Efectivo Dólares', currency: 'USD', type: 'Efectivo', bank_account_id: 'ba063cfe-3aef-4a50-b86f-52ef90bf7fdb' },
+    { id: 'pm-4', name: 'Efectivo DÃ³lares', currency: 'USD', type: 'Efectivo', bank_account_id: 'ba063cfe-3aef-4a50-b86f-52ef90bf7fdb' },
     { id: 'pm-5', name: 'Transferencia Banco de Venezuela', currency: 'VES', type: 'Transferencia', bank_account_id: 'ef41a1a3-abce-443a-9f3c-0cfb434d06e2' }
   ];
 }
@@ -2414,7 +3061,7 @@ function savePersistedPaymentMethod(pm: any) {
     }
     fs.writeFileSync(PAYMENT_METHODS_FILE, JSON.stringify(current, null, 2), 'utf-8');
   } catch (err) {
-    console.warn('Aviso guardando método de pago local:', err);
+    console.warn('Aviso guardando mÃ©todo de pago local:', err);
   }
 }
 
@@ -2438,7 +3085,7 @@ app.post('/api/payment-methods', async (req, res) => {
     const method = req.body || {};
     const created = {
       id: typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : 'pm-' + Date.now(),
-      name: method.name || 'Método',
+      name: method.name || 'MÃ©todo',
       currency: method.currency || 'VES',
       type: method.type || 'Transferencia',
       bank_account_id: method.bank_account_id || null,
@@ -2576,11 +3223,11 @@ app.get('/api/debug/accounts-list', async (req, res) => {
   try {
     const result = await supabaseRestRequest('bank_accounts?select=id,bank_name');
     if (result.error) {
-      return res.json({ success: false, error: result.error });
+      return res.status(200).json({ success: true, data: localExpenses.load(orgId), source: 'local' });
     }
-    return res.json({ success: true, data: result.data });
+    return res.json({ success: true, data: result.data || [] });
   } catch (err: any) {
-    return res.status(500).json({ success: false, error: err.message });
+    return res.status(200).json({ success: true, data: localExpenses.load(res.locals.supabaseContext?.organizationId), source: 'local' });
   }
 });
 
@@ -2601,7 +3248,7 @@ app.post('/api/bank-movements', async (req, res: AuthenticatedResponse) => {
     }
     const numAmount = Number(amount);
     if (!Number.isFinite(numAmount) || numAmount <= 0) {
-      return res.status(400).json({ success: false, error: 'El monto del movimiento debe ser un número positivo.' });
+      return res.status(400).json({ success: false, error: 'El monto del movimiento debe ser un nÃºmero positivo.' });
     }
     const numRate = Number(rate) > 0 ? Number(rate) : 1;
     const numComm = Number(commission) >= 0 ? Number(commission) : 0;
@@ -2628,7 +3275,7 @@ app.post('/api/bank-movements', async (req, res: AuthenticatedResponse) => {
     }
 
     if (!targetAccount) {
-      // Buscar cuenta según tipo o moneda
+      // Buscar cuenta segÃºn tipo o moneda
       if (movement.currency === 'USD' || concept.toLowerCase().includes('usd') || concept.toLowerCase().includes('dolar')) {
         targetAccount = accounts.find((a: any) => a.currency === 'USD' && a.status === 'Activo') ||
                         accounts.find((a: any) => a.currency === 'USD');
@@ -2641,7 +3288,7 @@ app.post('/api/bank-movements', async (req, res: AuthenticatedResponse) => {
     }
 
     if (!targetAccount) {
-      return res.status(404).json({ success: false, error: 'No se encontró la cuenta bancaria para registrar el movimiento.' });
+      return res.status(404).json({ success: false, error: 'No se encontrÃ³ la cuenta bancaria para registrar el movimiento.' });
     }
 
     const resolvedAccountId = targetAccount.id;
@@ -2652,7 +3299,7 @@ app.post('/api/bank-movements', async (req, res: AuthenticatedResponse) => {
     let rpcSuccess = false;
     let createdMovement: any = null;
 
-    // 1. Intentar registrar vía RPC atómica si está disponible
+    // 1. Intentar registrar vÃ­a RPC atÃ³mica si estÃ¡ disponible
     try {
       const rpcResult = await authenticatedSupabaseRestRequest(res, 'rpc/record_bank_movement', {
         method: 'POST',
@@ -2746,7 +3393,7 @@ app.post('/api/bank-transfers', async (req, res: AuthenticatedResponse) => {
     const numSrcAmount = Number(sourceAmount);
     const numTgtAmount = Number(targetAmount);
     if (!Number.isFinite(numSrcAmount) || numSrcAmount <= 0 || !Number.isFinite(numTgtAmount) || numTgtAmount <= 0) {
-      return res.status(400).json({ success: false, error: 'Los montos deben ser números positivos.' });
+      return res.status(400).json({ success: false, error: 'Los montos deben ser nÃºmeros positivos.' });
     }
     const numRate = Number(rate) > 0 ? Number(rate) : 1;
     const numComm = Number(commission) >= 0 ? Number(commission) : 0;
@@ -2887,7 +3534,7 @@ app.post('/api/bank-transfers', async (req, res: AuthenticatedResponse) => {
 
         const expensePayload = {
           organization_id: orgId,
-          name: `Comisión bancaria - Transferencia (${reference})`,
+          name: `ComisiÃ³n bancaria - Transferencia (${reference})`,
           category: 'Gastos Bancarios',
           type: 'VARIABLE',
           amount: effectiveCommission,
@@ -2896,7 +3543,7 @@ app.post('/api/bank-transfers', async (req, res: AuthenticatedResponse) => {
           due_date: new Date().toISOString().slice(0, 10),
           status: 'PAGADO',
           payment_account_id: sourceAccountId,
-          notes: `Comisión registrada automáticamente por transferencia bancaria desde ${srcBankName} (Ref: ${reference})`
+          notes: `ComisiÃ³n registrada automÃ¡ticamente por transferencia bancaria desde ${srcBankName} (Ref: ${reference})`
         };
 
         await authenticatedSupabaseRestRequest(res, 'expenses', {
@@ -2905,7 +3552,7 @@ app.post('/api/bank-transfers', async (req, res: AuthenticatedResponse) => {
           body: expensePayload
         });
       } catch (commErr) {
-        console.warn('Aviso registrando gasto de comisión bancaria en transferencia:', commErr);
+        console.warn('Aviso registrando gasto de comisiÃ³n bancaria en transferencia:', commErr);
       }
     }
 
@@ -2958,21 +3605,21 @@ function findExistingSupplier(
     if (idx >= 0) return { supplier: suppliersList[idx], index: idx };
   }
 
-  // 2. Coincidencia por RIF / doc_number normalizado (si no está vacío)
+  // 2. Coincidencia por RIF / doc_number normalizado (si no estÃ¡ vacÃ­o)
   const normDoc = normalizeSupplierDoc(candidate.doc_number);
   if (normDoc) {
     const idx = suppliersList.findIndex((s: any) => normalizeSupplierDoc(s?.doc_number) === normDoc);
     if (idx >= 0) return { supplier: suppliersList[idx], index: idx };
   }
 
-  // 3. Coincidencia por nombre normalizado (si no está vacío)
+  // 3. Coincidencia por nombre normalizado (si no estÃ¡ vacÃ­o)
   const normName = normalizeSupplierName(candidate.name);
   if (normName) {
     const idx = suppliersList.findIndex((s: any) => normalizeSupplierName(s?.name) === normName);
     if (idx >= 0) return { supplier: suppliersList[idx], index: idx };
   }
 
-  // 4. Coincidencia por código PRV
+  // 4. Coincidencia por cÃ³digo PRV
   if (candidate.code && candidate.code !== 'PRV-0001' && candidate.code !== 'PRV-GEN') {
     const idx = suppliersList.findIndex((s: any) => s && s.code === candidate.code);
     if (idx >= 0) return { supplier: suppliersList[idx], index: idx };
@@ -3102,7 +3749,7 @@ function autoReconcileSuppliers(orgId: string): any[] {
         organization_id: orgId,
         code: newCode,
         name: name || 'Proveedor Comercial',
-        doc_type: doc.startsWith('J') ? 'RIF Jurídico' : 'RIF (J / G / V)',
+        doc_type: doc.startsWith('J') ? 'RIF JurÃ­dico' : 'RIF (J / G / V)',
         doc_number: doc,
         phone: p.supplier_phone || '',
         email: p.supplier_email || '',
@@ -3169,7 +3816,7 @@ app.get('/api/suppliers', async (req, res: AuthenticatedResponse) => {
     // 1. Auto-conciliar proveedores de forma segura y sin duplicar
     const autoSuppliers = autoReconcileSuppliers(orgId);
 
-    // 2. Consultar tabla suppliers en Supabase si está disponible
+    // 2. Consultar tabla suppliers en Supabase si estÃ¡ disponible
     let dbSuppliers: any[] = [];
     try {
       const result = await supabaseRestRequest('suppliers?select=*&order=created_at.desc', {}, token);
@@ -3180,7 +3827,7 @@ app.get('/api/suppliers', async (req, res: AuthenticatedResponse) => {
       console.warn('Aviso consultando suppliers en Supabase:', e);
     }
 
-    // 3. Fusionar usando findExistingSupplier por clave de negocio canónica (doc_number / name)
+    // 3. Fusionar usando findExistingSupplier por clave de negocio canÃ³nica (doc_number / name)
     const mergedList: any[] = [];
     for (const s of autoSuppliers) {
       const found = findExistingSupplier(mergedList, s);
@@ -3250,7 +3897,7 @@ app.post('/api/suppliers', async (req, res: AuthenticatedResponse) => {
     // 1. Guardar de inmediato en persistencia local deduplicada
     savePersistedSupplier(supplierRecord);
 
-    // 2. Sincronizar en Supabase (PATCH si existía con UUID, o POST si es nuevo)
+    // 2. Sincronizar en Supabase (PATCH si existÃ­a con UUID, o POST si es nuevo)
     try {
       let payload: Record<string, any> = { ...supplierRecord };
       const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(targetId);
@@ -3436,7 +4083,7 @@ app.get('/api/branches', async (_req, res: AuthenticatedResponse) => {
       return res.json({ success: true, data: result.data });
     }
 
-    // 2. Si hubo fallo de conexión temporal con Supabase, retornar sedes persistidas del usuario (sin datos estáticos)
+    // 2. Si hubo fallo de conexiÃ³n temporal con Supabase, retornar sedes persistidas del usuario (sin datos estÃ¡ticos)
     const local = loadPersistedBranches(orgId);
     return res.json({ success: true, data: local });
   } catch (err: any) {
@@ -3549,7 +4196,7 @@ app.delete('/api/branches/:id', async (req, res: AuthenticatedResponse) => {
 });
 
 // ---------------------------------------------------------------------------
-// 7.B.2 GESTIÓN DE USUARIOS ASOCIADOS Y CONTROL RBAC PROXY
+// 7.B.2 GESTIÃ“N DE USUARIOS ASOCIADOS Y CONTROL RBAC PROXY
 // ---------------------------------------------------------------------------
 const USERS_FILE = path.resolve(process.cwd(), 'data', 'users.json');
 
@@ -3601,7 +4248,7 @@ app.get('/api/users', async (_req, res: AuthenticatedResponse) => {
   try {
     const orgId = res.locals.supabaseContext?.organizationId || '00000000-0000-0000-0000-000000000001';
     
-    // 1. Intentar consultar perfiles/usuarios de Supabase si existe conexión
+    // 1. Intentar consultar perfiles/usuarios de Supabase si existe conexiÃ³n
     try {
       const result = await supabaseRestRequest('profiles?select=*&order=created_at.desc');
       if (!result.error && Array.isArray(result.data) && result.data.length > 0) {
@@ -3637,7 +4284,7 @@ app.get('/api/users', async (_req, res: AuthenticatedResponse) => {
       console.warn('Aviso consultando usuarios en Supabase:', sbErr);
     }
 
-    // 2. Si Supabase no responde o está en modo local resiliente
+    // 2. Si Supabase no responde o estÃ¡ en modo local resiliente
     let local = loadPersistedUsers();
     if (local.length === 0) {
       // Seed default user if empty
@@ -3667,7 +4314,7 @@ app.post('/api/users', async (req, res: AuthenticatedResponse) => {
     const body = req.body || {};
     
     if (!body.name || !body.email) {
-      return res.status(400).json({ success: false, error: 'El nombre y correo electrónico son obligatorios.' });
+      return res.status(400).json({ success: false, error: 'El nombre y correo electrÃ³nico son obligatorios.' });
     }
 
     const userId = body.id || `usr-${Date.now().toString(36)}-${Math.random().toString(36).substr(2, 5)}`;
@@ -3724,7 +4371,7 @@ app.post('/api/users', async (req, res: AuthenticatedResponse) => {
 
     // 3. Intentar registrar en Supabase (tabla profiles y organization_members)
     try {
-      // Si el id es UUID válido, podemos intentar registrar en profiles
+      // Si el id es UUID vÃ¡lido, podemos intentar registrar en profiles
       const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(userId);
       const sbPayload: Record<string, any> = {
         full_name: newUser.name,
@@ -3798,7 +4445,7 @@ app.patch('/api/users/:id', async (req, res: AuthenticatedResponse) => {
 
     return res.json({ success: true, data: updatedUser });
   } catch (err: any) {
-    console.log('PATCH - error crítico:', err);
+    console.log('PATCH - error crÃ­tico:', err);
     return res.status(500).json({ success: false, error: err?.message });
   }
 });
@@ -3845,7 +4492,7 @@ app.delete('/api/users/:id', async (req, res: AuthenticatedResponse) => {
 });
 
 // ---------------------------------------------------------------------------
-// 7.C MÓDULO DE GASTOS FIJOS Y VARIABLES (EXPENSES) PROXY
+// 7.C MÃ“DULO DE GASTOS FIJOS Y VARIABLES (EXPENSES) PROXY
 // ---------------------------------------------------------------------------
 app.get('/api/expense-categories', async (_req, res: AuthenticatedResponse) => {
   try {
@@ -3871,7 +4518,7 @@ app.post('/api/expense-categories', async (req, res: AuthenticatedResponse) => {
     const orgId = res.locals.supabaseContext?.organizationId;
     const { name, is_default } = req.body || {};
     if (!name || typeof name !== 'string' || !name.trim()) {
-      return res.status(400).json({ success: false, error: 'El nombre de la categoría es obligatorio.' });
+      return res.status(400).json({ success: false, error: 'El nombre de la categorÃ­a es obligatorio.' });
     }
     const result = await authenticatedSupabaseRestRequest(res, 'expense_categories', {
       method: 'POST',
@@ -3884,7 +4531,16 @@ app.post('/api/expense-categories', async (req, res: AuthenticatedResponse) => {
       }
     });
     if (result.error) {
-      return res.status(200).json({ success: false, error: result.error });
+      const saved = localExpenseCategories.upsert(
+        {
+          organization_id: orgId,
+          name: name.trim(),
+          is_default: !!is_default,
+          created_at: new Date().toISOString()
+        },
+        ['name']
+      );
+      return res.json({ success: true, data: saved, source: 'local' });
     }
     const created = Array.isArray(result.data) ? result.data[0] : result.data;
     return res.json({ success: true, data: created });
@@ -3956,7 +4612,11 @@ app.post('/api/expenses', async (req, res: AuthenticatedResponse) => {
       break;
     }
 
-    return res.status(200).json({ success: false, error: lastError });
+    const saved = localExpenses.upsert(
+      { ...expensePayload, id: expensePayload.id || `exp-${Date.now()}` },
+      ['id']
+    );
+    return res.json({ success: true, data: { ...rawExpense, ...saved }, source: 'local' });
   } catch (err: any) {
     return res.status(200).json({ success: false, error: err?.message || 'Error en servidor' });
   }
@@ -4006,7 +4666,8 @@ app.patch('/api/expenses/:id', async (req, res: AuthenticatedResponse) => {
       break;
     }
 
-    return res.status(200).json({ success: false, error: lastError });
+    const saved = localExpenses.upsert({ ...updatesPayload, id }, ['id']);
+    return res.json({ success: true, data: { ...rawUpdates, ...saved }, source: 'local' });
   } catch (err: any) {
     return res.status(200).json({ success: false, error: err?.message });
   }
@@ -4041,7 +4702,8 @@ app.put('/api/expenses/:id', async (req, res: AuthenticatedResponse) => {
       const updated = Array.isArray(result.data) ? result.data[0] : result.data;
       return res.json({ success: true, data: { ...rawUpdates, ...updated } });
     }
-    return res.status(200).json({ success: false, error: result.error });
+    const saved = localExpenses.upsert({ ...updatesPayload, id }, ['id']);
+    return res.json({ success: true, data: { ...rawUpdates, ...saved }, source: 'local' });
   } catch (err: any) {
     return res.status(200).json({ success: false, error: err?.message });
   }
@@ -4056,7 +4718,8 @@ app.delete('/api/expenses/:id', async (req, res: AuthenticatedResponse) => {
       { method: 'DELETE' }
     );
     if (result.error) {
-      return res.status(200).json({ success: false, error: result.error });
+      localExpenses.remove((row: any) => row.id === id);
+      return res.json({ success: true, source: 'local' });
     }
     return res.json({ success: true });
   } catch (err: any) {
@@ -4064,7 +4727,7 @@ app.delete('/api/expenses/:id', async (req, res: AuthenticatedResponse) => {
   }
 });
 
-// Endpoint para registrar pago de gasto con auditoría y enlace a tesorería
+// Endpoint para registrar pago de gasto con auditorÃ­a y enlace a tesorerÃ­a
 app.post('/api/expenses/:id/pay', async (req, res: AuthenticatedResponse) => {
   try {
     const orgId = res.locals.supabaseContext?.organizationId;
@@ -4083,7 +4746,7 @@ app.post('/api/expenses/:id/pay', async (req, res: AuthenticatedResponse) => {
 
     const numAmount = parseFloat(amount);
     if (!numAmount || numAmount <= 0) {
-      return res.status(400).json({ success: false, error: 'Monto de pago no válido.' });
+      return res.status(400).json({ success: false, error: 'Monto de pago no vÃ¡lido.' });
     }
 
     const payDate = paidAt || new Date().toISOString().split('T')[0];
@@ -4109,7 +4772,7 @@ app.post('/api/expenses/:id/pay', async (req, res: AuthenticatedResponse) => {
       console.warn('Aviso registrando en expense_payments:', e);
     }
 
-    // 2. Si se especificó cuenta bancaria, registrar movimiento de egreso
+    // 2. Si se especificÃ³ cuenta bancaria, registrar movimiento de egreso
     if (bankAccountId) {
       try {
         const accRes = await authenticatedSupabaseRestRequest(res, `bank_accounts?id=eq.${encodeURIComponent(bankAccountId)}&select=balance,currency,organization_id,bank_name`);
@@ -4142,7 +4805,7 @@ app.post('/api/expenses/:id/pay', async (req, res: AuthenticatedResponse) => {
             type: 'SALIDA',
             concept: notes || `Pago de gasto operativo (${currency || 'USD'} ${numAmount.toFixed(2)})`,
             reference: reference || `EXP-${id.slice(0, 8)}`,
-            user_name: 'Administración / Gastos',
+            user_name: 'AdministraciÃ³n / Gastos',
             rate: exchangeRate || 1.0,
             commission: 0,
             commission_type: 'Fija',
@@ -4164,7 +4827,7 @@ app.post('/api/expenses/:id/pay', async (req, res: AuthenticatedResponse) => {
       }
     }
 
-    // 3. Actualizar el registro del gasto (último pago y próxima fecha si es fijo)
+    // 3. Actualizar el registro del gasto (Ãºltimo pago y prÃ³xima fecha si es fijo)
     const updates: Record<string, any> = {
       last_payment_date: payDate,
       updated_at: new Date().toISOString()
@@ -4205,6 +4868,23 @@ app.get('/api/sales', async (_req, res: AuthenticatedResponse) => {
     const result = await authenticatedSupabaseRestRequest(
       res,
       `sales?organization_id=eq.${encodeURIComponent(orgId)}&select=id,doc_number,created_at,total_usd,total_ves,status,payment_type,doc_type&order=created_at.desc&limit=100`
+    );
+    if (result.error) {
+      return res.status(200).json({ success: true, data: localSales.load(orgId), source: 'local' });
+    }
+    return res.json({ success: true, data: result.data || [] });
+  } catch (err: any) {
+    return res.status(200).json({ success: true, data: localSales.load(res.locals.supabaseContext?.organizationId), source: 'local' });
+  }
+});
+
+app.get('/api/sale-items', async (req, res: AuthenticatedResponse) => {
+  try {
+    const saleId = typeof req.query.sale_id === 'string' ? req.query.sale_id : '';
+    const filter = saleId ? `&sale_id=eq.${encodeURIComponent(saleId)}` : '';
+    const result = await authenticatedSupabaseRestRequest(
+      res,
+      `sale_items?select=sale_id,sku,quantity,unit_price_usd,total_usd${filter}&limit=2000`
     );
     if (result.error) {
       return res.status(200).json({ success: false, error: result.error, data: [] });
@@ -4323,7 +5003,7 @@ app.get('/api/accounts-receivable', async (_req, res: AuthenticatedResponse) => 
     const orgId = res.locals.supabaseContext?.organizationId || '00000000-0000-0000-0000-000000000001';
     let dbItems: any[] = [];
 
-    // 1. Consultar Supabase con relación de clientes, pagos y ventas con ítems
+    // 1. Consultar Supabase con relaciÃ³n de clientes, pagos y ventas con Ã­tems
     try {
       const result = await supabaseRestRequest(
         'accounts_receivable?select=*,customers(*),receivable_payments(*),sales(*,sale_items(*))&order=created_at.desc'
@@ -4371,7 +5051,7 @@ app.get('/api/accounts-receivable', async (_req, res: AuthenticatedResponse) => 
             amount_ves: Number(p.amount_ves) || 0,
             exchange_rate: Number(p.exchange_rate) || 1,
             payment_method: p.method || 'Efectivo USD',
-            reference: p.reference_number || 'PAGO CONTADO/CRÉDITO',
+            reference: p.reference_number || 'PAGO CONTADO/CRÃ‰DITO',
             payment_date: p.created_at
           }));
 
@@ -4388,7 +5068,7 @@ app.get('/api/accounts-receivable', async (_req, res: AuthenticatedResponse) => 
         const paidDiff = Math.round(Math.max(0, total - balance) * 100) / 100;
         const currentSum = mergedPayments.reduce((s: number, p: any) => s + (Number(p.amount_usd) || 0), 0);
 
-        // Si la orden está cancelada/pagada en Supabase y no había fila explícita en payments ni receivable_payments
+        // Si la orden estÃ¡ cancelada/pagada en Supabase y no habÃ­a fila explÃ­cita en payments ni receivable_payments
         if (paidDiff > currentSum + 0.01) {
           const missing = Math.round((paidDiff - currentSum) * 100) / 100;
           mergedPayments.unshift({
@@ -4397,7 +5077,7 @@ app.get('/api/accounts-receivable', async (_req, res: AuthenticatedResponse) => 
             amount_usd: missing,
             amount_ves: Math.round(missing * (Number(item.sales?.exchange_rate || item.exchange_rate) || 877.90) * 100) / 100,
             exchange_rate: Number(item.sales?.exchange_rate || item.exchange_rate) || 877.90,
-            payment_method: 'Cancelación registrada',
+            payment_method: 'CancelaciÃ³n registrada',
             reference: 'PAGO-COMPLETO',
             payment_date: item.updated_at || item.created_at || new Date().toISOString()
           });
@@ -4409,7 +5089,7 @@ app.get('/api/accounts-receivable', async (_req, res: AuthenticatedResponse) => 
         item.customer_phone = item.customers?.phone || '';
       }
 
-      // Si obtuvimos registros reales de Supabase, actualizamos la caché local con los datos reales
+      // Si obtuvimos registros reales de Supabase, actualizamos la cachÃ© local con los datos reales
       if (dbItems.length > 0) {
         try {
           fs.writeFileSync(ACCOUNTS_RECEIVABLE_FILE, JSON.stringify(dbItems, null, 2), 'utf-8');
@@ -4420,7 +5100,7 @@ app.get('/api/accounts-receivable', async (_req, res: AuthenticatedResponse) => 
       console.warn('Aviso consultando accounts_receivable en Supabase:', sbErr);
     }
 
-    // 4. Si Supabase no devolvió registros o hubo error de red, usar respaldo local
+    // 4. Si Supabase no devolviÃ³ registros o hubo error de red, usar respaldo local
     const fallbackData = loadPersistedReceivables(orgId);
     return res.json({ success: true, data: fallbackData });
   } catch (err: any) {
@@ -4441,7 +5121,7 @@ app.post('/api/accounts-receivable', async (req, res: AuthenticatedResponse) => 
       id: newId,
       organization_id: orgId,
       doc_number: (raw.doc_number || '').trim(),
-      concept: raw.concept?.trim() || 'Venta a crédito o saldo pendiente',
+      concept: raw.concept?.trim() || 'Venta a crÃ©dito o saldo pendiente',
       total_usd: Number(raw.total_usd) || 0,
       balance_usd: Number(raw.balance_usd != null ? raw.balance_usd : raw.total_usd) || 0,
       status: raw.status || 'PENDIENTE',
@@ -4493,7 +5173,7 @@ app.post('/api/accounts-receivable/:id/payments', async (req, res: Authenticated
     const { amount_usd, amount_ves, exchange_rate, bank_account_id, payment_method, reference } = req.body || {};
     const amt = Number(amount_usd);
     if (!Number.isFinite(amt) || amt <= 0) {
-      return res.status(400).json({ success: false, error: 'Monto de abono inválido' });
+      return res.status(400).json({ success: false, error: 'Monto de abono invÃ¡lido' });
     }
 
     const orgId = res.locals.supabaseContext?.organizationId || '00000000-0000-0000-0000-000000000001';
@@ -4564,7 +5244,7 @@ app.post('/api/accounts-receivable/:id/payments', async (req, res: Authenticated
         bAcc = accountsList.find((a: any) => a.id === targetBankAccountId);
       }
 
-      // Si no se envió ID o no se encontró, resolver según moneda o método
+      // Si no se enviÃ³ ID o no se encontrÃ³, resolver segÃºn moneda o mÃ©todo
       if (!bAcc && accountsList.length > 0) {
         const methodStr = (payment_method || '').toLowerCase();
         const wantsUsd = methodStr.includes('usd') || methodStr.includes('dolar') || (amt > 0 && (!amount_ves || Number(amount_ves) === amt));
@@ -4663,7 +5343,7 @@ app.get('/api/accounts-payable', async (_req, res: AuthenticatedResponse) => {
         }
       }
 
-      // Consultar payable_payments directamente por si el join vino vacío
+      // Consultar payable_payments directamente por si el join vino vacÃ­o
       const directPaymentsRes = await supabaseRestRequest('payable_payments?select=*&order=payment_date.desc');
       const directPaymentsMap = new Map<string, any[]>();
       if (!directPaymentsRes.error && Array.isArray(directPaymentsRes.data)) {
@@ -4905,7 +5585,7 @@ app.post('/api/accounts-payable/:id/payments', async (req, res: AuthenticatedRes
     const { amount_usd, amount_ves, exchange_rate, bank_account_id, payment_method, reference } = req.body || {};
     const amt = Number(amount_usd);
     if (!Number.isFinite(amt) || amt <= 0) {
-      return res.status(400).json({ success: false, error: 'Monto de abono inválido' });
+      return res.status(400).json({ success: false, error: 'Monto de abono invÃ¡lido' });
     }
 
     const orgId = res.locals.supabaseContext?.organizationId || '00000000-0000-0000-0000-000000000001';
@@ -4965,7 +5645,7 @@ app.post('/api/accounts-payable/:id/payments', async (req, res: AuthenticatedRes
       console.warn('Aviso actualizando balance de accounts_payable en Supabase:', e);
     }
 
-    // 2.b Si se especificó una cuenta bancaria, registrar egreso (SALIDA) de la cuenta
+    // 2.b Si se especificÃ³ una cuenta bancaria, registrar egreso (SALIDA) de la cuenta
     if (bank_account_id) {
       try {
         const existingMovs = loadPersistedBankMovements(bank_account_id);
@@ -5132,7 +5812,7 @@ app.post('/api/purchases', async (req, res: AuthenticatedResponse) => {
     // 1. Guardar compra en persistencia local
     savePersistedPurchase(purchaseRecord);
 
-    // 2. Si es compra a CRÉDITO, generar y registrar automáticamente el compromiso en cuentas por pagar
+    // 2. Si es compra a CRÃ‰DITO, generar y registrar automÃ¡ticamente el compromiso en cuentas por pagar
     if (paymentType === 'CREDITO') {
       const payableId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : 'pay-cr-' + Date.now();
       const payableRecord = {
@@ -5148,7 +5828,7 @@ app.post('/api/purchases', async (req, res: AuthenticatedResponse) => {
         balance_usd: totalUsd,
         status: 'PENDIENTE',
         due_date: dueDate,
-        description: notes || `Compra a crédito registrada bajo ${docNumber}`,
+        description: notes || `Compra a crÃ©dito registrada bajo ${docNumber}`,
         created_at: new Date().toISOString()
       };
       savePersistedPayable(payableRecord);
@@ -5156,14 +5836,14 @@ app.post('/api/purchases', async (req, res: AuthenticatedResponse) => {
       // Sincronizar en Supabase accounts_payable
       try {
         let pPayload: Record<string, any> = { ...payableRecord };
-        delete pPayload.supplier_id; // Evitar colisión si no existe la columna en Supabase
+        delete pPayload.supplier_id; // Evitar colisiÃ³n si no existe la columna en Supabase
         await supabaseRestRequest('accounts_payable', {
           method: 'POST',
           headers: { Prefer: 'return=representation' },
           body: pPayload
         });
       } catch (apErr) {
-        console.warn('Aviso sincronizando compromiso de crédito en Supabase:', apErr);
+        console.warn('Aviso sincronizando compromiso de crÃ©dito en Supabase:', apErr);
       }
     }
 
@@ -5217,7 +5897,7 @@ app.post('/api/purchases', async (req, res: AuthenticatedResponse) => {
 
     return res.json({
       success: true,
-      message: 'Compra registrada con éxito.',
+      message: 'Compra registrada con Ã©xito.',
       purchaseId,
       docNumber,
       data: purchaseRecord
@@ -5237,7 +5917,7 @@ app.get('/api/supabase/status', async (_req, res) => {
       configured: false,
       connected: false,
       url: SUPABASE_URL,
-      message: 'Supabase no está configurado con una URL o clave anónima válida.'
+      message: 'Supabase no estÃ¡ configurado con una URL o clave anÃ³nima vÃ¡lida.'
     });
   }
 
@@ -5268,88 +5948,6 @@ app.get('/api/supabase/status', async (_req, res) => {
   }
 });
 
-app.post('/api/supabase/config', async (req, res) => {
-  const { url, anonKey } = req.body || {};
-  const cleanUrl = typeof url === 'string' ? url.trim() : '';
-  const cleanKey = typeof anonKey === 'string' ? anonKey.trim() : '';
-
-  if (!isRealSupabaseUrl(cleanUrl)) {
-    return res.status(400).json({
-      success: false,
-      error: 'La URL proporcionada no es válida. Debe iniciar con https:// y pertenecer a un proyecto de Supabase.'
-    });
-  }
-
-  if (!isRealSupabaseKey(cleanKey)) {
-    return res.status(400).json({
-      success: false,
-      error: 'La clave anónima (anon key) proporcionada no es válida o está incompleta.'
-    });
-  }
-
-  // Probe live connection
-  try {
-    const probeRes = await new Promise<{ status: number; error?: string }>((resolve) => {
-      const parsedUrl = new URL(`${cleanUrl}/rest/v1/organizations?select=id&limit=1`);
-      const probeReq = https.request(
-        parsedUrl,
-        {
-          method: 'GET',
-          headers: {
-            apikey: cleanKey,
-            Authorization: `Bearer ${cleanKey}`,
-            Accept: 'application/json'
-          },
-          timeout: 6000
-        },
-        (pRes) => {
-          resolve({ status: pRes.statusCode || 200 });
-        }
-      );
-      probeReq.on('timeout', () => {
-        probeReq.destroy();
-        resolve({ status: 504, error: 'Tiempo de espera agotado al conectar con Supabase.' });
-      });
-      probeReq.on('error', (err) => {
-        resolve({ status: 500, error: err.message });
-      });
-      probeReq.end();
-    });
-
-    if (probeRes.status >= 500) {
-      return res.status(502).json({
-        success: false,
-        error: `No se pudo establecer conexión con Supabase en ${cleanUrl} (${probeRes.error || `HTTP ${probeRes.status}`}).`
-      });
-    }
-
-    // Update server instance
-    SUPABASE_URL = cleanUrl;
-    SUPABASE_ANON_KEY = cleanKey;
-    isSupabaseConfigured = true;
-    supabaseServer = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-
-    // Persist to .env.local
-    try {
-      const envLocalContent = `VITE_SUPABASE_URL=${cleanUrl}\nVITE_SUPABASE_ANON_KEY=${cleanKey}\n`;
-      fs.writeFileSync(path.resolve(process.cwd(), '.env.local'), envLocalContent, 'utf-8');
-    } catch (saveErr) {
-      console.warn('Could not persist .env.local file:', saveErr);
-    }
-
-    return res.json({
-      success: true,
-      message: 'Conexión con Supabase verificada y establecida con éxito.',
-      url: cleanUrl
-    });
-  } catch (err: any) {
-    return res.status(500).json({
-      success: false,
-      error: err?.message || 'Error validando credenciales de Supabase.'
-    });
-  }
-});
-
 app.get('/api/supabase/migrations-bundle', (_req, res) => {
   try {
     const migrationsDir = path.resolve(process.cwd(), 'supabase', 'migrations');
@@ -5357,7 +5955,7 @@ app.get('/api/supabase/migrations-bundle', (_req, res) => {
       return res.status(404).json({ success: false, error: 'Directorio de migraciones no encontrado.' });
     }
     const files = fs.readdirSync(migrationsDir).filter(f => f.endsWith('.sql')).sort();
-    let bundledSql = `-- ==============================================================================\n-- FRENYER ERP — PAQUETE COMPLETO DE MIGRACIONES UNIFICADAS (0001 - 0015)\n-- ==============================================================================\n-- Ejecuta este script en el SQL Editor de tu consola de Supabase para inicializar\n-- todas las tablas, índices, triggers y políticas RLS necesarias para Frenyer.\n-- ==============================================================================\n\n`;
+    let bundledSql = `-- ==============================================================================\n-- FRENYER ERP â€” PAQUETE COMPLETO DE MIGRACIONES UNIFICADAS (0001 - 0015)\n-- ==============================================================================\n-- Ejecuta este script en el SQL Editor de tu consola de Supabase para inicializar\n-- todas las tablas, Ã­ndices, triggers y polÃ­ticas RLS necesarias para Frenyer.\n-- ==============================================================================\n\n`;
 
     for (const file of files) {
       bundledSql += `-- ------------------------------------------------------------------------------\n`;
@@ -5375,6 +5973,411 @@ app.get('/api/supabase/migrations-bundle', (_req, res) => {
 
 
 // ---------------------------------------------------------------------------
+// 9. AUTH PROXY - LA CREDENCIAL DE SUPABASE SOLO EXISTE EN EL SERVIDOR
+// ---------------------------------------------------------------------------
+
+function getRequestOrigin(req: Request): string {
+  const forwardedProto = req.headers['x-forwarded-proto'];
+  const proto = typeof forwardedProto === 'string' && forwardedProto.length > 0 ? forwardedProto.split(',')[0].trim() : req.protocol;
+  const host = req.headers['x-forwarded-host'] || req.headers.host || 'localhost:3000';
+  return `${proto}://${String(host).replace(/^https?:\/\//, '')}`;
+}
+
+interface CachedSession {
+  role: string;
+  organizationId: string;
+  email: string;
+  expiresAt: number;
+}
+
+const sessionCache = new Map<string, CachedSession>();
+
+function readTokenExpiry(token: string): number {
+  try {
+    const payload = token.split('.')[1];
+    if (!payload) return 0;
+    const decoded = JSON.parse(Buffer.from(payload, 'base64url').toString('utf-8'));
+    return typeof decoded.exp === 'number' ? decoded.exp * 1000 : 0;
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * Valida la credencial de la peticion. Acepta un token local o un token de
+ * Supabase (renovandolo con la cookie de refresco si caduco).
+ */
+async function resolveRequestSession(
+  req: Request,
+  res: AuthenticatedResponse
+): Promise<{ token: string; local: LocalSessionPayload | null; remote: { user: any; role: string; organizationId: string } | null } | null> {
+  const token = readSessionToken(req);
+  if (!token) return null;
+
+  const localSession = verifyLocalSessionToken(token);
+  if (localSession) {
+    return { token, local: localSession, remote: null };
+  }
+
+  if (!isSupabaseConfigured) return null;
+
+  const cached = sessionCache.get(token);
+  if (cached && cached.expiresAt > Date.now()) {
+    return {
+      token,
+      local: null,
+      remote: {
+        user: { email: cached.email },
+        role: cached.role,
+        organizationId: cached.organizationId
+      }
+    };
+  }
+
+  const resolved = await resolveSessionUser(token);
+  if (resolved) {
+    const tokenExpiry = readTokenExpiry(token);
+    sessionCache.set(token, {
+      role: resolved.role,
+      organizationId: resolved.organizationId,
+      email: resolved.user.email || '',
+      expiresAt: Math.min(tokenExpiry || Date.now() + 5 * 60_000, Date.now() + 5 * 60_000)
+    });
+    return { token, local: null, remote: resolved };
+  }
+
+  // Token caducado: se intenta renovar con la cookie de refresco.
+  const refreshToken = readCookie(req, REFRESH_COOKIE);
+  if (refreshToken) {
+    const refreshed = await supabaseAuthRequest('token?grant_type=refresh_token', { refresh_token: refreshToken });
+    if (refreshed.data?.access_token) {
+      const newToken: string = refreshed.data.access_token;
+      setSessionCookie(res, SESSION_COOKIE, newToken, SESSION_MAX_AGE_MS);
+      if (refreshed.data.refresh_token) {
+        setSessionCookie(res, REFRESH_COOKIE, refreshed.data.refresh_token, SESSION_MAX_AGE_MS);
+      }
+      const resolvedAfter = await resolveSessionUser(newToken);
+      if (resolvedAfter) {
+        return { token: newToken, local: null, remote: resolvedAfter };
+      }
+    }
+  }
+
+  return null;
+}
+
+function applySessionContext(
+  res: AuthenticatedResponse,
+  session: { token: string; local: LocalSessionPayload | null; remote: { user: any; role: string; organizationId: string } | null }
+): void {
+  if (session.local) {
+    res.locals.supabaseContext = {
+      accessToken: SUPABASE_ANON_KEY,
+      organizationId: session.local.organizationId,
+      role: session.local.role,
+      userEmail: session.local.email,
+      isLocalSession: true
+    };
+    return;
+  }
+  res.locals.supabaseContext = {
+    accessToken: session.token,
+    organizationId: session.remote!.organizationId,
+    role: session.remote!.role,
+    userEmail: session.remote!.user?.email || '',
+    isLocalSession: false
+  };
+}
+
+/** Estado del sistema de autenticacion. Nunca devuelve claves. */
+app.get('/api/auth/mode', async (_req, res) => {
+  let connected = false;
+  let missingTables: string[] = [];
+  if (isSupabaseConfigured) {
+    const test = await supabaseRestRequest('organizations?select=id&limit=1');
+    connected = !test.error;
+    if (test.error) missingTables.push('organizations');
+  }
+
+  res.json({
+    success: true,
+    data: {
+      supabaseConfigured: isSupabaseConfigured,
+      supabaseConnected: connected,
+      missingTables,
+      supabaseUrl: isSupabaseConfigured ? SUPABASE_URL : '',
+      localAccessEnabled: Boolean(ACCESS_KEY),
+      credentialsSource: SUPABASE_CREDENTIALS_SOURCE
+    }
+  });
+});
+
+/** Inicio de sesion con correo y contrasena, resuelto por el servidor. */
+app.post('/api/auth/login', async (req, res) => {
+  const ip = getClientIp(req);
+  const limit = checkRateLimit(`login:${ip}`, 5, 15 * 60_000);
+  if (!limit.allowed) {
+    return res.status(429).json({
+      success: false,
+      error: `Demasiados intentos fallidos. Espera ${limit.retryAfterSeconds} segundos antes de reintentar.`
+    });
+  }
+
+  const { email, password } = req.body || {};
+  const cleanEmail = typeof email === 'string' ? email.trim().toLowerCase() : '';
+  if (!cleanEmail || !password) {
+    return res.status(400).json({ success: false, error: 'Correo y contraseÃ±a son obligatorios.' });
+  }
+
+  if (!isSupabaseConfigured) {
+    return res.status(503).json({ success: false, error: 'Supabase no estÃ¡ configurado en el servidor.' });
+  }
+
+  const result = await supabaseAuthRequest('token?grant_type=password', {
+    email: cleanEmail,
+    password: String(password)
+  });
+
+  if (result.error || !result.data?.access_token) {
+    logAuthEvent('LOGIN_FALLIDO', ip, `email=${cleanEmail} motivo=${result.error || 'sin token'}`);
+    return res.status(401).json({ success: false, error: 'Correo o contraseÃ±a incorrectos.' });
+  }
+
+  setSessionCookie(res, SESSION_COOKIE, result.data.access_token, SESSION_MAX_AGE_MS);
+  if (result.data.refresh_token) {
+    setSessionCookie(res, REFRESH_COOKIE, result.data.refresh_token, SESSION_MAX_AGE_MS);
+  }
+
+  const resolved = await resolveSessionUser(result.data.access_token);
+  logAuthEvent('LOGIN_OK', ip, `email=${cleanEmail} rol=${resolved?.role || 'desconocido'}`);
+
+  res.json({
+    success: true,
+    data: {
+      user: { email: cleanEmail, id: resolved?.user?.id || '' },
+      role: resolved?.role || 'admin',
+      organizationId: resolved?.organizationId || '00000000-0000-0000-0000-000000000001'
+    }
+  });
+});
+
+/** Registro de cuenta, resuelto por el servidor. */
+app.post('/api/auth/register', async (req, res) => {
+  const ip = getClientIp(req);
+  const limit = checkRateLimit(`register:${ip}`, 5, 60 * 60_000);
+  if (!limit.allowed) {
+    return res.status(429).json({
+      success: false,
+      error: `Demasiados registros desde esta conexiÃ³n. Espera ${limit.retryAfterSeconds} segundos.`
+    });
+  }
+
+  const { email, password, fullName, companyName, phone, address } = req.body || {};
+  const cleanEmail = typeof email === 'string' ? email.trim().toLowerCase() : '';
+  if (!cleanEmail || !password) {
+    return res.status(400).json({ success: false, error: 'Correo y contraseÃ±a son obligatorios.' });
+  }
+  if (String(password).length < 8) {
+    return res.status(400).json({ success: false, error: 'La contraseÃ±a debe tener al menos 8 caracteres.' });
+  }
+  if (!isSupabaseConfigured) {
+    return res.status(503).json({ success: false, error: 'Supabase no estÃ¡ configurado en el servidor.' });
+  }
+
+  const result = await supabaseAuthRequest('signup', {
+    email: cleanEmail,
+    password: String(password),
+    data: {
+      full_name: typeof fullName === 'string' ? fullName.trim() : '',
+      company_name: typeof companyName === 'string' ? companyName.trim() : '',
+      role: 'cliente'
+    }
+  });
+
+  if (result.error) {
+    logAuthEvent('REGISTRO_FALLIDO', ip, `email=${cleanEmail} motivo=${result.error}`);
+    return res.status(400).json({ success: false, error: result.error });
+  }
+
+  // Con confirmacion de correo activa no hay sesion: el usuario confirma y entra.
+  if (result.data?.access_token) {
+    setSessionCookie(res, SESSION_COOKIE, result.data.access_token, SESSION_MAX_AGE_MS);
+    if (result.data.refresh_token) {
+      setSessionCookie(res, REFRESH_COOKIE, result.data.refresh_token, SESSION_MAX_AGE_MS);
+    }
+  }
+
+  logAuthEvent('REGISTRO_OK', ip, `email=${cleanEmail}`);
+  res.json({
+    success: true,
+    requiresEmailConfirmation: !result.data?.access_token,
+    data: { email: cleanEmail }
+  });
+});
+
+/** Sesion actual. */
+app.get('/api/auth/session', async (req, res) => {
+  const session = await resolveRequestSession(req, res as AuthenticatedResponse);
+  if (!session) {
+    return res.status(401).json({ success: false, error: 'Sin sesiÃ³n activa.' });
+  }
+
+  if (session.local) {
+    return res.json({
+      success: true,
+      data: {
+        mode: 'local',
+        user: { email: session.local.email, id: session.local.sub },
+        role: session.local.role,
+        organizationId: session.local.organizationId
+      }
+    });
+  }
+
+  return res.json({
+    success: true,
+    data: {
+      mode: 'supabase',
+      user: {
+        email: session.remote!.user?.email || '',
+        id: session.remote!.user?.id || '',
+        name: session.remote!.user?.user_metadata?.full_name || session.remote!.user?.user_metadata?.name || ''
+      },
+      role: session.remote!.role,
+      organizationId: session.remote!.organizationId
+    }
+  });
+});
+
+/** Cierre de sesion. */
+app.post('/api/auth/logout', async (req, res) => {
+  const ip = getClientIp(req);
+  clearSessionCookie(res, SESSION_COOKIE);
+  clearSessionCookie(res, REFRESH_COOKIE);
+  logAuthEvent('LOGOUT', ip, 'sesion cerrada');
+  res.json({ success: true });
+});
+
+/** Ingreso con clave de acceso (modo local, sin Supabase). */
+app.post('/api/auth/local-login', async (req, res) => {
+  const ip = getClientIp(req);
+
+  if (!ACCESS_KEY) {
+    return res.status(503).json({
+      success: false,
+      error: 'El acceso directo no estÃ¡ habilitado en este servidor.'
+    });
+  }
+
+  const limit = checkRateLimit(`local-login:${ip}`, 5, 15 * 60_000);
+  if (!limit.allowed) {
+    return res.status(429).json({
+      success: false,
+      error: `Demasiados intentos fallidos. Espera ${limit.retryAfterSeconds} segundos antes de reintentar.`
+    });
+  }
+
+  const { accessKey, email } = req.body || {};
+  const candidate = typeof accessKey === 'string' ? accessKey.trim() : '';
+  if (!candidate) {
+    return res.status(400).json({ success: false, error: 'Ingresa la clave de acceso.' });
+  }
+
+  if (!safeCompare(candidate, ACCESS_KEY)) {
+    logAuthEvent('ACCESO_LOCAL_FALLIDO', ip, 'clave incorrecta');
+    return res.status(401).json({ success: false, error: 'Clave de acceso incorrecta.' });
+  }
+
+  const cleanEmail = typeof email === 'string' && email.trim() ? email.trim().toLowerCase() : 'operador@frenyer.local';
+  const payload: LocalSessionPayload = {
+    sub: `local-${crypto.createHash('sha256').update(cleanEmail).digest('hex').slice(0, 16)}`,
+    email: cleanEmail,
+    role: 'admin',
+    organizationId: '00000000-0000-0000-0000-000000000001',
+    exp: Date.now() + SESSION_MAX_AGE_MS
+  };
+
+  setSessionCookie(res, SESSION_COOKIE, signLocalSession(payload), SESSION_MAX_AGE_MS);
+  logAuthEvent('ACCESO_LOCAL_OK', ip, `email=${cleanEmail}`);
+
+  res.json({
+    success: true,
+    data: { mode: 'local', user: { email: cleanEmail, id: payload.sub }, role: payload.role, organizationId: payload.organizationId }
+  });
+});
+
+/** Inicio de sesion con Google: el servidor gestiona todo el intercambio con Supabase. */
+app.get('/api/auth/google', (req, res) => {
+  if (!isSupabaseConfigured) {
+    return res.status(503).json({ success: false, error: 'Supabase no estÃ¡ configurado en el servidor.' });
+  }
+
+  const codeVerifier = crypto.randomBytes(32).toString('base64url');
+  const codeChallenge = crypto.createHash('sha256').update(codeVerifier).digest('base64url');
+  const redirectTo = `${getRequestOrigin(req)}/api/auth/google/callback`;
+
+  res.cookie('frenyer_pkce', codeVerifier, {
+    httpOnly: true,
+    sameSite: 'lax',
+    secure: process.env.NODE_ENV === 'production',
+    maxAge: 10 * 60 * 1000,
+    path: '/'
+  });
+
+  const authorizeUrl = new URL(`${SUPABASE_URL}/auth/v1/authorize`);
+  authorizeUrl.searchParams.set('provider', 'google');
+  authorizeUrl.searchParams.set('redirect_to', redirectTo);
+  authorizeUrl.searchParams.set('code_challenge', codeChallenge);
+  authorizeUrl.searchParams.set('code_challenge_method', 'S256');
+  authorizeUrl.searchParams.set('access_type', 'offline');
+  authorizeUrl.searchParams.set('prompt', 'consent');
+
+  res.redirect(authorizeUrl.toString());
+});
+
+/** Callback de Google: el servidor intercambia el codigo por tokens y fija las cookies. */
+app.get('/api/auth/google/callback', async (req, res) => {
+  const ip = getClientIp(req);
+  const code = typeof req.query.code === 'string' ? req.query.code : '';
+  const errorDescription = typeof req.query.error_description === 'string' ? req.query.error_description : '';
+
+  if (errorDescription) {
+    logAuthEvent('GOOGLE_FALLIDO', ip, errorDescription);
+    return res.redirect(`/login?error=${encodeURIComponent('No se pudo iniciar sesiÃ³n con Google.')}`);
+  }
+
+  const codeVerifier = readCookie(req, 'frenyer_pkce');
+  clearSessionCookie(res, 'frenyer_pkce');
+
+  if (!code || !codeVerifier) {
+    logAuthEvent('GOOGLE_FALLIDO', ip, 'codigo o verificador ausente');
+    return res.redirect(`/login?error=${encodeURIComponent('La sesiÃ³n con Google expirÃ³. Intenta de nuevo.')}`);
+  }
+
+  const result = await supabaseAuthRequest('token?grant_type=pkce', {
+    client_id: SUPABASE_ANON_KEY,
+    code,
+    code_verifier: codeVerifier,
+    grant_type: 'pkce'
+  });
+
+  if (result.error || !result.data?.access_token) {
+    logAuthEvent('GOOGLE_FALLIDO', ip, `motivo=${result.error || 'sin token'}`);
+    return res.redirect(`/login?error=${encodeURIComponent('No se pudo completar el inicio de sesiÃ³n con Google.')}`);
+  }
+
+  setSessionCookie(res, SESSION_COOKIE, result.data.access_token, SESSION_MAX_AGE_MS);
+  if (result.data.refresh_token) {
+    setSessionCookie(res, REFRESH_COOKIE, result.data.refresh_token, SESSION_MAX_AGE_MS);
+  }
+
+  const resolved = await resolveSessionUser(result.data.access_token);
+  logAuthEvent('GOOGLE_OK', ip, `email=${resolved?.user?.email || 'desconocido'}`);
+
+  res.redirect('/dashboard');
+});
+
+// ---------------------------------------------------------------------------
 // CUSTOMER & ADMIN AUTH/USER MANAGEMENT ROUTES
 // ---------------------------------------------------------------------------
 
@@ -5385,7 +6388,7 @@ app.post('/api/auth/customer/register', async (req, res) => {
   try {
     let authUser: any = null;
 
-    // Intentar con admin createUser si está disponible
+    // Intentar con admin createUser si estÃ¡ disponible
     try {
       const { data: adminData, error: adminError } = await supabaseServer.auth.admin.createUser({
         email,
@@ -5397,10 +6400,10 @@ app.post('/api/auth/customer/register', async (req, res) => {
         authUser = adminData.user;
       }
     } catch {
-      // Si auth.admin requiere Bearer token/service_role, recurrir al signUp estándar
+      // Si auth.admin requiere Bearer token/service_role, recurrir al signUp estÃ¡ndar
     }
 
-    // Fallback a signUp estándar con clave anónima (Alternativa 3)
+    // Fallback a signUp estÃ¡ndar con clave anÃ³nima (Alternativa 3)
     if (!authUser) {
       const { data: signData, error: signError } = await supabaseServer.auth.signUp({
         email,
