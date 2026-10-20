@@ -55,6 +55,19 @@ interface AssociatedUser {
   created_at?: string;
 }
 
+/**
+ * La base de datos guarda el rol en formato canonico (gerente, administrador,
+ * cajero, cliente) mientras la interfaz trabaja con Admin/Manager/Cashier/Viewer.
+ * Esta funcion traduce entre ambos para que el selector siempre tenga valor.
+ */
+function normalizeRoleForUi(role?: string | null): 'Admin' | 'Manager' | 'Cashier' | 'Viewer' {
+  const value = (role || '').trim().toLowerCase();
+  if (['admin', 'administrador', 'propietario', 'owner', 'superadmin'].includes(value)) return 'Admin';
+  if (['manager', 'gerente', 'gerente general', 'supervisor'].includes(value)) return 'Manager';
+  if (['cashier', 'cajero', 'vendedor'].includes(value)) return 'Cashier';
+  return 'Viewer';
+}
+
 interface RateRecord {
   id: string;
   date: string;
@@ -810,9 +823,9 @@ export function ConfigPage() {
     setNewUserEmail(user.email);
     setNewUserPassword('');
     setShowUserPassword(false);
-    setNewUserRole((user.role as any) || 'Cashier');
+    setNewUserRole(normalizeRoleForUi(user.role));
     setNewUserTitle(user.title || '');
-    setNewUserActive(user.active);
+    setNewUserActive(user.active !== false);
     setNewUserPermissions(user.permissions && user.permissions.length > 0 ? user.permissions : ['ventas']);
     setIsAddUserModalOpen(true);
   };
@@ -844,30 +857,37 @@ export function ConfigPage() {
         const res = await fetch(`/api/users/${editingUserId}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
           body: JSON.stringify(payload)
         });
-        const json = await res.json();
-        if (json.success) {
+        const json = await res.json().catch(() => null);
+        if (res.ok && json?.success) {
           await fetchUsers(); // Re-fetch
           showNotification(`Usuario ${newUserName} actualizado correctamente.`);
           setIsAddUserModalOpen(false);
         } else {
-          showNotification(json.error || 'Error al actualizar usuario.', 'info');
+          showNotification(
+            json?.error || (res.status === 401
+              ? 'Tu sesión expiró. Vuelve a iniciar sesión para guardar los cambios.'
+              : 'Error al actualizar usuario.'),
+            'info'
+          );
         }
       } else {
         // Crear nuevo usuario asociado
         const res = await fetch('/api/users', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
           body: JSON.stringify({ ...payload, password: newUserPassword.trim() })
         });
-        const json = await res.json();
-        if (json.success) {
+        const json = await res.json().catch(() => null);
+        if (res.ok && json?.success) {
           await fetchUsers(); // Re-fetch
           showNotification(`Usuario ${newUserName} registrado exitosamente.`);
           setIsAddUserModalOpen(false);
         } else {
-          showNotification(json.error || 'Error al registrar usuario.', 'info');
+          showNotification(json?.error || 'Error al registrar usuario.', 'info');
         }
       }
     } catch {
@@ -2290,7 +2310,8 @@ GRANT ALL ON TABLE public.branches TO anon;`}</pre>
                   Cashier: { bg: '#ecfdf5', border: '#a7f3d0', text: '#047857' },
                   Viewer: { bg: '#f8fafc', border: '#cbd5e1', text: '#475569' }
                 };
-                const currentTone = roleColors[item.role] || roleColors.Viewer;
+                const currentTone = roleColors[normalizeRoleForUi(item.role)] || roleColors.Viewer;
+                const displayRole = normalizeRoleForUi(item.role);
                 const perms = item.permissions || ['ventas'];
 
                 return (
@@ -2344,12 +2365,12 @@ GRANT ALL ON TABLE public.branches TO anon;`}</pre>
                                 color: currentTone.text
                               }}
                             >
-                              {item.role}
+                              {displayRole}
                             </span>
                           </div>
 
                           <span className="muted small" style={{ fontSize: 11, color: '#64748b' }}>
-                            {item.title || item.role}
+                            {item.title || displayRole}
                           </span>
 
                           <span className="muted small" style={{ fontSize: 11, color: '#9298a5' }}>
@@ -2418,9 +2439,11 @@ GRANT ALL ON TABLE public.branches TO anon;`}</pre>
                           gap: 4
                         }}
                         onClick={() => {
-                          localStorage.setItem('frenyer_active_user', JSON.stringify(item));
+                          const activeConfig = { ...item, role: displayRole };
+                          localStorage.setItem('frenyer_active_user', JSON.stringify(activeConfig));
+                          localStorage.setItem('frenyer_user_role', displayRole);
                           window.dispatchEvent(new CustomEvent('frenyer:active-user-changed'));
-                          showNotification(`Sesión activa cambiada a: ${item.name} (${item.role}). Los menús reflejarán sus permisos.`);
+                          showNotification(`Sesión activa cambiada a: ${item.name} (${displayRole}). Los menús reflejarán sus permisos.`);
                         }}
                         title="Simular o activar sesión con este usuario para verificar sus permisos"
                       >

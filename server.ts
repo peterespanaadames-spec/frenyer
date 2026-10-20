@@ -4213,6 +4213,68 @@ function loadPersistedUsers(): any[] {
   return [];
 }
 
+/**
+ * Roles admitidos por la tabla profiles (CHECK: gerente|administrador|cajero|cliente).
+ * La interfaz trabaja con nombres legibles (Admin, Cashier, Manager) y se traducen aqui.
+ */
+function toProfileRole(role?: string | null): string {
+  const value = (role || '').trim().toLowerCase();
+  if (['admin', 'administrador', 'propietario', 'owner', 'superadmin', 'root'].includes(value)) return 'administrador';
+  if (['manager', 'gerente', 'gerente general', 'supervisor'].includes(value)) return 'gerente';
+  if (['cashier', 'cajero', 'vendedor'].includes(value)) return 'cajero';
+  if (['cliente', 'customer', 'viewer', 'visitante'].includes(value)) return 'cliente';
+  return 'cajero';
+}
+
+/** Convierte una fila de profiles al modelo de usuario asociado de la interfaz. */
+function mapProfileToUser(p: any): any {
+  const displayName = (p.full_name || p.name || 'Usuario').trim();
+  const names = displayName.split(/\s+/);
+  const initials = names.length >= 2 ? `${names[0][0]}${names[1][0]}`.toUpperCase() : names[0].slice(0, 2).toUpperCase();
+  return {
+    id: p.id,
+    name: displayName,
+    email: p.email || '',
+    role: p.role || 'Cashier',
+    title: p.title || 'Personal Asociado',
+    active: p.active !== false && p.is_active !== false,
+    initials: initials,
+    permissions: Array.isArray(p.permissions) ? p.permissions : ['ventas'],
+    created_at: p.created_at || new Date().toISOString()
+  };
+}
+
+/**
+ * Localiza un usuario asociado en la persistencia local o en Supabase.
+ * Necesario porque el listado combina ambas fuentes y el alta local genera
+ * identificadores propios.
+ */
+async function resolveAssociatedUser(id: string, email?: string): Promise<any | null> {
+  const local = loadPersistedUsers();
+  const localMatch = local.find(
+    (u: any) =>
+      String(u.id) === String(id) ||
+      (email && u.email && String(u.email).toLowerCase() === String(email).toLowerCase())
+  );
+  if (localMatch) return localMatch;
+
+  try {
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+    const query = isUuid
+      ? `profiles?id=eq.${encodeURIComponent(id)}&select=*`
+      : `profiles?email=eq.${encodeURIComponent(email || '')}&select=*`;
+
+    const result = await supabaseRestRequest(query);
+    if (!result.error && Array.isArray(result.data) && result.data.length > 0) {
+      return mapProfileToUser(result.data[0]);
+    }
+  } catch (err) {
+    console.warn('Aviso buscando usuario asociado en Supabase:', err);
+  }
+
+  return null;
+}
+
 function savePersistedUser(user: any) {
   try {
     const dir = path.dirname(USERS_FILE);
@@ -4269,11 +4331,28 @@ app.get('/api/users', async (_req, res: AuthenticatedResponse) => {
           };
         });
 
-        // Combinar con los locales para asegurar que no se pierdan usuarios guardados localmente
+        // Combinar con los locales: el perfil local manda en cargo, estado y permisos
+        // porque esas columnas no existen en la tabla profiles de Supabase.
         const localList = loadPersistedUsers();
-        const combined = [...mappedFromSupabase];
+        const combined = mappedFromSupabase.map((su: any) => {
+          const lu = localList.find(
+            (l: any) =>
+              String(l.id) === String(su.id) ||
+              (l.email && su.email && String(l.email).toLowerCase() === String(su.email).toLowerCase())
+          );
+          if (!lu) return su;
+          return {
+            ...su,
+            name: lu.name || su.name,
+            role: lu.role || su.role,
+            title: lu.title !== undefined ? lu.title : su.title,
+            active: lu.active !== undefined ? lu.active : su.active,
+            permissions: Array.isArray(lu.permissions) && lu.permissions.length > 0 ? lu.permissions : su.permissions
+          };
+        });
+
         localList.forEach((lu: any) => {
-          if (!combined.some(cu => String(cu.id) === String(lu.id) || (cu.email && cu.email.toLowerCase() === (lu.email || '').toLowerCase()))) {
+          if (!combined.some(cu => String(cu.id) === String(lu.id) || (cu.email && lu.email && String(cu.email).toLowerCase() === String(lu.email).toLowerCase()))) {
             combined.push(lu);
           }
         });
@@ -4317,7 +4396,8 @@ app.post('/api/users', async (req, res: AuthenticatedResponse) => {
       return res.status(400).json({ success: false, error: 'El nombre y correo electrÃ³nico son obligatorios.' });
     }
 
-    const userId = body.id || `usr-${Date.now().toString(36)}-${Math.random().toString(36).substr(2, 5)}`;
+    // Se genera un UUID para que el registro local y el de Supabase
+    // compartan identificador y el usuario no aparezca duplicado.
     const names = body.name.trim().split(/\s+/);
     const initials = names.length >= 2 ? `${names[0][0]}${names[1][0]}`.toUpperCase() : names[0].slice(0, 2).toUpperCase();
 
@@ -4336,6 +4416,30 @@ app.post('/api/users', async (req, res: AuthenticatedResponse) => {
       }
     }
 
+    // 1. Registrar en Supabase Auth: es quien genera el identificador real del
+    // usuario y dispara el trigger que crea la fila en profiles (su id refer��ncia
+    // auth.users, por lo que no puede inventarse uno).
+    let authUserId = '';
+    if (body.password) {
+      try {
+        const signUpResult = await supabaseServer.auth.signUp({
+          email: String(body.email).trim().toLowerCase(),
+          password: body.password,
+          options: {
+            data: {
+              full_name: body.name.trim(),
+              role: toProfileRole(body.role)
+            }
+          }
+        });
+        authUserId = signUpResult?.data?.user?.id || '';
+      } catch (authErr) {
+        console.warn('Aviso registrando usuario en Auth:', authErr);
+      }
+    }
+
+    const userId = body.id || authUserId || crypto.randomUUID();
+
     const newUser: Record<string, any> = {
       id: userId,
       name: body.name.trim(),
@@ -4351,41 +4455,32 @@ app.post('/api/users', async (req, res: AuthenticatedResponse) => {
     // 1. Guardar en persistencia local resiliente
     savePersistedUser(newUser);
 
-    // 2. Intentar registrar en Supabase Auth
-    if (body.password) {
-      try {
-        await supabaseServer.auth.signUp({
-          email: newUser.email,
-          password: body.password,
-          options: {
-            data: {
-              full_name: newUser.name,
-              role: newUser.role.toLowerCase()
-            }
+    // 2. Sincronizar el perfil en Supabase.
+    // El trigger de Auth ya creo la fila con el id real del usuario: se actualiza
+    // en lugar de insertar para no violar la FK profiles.id -> auth.users.id.
+    try {
+      if (authUserId) {
+        await supabaseRestRequest(`profiles?id=eq.${encodeURIComponent(authUserId)}`, {
+          method: 'PATCH',
+          headers: { Prefer: 'return=representation' },
+          body: {
+            full_name: newUser.name,
+            email: newUser.email,
+            role: toProfileRole(newUser.role)
           }
         });
-      } catch (authErr) {
-        console.warn('Aviso registrando usuario en Auth:', authErr);
+      } else if (body.id) {
+        await supabaseRestRequest('profiles', {
+          method: 'POST',
+          headers: { Prefer: 'resolution=merge-duplicates' },
+          body: {
+            id: userId,
+            full_name: newUser.name,
+            email: newUser.email,
+            role: toProfileRole(newUser.role)
+          }
+        });
       }
-    }
-
-    // 3. Intentar registrar en Supabase (tabla profiles y organization_members)
-    try {
-      // Si el id es UUID vÃ¡lido, podemos intentar registrar en profiles
-      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(userId);
-      const sbPayload: Record<string, any> = {
-        full_name: newUser.name,
-        email: newUser.email,
-        role: newUser.role.toLowerCase()
-      };
-      if (isUuid) {
-        sbPayload.id = userId;
-      }
-      await supabaseRestRequest('profiles', {
-        method: 'POST',
-        headers: { Prefer: 'resolution=merge-duplicates' },
-        body: sbPayload
-      });
     } catch (sbErr) {
       console.warn('Aviso sincronizando usuario con Supabase (guardado localmente):', sbErr);
     }
@@ -4398,54 +4493,68 @@ app.post('/api/users', async (req, res: AuthenticatedResponse) => {
 
 app.patch('/api/users/:id', async (req, res: AuthenticatedResponse) => {
   try {
-    console.log('PATCH /api/users/:id - id:', req.params.id, 'body:', JSON.stringify(req.body));
     const { id } = req.params;
     const updates = req.body || {};
-    const current = loadPersistedUsers();
-    const existing = current.find((u: any) => String(u.id) === String(id));
 
+    // El usuario puede vivir solo en el archivo local o solo en Supabase.
+    const existing = await resolveAssociatedUser(id, updates.email);
     if (!existing) {
-      console.log('PATCH - Usuario no encontrado:', id);
       return res.status(404).json({ success: false, error: 'Usuario no encontrado.' });
     }
 
+    const displayName = updates.name ? String(updates.name).trim() : (existing.name || '');
+    const names = displayName.split(/\s+/).filter(Boolean);
+    const initials = names.length >= 2
+      ? `${names[0][0]}${names[1][0]}`.toUpperCase()
+      : (names[0] || 'US').slice(0, 2).toUpperCase();
+
     const updatedUser = {
       ...existing,
-      ...updates,
+      id: existing.id || id,
+      name: displayName,
+      email: updates.email ? String(updates.email).trim().toLowerCase() : (existing.email || ''),
+      role: updates.role || existing.role || 'Cashier',
+      title: updates.title !== undefined ? updates.title : (existing.title || ''),
+      active: updates.active !== undefined ? Boolean(updates.active) : existing.active !== false,
+      permissions: Array.isArray(updates.permissions) ? updates.permissions : (existing.permissions || ['ventas']),
+      initials: initials,
       updated_at: new Date().toISOString()
     };
-    
-    if (updates.name) {
-      const names = updates.name.trim().split(/\s+/);
-      updatedUser.initials = names.length >= 2 ? `${names[0][0]}${names[1][0]}`.toUpperCase() : names[0].slice(0, 2).toUpperCase();
-    }
 
+    // 1. Perfil operativo (incluye cargo, estado y permisos) en la persistencia local
     savePersistedUser(updatedUser);
-    console.log('PATCH - saved locally successfully for id:', id);
 
-    // Intentar actualizar en Supabase si corresponde
-    try {
-      console.log('PATCH - intentando actualizar en Supabase para id:', id);
-      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
-      if (isUuid) {
-        await supabaseRestRequest(`profiles?id=eq.${encodeURIComponent(id)}`, {
+    // 2. Sincronizar con Supabase profiles (solo las columnas que existen)
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(updatedUser.id));
+    if (isUuid) {
+      const sbPayload: Record<string, any> = {
+        id: updatedUser.id,
+        full_name: updatedUser.name,
+        email: updatedUser.email,
+        role: toProfileRole(updatedUser.role)
+      };
+
+      const updateResult = await supabaseRestRequest(
+        `profiles?id=eq.${encodeURIComponent(String(updatedUser.id))}`,
+        {
           method: 'PATCH',
-          body: {
-            full_name: updatedUser.name,
-            role: (updatedUser.role || '').toLowerCase()
-          }
+          headers: { Prefer: 'return=representation' },
+          body: sbPayload
+        }
+      );
+
+      // Si el perfil no existe todavia en Supabase, se crea con la misma clave.
+      if (updateResult.error) {
+        await supabaseRestRequest('profiles', {
+          method: 'POST',
+          headers: { Prefer: 'resolution=merge-duplicates' },
+          body: sbPayload
         });
-        console.log('PATCH - Supabase update intent finalizado');
-      } else {
-        console.log('PATCH - ID no es UUID, saltando Supabase update');
       }
-    } catch (sbErr) {
-      console.log('PATCH - Supabase update error:', sbErr);
     }
 
     return res.json({ success: true, data: updatedUser });
   } catch (err: any) {
-    console.log('PATCH - error crÃ­tico:', err);
     return res.status(500).json({ success: false, error: err?.message });
   }
 });
@@ -4453,16 +4562,15 @@ app.patch('/api/users/:id', async (req, res: AuthenticatedResponse) => {
 app.post('/api/users/:id/toggle-status', async (req, res: AuthenticatedResponse) => {
   try {
     const { id } = req.params;
-    const current = loadPersistedUsers();
-    const existing = current.find((u: any) => String(u.id) === String(id));
-
+    const existing = await resolveAssociatedUser(id);
     if (!existing) {
       return res.status(404).json({ success: false, error: 'Usuario no encontrado.' });
     }
 
-    const newActiveState = !existing.active;
+    const newActiveState = existing.active === false;
     const updatedUser = {
       ...existing,
+      id: existing.id || id,
       active: newActiveState,
       updated_at: new Date().toISOString()
     };
