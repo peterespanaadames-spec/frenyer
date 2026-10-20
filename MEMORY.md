@@ -1,45 +1,25 @@
 # MEMORY.md — FRENYER
 
 ## Estado actual
-- **Migración y Base del Sistema**: Frenyer ERP bimonetario (Node.js 22, Express, Vite, React 19, Tailwind CSS, TypeScript, Supabase PostgreSQL con RLS). Conectado al proyecto Supabase `knyqrwpaksawuxoqcayu`.
-- **Reporte Diario de Inventario (`/inventarios/reporte-diario` -> `DailyInventoryReport.tsx`)**:
-  - Solucionado el botón "Imprimir / Guardar PDF" (tanto en la vista previa modal como en el menú de exportación): ahora abre de forma fiable una ventana emergente de impresión con el reporte formateado.
-  - Reemplazado "FRENYER ERP" en la cabecera del reporte por el nombre del negocio registrado (`business.businessName`).
-- **Verificación**: Compilación TypeScript y linter ESLint limpios al 100%. Servidor activo en puerto 3000.
+- **Base del Sistema**: Frenyer ERP bimonetario (React 19, Vite, Express, TypeScript, Supabase PostgreSQL). Proyecto Supabase: `knyqrwpaksawuxoqcayu`.
+- **Servidor Activo**: Express + Vite funcionando en `http://localhost:3000` (`0.0.0.0`).
+- **Autenticación con Supabase Auth (MVP Completo)**:
+  - **Contexto Global (`AuthContext.tsx`)**: Integración con Supabase Auth (`signInWithEmail`, `signUpWithEmail`, `signInWithGoogle`, `signOut`), sesión persistente y mapeo de perfiles/roles.
+  - **Guardián de Rutas (`ProtectedRoute.tsx`)**: Protección de rutas privadas del ERP (`/dashboard`, `/ventas`, etc.), pantalla de carga institucional y redirección automática al `/login` guardando el historial.
+  - **Páginas de Login y Registro (`LoginPage.tsx`)**: Rutas `/login` y `/registro` estilizadas con el Design System de Frenyer (`tokens.css` y `globals.css`). Botón oficial de Google OAuth, alternador de visibilidad de contraseñas y cambio dinámico entre inicio de sesión y registro.
+  - **Retorno OAuth (`AuthCallback.tsx`)**: Manejo de intercambio de tokens en `/auth/callback`.
+  - **Enrutamiento (`router/index.tsx`)**: Separación clara entre Landing/Tienda pública (`/`), páginas de autenticación y panel administrativo privado.
+- **Configuración de Supabase (parcial)**: la URL real ya está cableada en `client.ts` y `server.ts` (`DEFAULT_SUPABASE_URL`), y `.env.local` existe con la URL pre-sembrada. **Falta pegar la clave anon/publishable** (`VITE_SUPABASE_ANON_KEY`): el botón "Conectar Base de Datos Supabase" del login la guarda sola en `.env.local`.
 
-## Soluciones técnicas recientes
-- Corregido el reporte de ventas en `SalesReport.tsx`: Se añadió un `setTimeout` de 500ms antes de ejecutar `window.print()` en la ventana emergente de impresión para asegurar que todo el contenido (membrete, datos) se haya renderizado antes de imprimir o guardar como PDF.
+## Decisiones técnicas recientes
+- **Estilos Vanilla / Design System**: `LoginPage.tsx` y `ProtectedRoute.tsx` migrados a clases semánticas `.auth-*` en `globals.css` alineadas con `tokens.css` (canvas gris frío, acento violeta `var(--brand-500)`, tarjetas redondeadas `var(--radius-lg)`), descartando utilidades Tailwind no configuradas.
+- **Dependencias de empaquetado**: Resuelta la instalación de binarios nativos para Windows x64 (`esbuild`, `@rolldown/binding-win32-x64-msvc`) y librerías auxiliares (`redux`, `reselect`, `react-redux`).
+- **Reconexión en caliente de Supabase**: `AuthContext` escucha el evento `frenyer:supabase-configured` para releer la sesión y resuscribirse al cliente recreado; sin esto, el login seguía usando el cliente con la URL placeholder.
 
-## Cambios de autenticación
-- Se ha eliminado la autenticación del panel administrativo. El sistema ahora permite el acceso directo a todas las secciones sin requerir inicio de sesión.
-- Se ha eliminado la pantalla de inicio de sesión (AuthScreen) y se ha forzado el estado de autenticación como siempre activo.
-- Se han eliminado botones y funciones relacionados con la autenticación (sign-out, guards).
-- Los usuarios y roles se mantienen en la base de datos (aislados) según lo solicitado anteriormente.
+## Errores a evitar
+- No usar clases Tailwind sin verificar su presencia en la configuración global; el proyecto utiliza CSS vainilla estructurado.
+- Siempre manejar el fallback de importes monetarios bimonetarios redondeados a dos decimales.
+- **Nunca reintroducir `https://your-project.supabase.co`**: rompe el OAuth de Google (redirige a un host inexistente) y el status de `/api/supabase/status`. La URL real es `https://knyqrwpaksawuxoqcayu.supabase.co`.
+- `AuthScreen.tsx` es un componente huérfano (no está en el router). La pantalla real de login es `LoginPage.tsx`: cualquier función de conexión con Supabase debe montarse ahí.
+- `tsx server.ts` no recarga en caliente: tras cambiar `.env.local` hay que reiniciar el proceso de dev.
 
-## Corrección de Cuentas Bancarias
-- Se ha modificado `authenticatedFetch` en `src/lib/supabase/api.ts` para eliminar la inclusión automática del token de autenticación (JWT) de Supabase en todas las peticiones a la API del servidor. Dado que se ha eliminado la autenticación del sistema, las llamadas a la API ya no necesitan enviar credenciales. Esto soluciona problemas donde el servidor rechazaba peticiones por falta de una sesión válida de Supabase, permitiendo que los movimientos bancarios y otras consultas se carguen correctamente al acceder sin iniciar sesión.
-
-## Cuentas Bancarias (Restablecimiento operativo)
-- Se han restablecido en la vista de Cuentas Bancarias (`/finanzas/cuentas` -> `BankAccounts.tsx`):
-  - **Transferencias entre cuentas**: Botón en cabecera, tarjetas individuales y vista de movimientos, con cálculo bimonetario automático (VES/USD), vista previa y tasa oficial.
-  - **Ingreso de saldo (Depósitos)**: Modal operativo con preselección de cuenta de destino y actualización de saldo en tiempo real.
-  - **Retiro de saldo (Egresos)**: Modal operativo con validación de saldo disponible y registro de salida.
-  - **Acciones rápidas en tarjetas**: Botones de Ingreso, Retiro, Transferir y Editar directamente en cada cuenta.
-  - **Persistencia en Supabase**: Movimientos de transferencia, ingresos y egresos afectan directamente `bank_accounts` (saldos) e insertan en `bank_movements` tanto por RPC como por REST fallback.
-  - Sincronización inmediata de saldos y emisión del evento global `frenyer:bank-updated`.
-- Claves de Supabase guardadas en `.env.example` y `.env.local` (`VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, `VITE_TURNSTILE_SITE_KEY`, `VITE_AUTH_REQUIRED=true`).
-- **Configuración / Auditoría de Cuentas Bancarias (`Config.tsx`)**: Se han agregado los botones **"Incluir cuenta"** y **"Incluir método de pago"** en la cabecera de la pestaña de Auditoría, junto con un botón de acción **"Modificar"** para cada cuenta registrada (activas e inactivas) que abre un modal dedicado de edición de cuenta bancaria y sincronización con Supabase.
-- **Cuentas Bancarias (`BankAccounts.tsx`)**: Se han eliminado los botones **"Nueva cuenta"** y **"Métodos de pago"** de la cabecera superior de la vista de cuentas bancarias según solicitado. Asimismo, se ha removido el botón/pestaña **"Cuentas activas"**, la opción de **modificar** cuentas, y los botones de **ingreso, retiro y transferir** de las tarjetas individuales de las cuentas (conservando solo el acceso a movimientos).
-- **Configuración / Usuarios Asociados (`Config.tsx`)**: Se corrigió el guardado y actualización de usuarios asociados apuntando a los endpoints `/api/users` y `/api/users/:id` (en lugar de `/api/admin/users/*` que requerían rol de gerente exclusivo y bloqueaban las peticiones), permitiendo registrar y actualizar correctamente en la base de datos local y Supabase.
-## Correcciones en Registro y Visibilidad de Contraseñas
-- **Modal de Registro/Login (`ShopPage.tsx`)**: Se removió el cierre por clic en el fondo externo para evitar pérdida accidental de datos ingresados; se añadió un botón de cierre explícito (X). El botón principal ahora muestra reactivamente "Crear cuenta" en el formulario de registro (y "Iniciar sesión" en el de ingreso). Se agregó el botón con el icono del ojo (`Eye`/`EyeOff`) para alternar la visibilidad de la contraseña y de la confirmación de contraseña.
-- **Configuración de Usuarios (`Config.tsx`)**: Se incorporó el botón con el icono del ojo en el campo de contraseña del modal de creación/edición de usuarios asociados para permitir visualizar lo escrito.
-- **Modal de Supabase (`SupabaseConnectionModal.tsx`)**: Se incorporó también el icono del ojo para visualizar la clave anónima.
-- **Alternativa 3 aplicada (Registro sin Bearer token)**: En `ShopPage.tsx` el botón de "Crear cuenta" ahora usa directamente el método público `supabase.auth.signUp()` con la clave anónima del cliente (`anon key`), eliminando la dependencia de llamadas que requerían un Bearer token administrativo (`service_role`). En `server.ts` también se añadió un fallback seguro a `signUp()` para prevenir bloqueos por token.
-- **Segregación de Roles (Cliente vs Usuario Asociado)**:
-  - Al iniciar sesión desde la tienda en línea, el sistema consulta `/api/users` y la metadata de Supabase para determinar si quien ingresa es un Usuario Asociado del ERP o un Cliente.
-## Configuración y Usuarios Asociados (`Config.tsx`)
-- **Acciones de usuarios**: Se ha asegurado la visibilidad del botón de "Eliminar" para usuarios asociados en el listado de configuración.
-- **Registro Automático**: Al guardar un usuario nuevo en la configuración, se registra automáticamente en Supabase Auth, permitiendo que el usuario pueda iniciar sesión directamente en la tienda sin pasos adicionales.
-- **Filtro de visualización**: Se ha filtrado la lista de usuarios para mostrar exclusivamente aquellos con roles administrativos o asociados (excluyendo clientes).
-- **Verificación**: Compilación TypeScript y linter ESLint limpios al 100%. Servidor activo en puerto 3000.

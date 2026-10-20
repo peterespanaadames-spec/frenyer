@@ -1878,8 +1878,7 @@ export function ShopPage() {
                   if (session?.user || currentAuthUser || currentUserRole) {
                     setIsUserMenuOpen((prev) => !prev);
                   } else {
-                    setIsAuthRegisterMode(false);
-                    setIsTrackerOpen(true);
+                    navigate('/login');
                   }
                 }}
                 className="cr-icon-btn"

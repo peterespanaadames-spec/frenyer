@@ -20,6 +20,8 @@ function isValidSupabaseKey(key?: string): boolean {
   );
 }
 
+export const DEFAULT_SUPABASE_URL = 'https://knyqrwpaksawuxoqcayu.supabase.co';
+
 // 1. Check env vars first, then fallback to stored connection in browser
 const envUrl = (import.meta.env.VITE_SUPABASE_URL || '').trim();
 const envKey = (import.meta.env.VITE_SUPABASE_ANON_KEY || '').trim();
@@ -31,7 +33,7 @@ const initialUrl = isValidSupabaseUrl(envUrl)
   ? envUrl
   : isValidSupabaseUrl(storedUrl)
   ? storedUrl
-  : envUrl || 'https://your-project.supabase.co';
+  : DEFAULT_SUPABASE_URL;
 
 const initialKey = isValidSupabaseKey(envKey)
   ? envKey

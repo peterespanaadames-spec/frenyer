@@ -70,11 +70,18 @@ function readEnvLocalFile(): Record<string, string> {
 const loadedEnv = loadEnv(process.env.NODE_ENV || 'development', process.cwd(), '');
 const localEnvFile = readEnvLocalFile();
 
+const DEFAULT_SUPABASE_URL = 'https://knyqrwpaksawuxoqcayu.supabase.co';
+
 function resolveSupabaseUrl(): string {
-  if (isRealSupabaseUrl(localEnvFile.VITE_SUPABASE_URL)) return localEnvFile.VITE_SUPABASE_URL.trim();
-  if (isRealSupabaseUrl(process.env.VITE_SUPABASE_URL)) return process.env.VITE_SUPABASE_URL!.trim();
-  if (isRealSupabaseUrl(loadedEnv.VITE_SUPABASE_URL)) return loadedEnv.VITE_SUPABASE_URL.trim();
-  return process.env.VITE_SUPABASE_URL || loadedEnv.VITE_SUPABASE_URL || 'https://your-project.supabase.co';
+  const candidates = [
+    localEnvFile.VITE_SUPABASE_URL,
+    process.env.VITE_SUPABASE_URL,
+    loadedEnv.VITE_SUPABASE_URL
+  ];
+  for (const candidate of candidates) {
+    if (isRealSupabaseUrl(candidate)) return candidate!.trim();
+  }
+  return DEFAULT_SUPABASE_URL;
 }
 
 function resolveSupabaseKey(): string {

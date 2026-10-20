@@ -27,17 +27,36 @@ import { CompanyHealthPage } from '../../modules/finance/pages/CompanyHealth';
 import { ProfitLossPage } from '../../modules/finance/pages/ProfitLoss';
 import { AccountsPayable } from '../../modules/finance/pages/AccountsPayable';
 import { ConfigPage } from '../../modules/alma/pages/Config';
+import { LoginPage } from '../../pages/auth/LoginPage';
+import { AuthCallback } from '../../pages/auth/AuthCallback';
+import { ProtectedRoute } from '../../components/auth/ProtectedRoute';
 
 export const router = createBrowserRouter([
-  // 1. Ruta principal / : Tienda virtual pública con catálogo, filtros y carrito
+  // 1. Rutas públicas: Tienda/Landing, Login, Registro y Callback de OAuth
   {
     path: '/',
     element: <ShopPage />,
   },
-
-  // 2. Panel administrativo y de gestión empresarial (AppShell con Sidebar)
   {
-    element: <DashboardLayout />,
+    path: '/login',
+    element: <LoginPage />,
+  },
+  {
+    path: '/registro',
+    element: <LoginPage />,
+  },
+  {
+    path: '/auth/callback',
+    element: <AuthCallback />,
+  },
+
+  // 2. Panel administrativo y de gestión empresarial (Protegido con ProtectedRoute)
+  {
+    element: (
+      <ProtectedRoute>
+        <DashboardLayout />
+      </ProtectedRoute>
+    ),
     children: [
       { path: 'dashboard', element: <Dashboard /> },
       { path: 'admin', element: <Dashboard /> },

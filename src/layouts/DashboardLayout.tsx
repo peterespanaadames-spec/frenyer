@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, Outlet } from 'react-router-dom';
-import { Menu, Sparkles, RefreshCw, Edit3, AlertCircle, ArrowUpRight, Check, X, Database, Store } from 'lucide-react';
+import { Menu, Sparkles, RefreshCw, Edit3, AlertCircle, ArrowUpRight, Check, X, Database, Store, LogOut } from 'lucide-react';
 import { Sidebar } from '../components/ui/Sidebar';
 import { ManualBcvRateModal } from '../components/modals/ManualBcvRateModal';
 import { SupabaseConnectionModal } from '../components/modals/SupabaseConnectionModal';
@@ -8,6 +8,7 @@ import { getActiveExchangeRate, setActiveExchangeRate, isFutureExchangeRate } fr
 import { isSupabaseConfigured, supabase } from '../lib/supabase/client';
 import { getActiveOrgId } from '../lib/supabase/db';
 import { getBusinessProfile, BusinessProfile } from '../lib/businessProfile';
+import { useAuth } from '../context/AuthContext';
 
 export function DashboardLayout() {
   const navigate = useNavigate();
@@ -19,6 +20,8 @@ export function DashboardLayout() {
   const [isSupabaseModalOpen, setIsSupabaseModalOpen] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isDbReady, setIsDbReady] = useState(() => isSupabaseConfigured);
+
+  const { signOut, profile: authProfile } = useAuth();
 
   // Active User Profile State (RBAC)
   const [activeUser, setActiveUser] = useState<any>(() => {
@@ -33,6 +36,12 @@ export function DashboardLayout() {
       permissions: ['ventas', 'inventario', 'finanzas', 'reportes', 'usuarios']
     };
   });
+
+  useEffect(() => {
+    if (authProfile) {
+      setActiveUser(authProfile);
+    }
+  }, [authProfile]);
 
   // Business Profile State (Nombre del negocio, RIF, etc.)
   const [businessProfile, setBusinessProfile] = useState<BusinessProfile>(() => getBusinessProfile());
@@ -371,6 +380,41 @@ export function DashboardLayout() {
                 </span>
               </div>
             </div>
+
+            {/* Botón Cerrar Sesión */}
+            <button
+              type="button"
+              onClick={async () => {
+                await signOut();
+                navigate('/', { replace: true });
+              }}
+              title="Cerrar sesión"
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                width: 32,
+                height: 32,
+                borderRadius: 8,
+                border: '1px solid var(--border)',
+                background: '#fff',
+                color: '#64748b',
+                cursor: 'pointer',
+                transition: 'all 0.15s ease'
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.color = '#ef4444';
+                e.currentTarget.style.borderColor = '#fca5a5';
+                e.currentTarget.style.background = '#fef2f2';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.color = '#64748b';
+                e.currentTarget.style.borderColor = 'var(--border)';
+                e.currentTarget.style.background = '#fff';
+              }}
+            >
+              <LogOut size={15} />
+            </button>
           </div>
         </header>
 

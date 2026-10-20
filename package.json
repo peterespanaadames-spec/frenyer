@@ -13,9 +13,13 @@
     "lint": "eslint ."
   },
   "dependencies": {
-    "@supabase/supabase-js": "latest",
+    "@rolldown/binding-win32-x64-msvc": "^1.2.14",
+    "@supabase/supabase-js": "^2.118.0",
     "@tanstack/react-query": "latest",
     "cors": "^2.8.6",
+    "csstype": "^3.2.3",
+    "esbuild": "^0.28.2",
+    "eventemitter3": "^5.0.4",
     "express": "^5.2.1",
     "html2canvas": "^1.4.1",
     "jspdf": "^4.2.1",
@@ -23,8 +27,11 @@
     "react": "19.0.0",
     "react-dom": "19.0.0",
     "react-hook-form": "latest",
+    "react-redux": "^9.3.0",
     "react-router-dom": "latest",
     "recharts": "latest",
+    "redux": "^5.0.1",
+    "reselect": "^5.3.0",
     "xlsx": "^0.18.5",
     "zod": "latest"
   },

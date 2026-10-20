@@ -1,6 +1,0 @@
-{
-  "summary": "Implementation plan for Amazon-like customer e-commerce experience (registration/login, order history, wishlist in Supabase, checkout gate) and clear separation between customers and internal ERP users with password management in Supabase.",
-  "updatedAt": "2026-10-17T04:09:38.306766891Z",
-  "requestFeedback": true,
-  "userFacing": true
-}
