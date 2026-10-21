@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Search,
@@ -35,7 +35,8 @@ import {
   ShieldCheck,
   LogOut,
   UserCheck,
-  ChevronDown
+  ChevronDown,
+  Heart
 } from 'lucide-react';
 import { supabase } from '../../../lib/supabase/client';
 import {
@@ -60,6 +61,7 @@ import {
   PaymentMethod,
   PublicBusinessConfig
 } from '../../../types/domain';
+import { CustomerPortal } from '../components/CustomerPortal';
 
 // --- LOGO SVG COMPONENT (Exact Match to CompuRepuestos CR Logo) ---
 function CompuRepuestosLogo({ className = '', size = 44 }: { className?: string; size?: number }) {
@@ -207,6 +209,7 @@ export function ShopPage() {
   const [isSubmittingOrder, setIsSubmittingOrder] = useState(false);
   const [completedOrder, setCompletedOrder] = useState<any | null>(null);
   const [isTrackerOpen, setIsTrackerOpen] = useState(false);
+  const [isCustomerPortalOpen, setIsCustomerPortalOpen] = useState(false);
   const [isAuthRegisterMode, setIsAuthRegisterMode] = useState(false);
   const [authFullName, setAuthFullName] = useState('');
   const [authCompany, setAuthCompany] = useState('');
@@ -237,6 +240,59 @@ export function ShopPage() {
     return null;
   });
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
+  const [wishlistSkus, setWishlistSkus] = useState<string[]>([]);
+
+  const isProductInWishlist = useCallback(
+    (sku: string) => wishlistSkus.includes(sku),
+    [wishlistSkus]
+  );
+
+  const refreshWishlist = useCallback(async () => {
+    try {
+      const res = await fetch('/api/customer/portal', { credentials: 'include' });
+      const json = await res.json().catch(() => null);
+      if (res.ok && json?.success && Array.isArray(json.data?.wishlist)) {
+        setWishlistSkus(json.data.wishlist.map((item: any) => item.sku).filter(Boolean));
+      }
+    } catch {
+      // Sin sesion activa no hay lista de deseo que sincronizar.
+    }
+  }, []);
+
+  useEffect(() => {
+    if (currentUserRole === 'cliente') {
+      refreshWishlist();
+    } else {
+      setWishlistSkus([]);
+    }
+  }, [currentUserRole, refreshWishlist]);
+
+  const toggleWishlistProduct = useCallback(
+    async (product: Product) => {
+      try {
+        const res = await fetch('/api/customer/wishlist', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({
+            product_id: product.id || product.sku,
+            sku: product.sku,
+            name: product.name,
+            price_usd: product.priceUsd,
+            image_url: product.image_url
+          })
+        });
+        const json = await res.json().catch(() => null);
+        if (res.ok && json?.success && Array.isArray(json.data?.wishlist)) {
+          setWishlistSkus(json.data.wishlist.map((item: any) => item.sku).filter(Boolean));
+          showToast(json.data.saved ? `${product.name} guardado en tu lista de deseo.` : `${product.name} quitado de tu lista de deseo.`);
+        }
+      } catch {
+        showToast('No se pudo actualizar tu lista de deseo.', 'info');
+      }
+    },
+    []
+  );
 
   const handleVerifyUserRoleAndConfigure = async (user: any, isExplicitLogin = false) => {
     if (!user || !user.email) return;
@@ -1892,6 +1948,12 @@ export function ShopPage() {
                 onClick={async () => {
                   const sessionUser = await fetchServerSession();
                   if (sessionUser || currentAuthUser || currentUserRole) {
+                    // El cliente abre su portal; el asociado mantiene el menu de gestion.
+                    if (currentUserRole === 'cliente') {
+                      setIsUserMenuOpen(false);
+                      setIsCustomerPortalOpen(true);
+                      return;
+                    }
                     setIsUserMenuOpen((prev) => !prev);
                   } else {
                     navigate('/login');
@@ -2108,7 +2170,7 @@ export function ShopPage() {
                           type="button"
                           onClick={() => {
                             setIsUserMenuOpen(false);
-                            setIsTrackerOpen(true);
+                            setIsCustomerPortalOpen(true);
                           }}
                           style={{
                             display: 'flex',
@@ -2575,6 +2637,36 @@ export function ShopPage() {
                       >
                         Agotado
                       </span>
+                    )}
+
+                    {currentUserRole === 'cliente' && (
+                      <button
+                        type="button"
+                        onClick={async event => {
+                          event.stopPropagation();
+                          await toggleWishlistProduct(product);
+                        }}
+                        aria-label={`Guardar ${product.name} en la lista de deseo`}
+                        title="Guardar en mi lista de deseo"
+                        style={{
+                          position: 'absolute',
+                          top: 8,
+                          right: 8,
+                          width: 30,
+                          height: 30,
+                          borderRadius: '50%',
+                          border: 'none',
+                          background: 'rgba(255,255,255,0.92)',
+                          color: '#e11d48',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          cursor: 'pointer',
+                          boxShadow: '0 2px 6px rgba(15,23,42,0.12)'
+                        }}
+                      >
+                        <Heart size={15} fill={isProductInWishlist(product.sku) ? '#e11d48' : 'none'} />
+                      </button>
                     )}
                   </div>
 
@@ -3099,6 +3191,10 @@ export function ShopPage() {
                       // La compra es publica: no se exige cuenta para comprar.
                       setIsCartOpen(false);
                       setCheckoutStep(1);
+                      // Con sesion iniciada, el pedido se vincula a la cuenta del cliente.
+                      if (currentUserRole === 'cliente' && currentAuthUser?.email) {
+                        setCustomerEmail(currentAuthUser.email);
+                      }
                       setIsCheckoutOpen(true);
                     }}
                     style={{
@@ -3238,6 +3334,23 @@ export function ShopPage() {
                       placeholder="Ej. V-18234567"
                       value={customerDoc}
                       onChange={e => setCustomerDoc(e.target.value)}
+                    />
+                  </div>
+
+                  <div className="field">
+                    <label style={{ fontSize: 12, fontWeight: 700 }}>Correo electrónico</label>
+                    <input
+                      type="email"
+                      className="input"
+                      placeholder="Ej. cliente@correo.com"
+                      value={customerEmail}
+                      onChange={e => setCustomerEmail(e.target.value)}
+                      readOnly={currentUserRole === 'cliente'}
+                      title={
+                        currentUserRole === 'cliente'
+                          ? 'Tu correo de cuenta se usa para vincular el pedido a tu portal'
+                          : 'Opcional: te permite seguir tu pedido por correo'
+                      }
                     />
                   </div>
                 </div>
@@ -3598,6 +3711,31 @@ export function ShopPage() {
           </div>
         </div>
       )}
+
+      {/* 12.B PORTAL DE CLIENTE (PEDIDOS, COMPRAS, LISTA DE DESEO Y PERFIL) */}
+      <CustomerPortal
+        isOpen={isCustomerPortalOpen}
+        email={currentAuthUser?.email || ''}
+        displayName={
+          currentAuthUser?.user_metadata?.full_name ||
+          associatedUserData?.name ||
+          currentAuthUser?.email ||
+          ''
+        }
+        onClose={() => setIsCustomerPortalOpen(false)}
+        onSignOut={() => {
+          setIsCustomerPortalOpen(false);
+          handleSignOutUser(false);
+        }}
+        onAddToCartFromWishlist={sku => {
+          const product = products.find(item => item.sku === sku);
+          if (product) {
+            addToCart(product);
+            setIsCustomerPortalOpen(false);
+            setIsCartOpen(true);
+          }
+        }}
+      />
 
       {/* 13. AUTH MODAL ("CREAR CUENTA") */}
       {isTrackerOpen && (

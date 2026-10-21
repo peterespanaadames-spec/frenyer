@@ -367,6 +367,7 @@ interface SupabaseRequestContext {
   organizationId: string;
   role: string;
   userEmail?: string;
+  userId?: string;
   isLocalSession?: boolean;
 }
 
@@ -472,7 +473,8 @@ app.use([
   '/api/purchases',
   '/api/branches',
   '/api/expenses',
-  '/api/expense-categories'
+  '/api/expense-categories',
+  '/api/customer'
 ], authenticateSupabaseRequest);
 
 // Lectura y actualizacion de pedidos quedan protegidas; el POST sigue publico
@@ -1938,6 +1940,25 @@ app.post('/api/orders', async (req, res) => {
       return res.status(400).json({ success: false, error: 'El pedido debe contener al menos un producto.' });
     }
 
+    // Si hay sesion iniciada, el pedido se vincula a la cuenta del cliente para
+    // que aparezca en su portal. La sesion es la fuente de verdad: el correo
+    // que envien el navegador solo se usa si no hay sesion.
+    let sessionEmail = '';
+    try {
+      const session = await resolveRequestSession(req, res as AuthenticatedResponse);
+      // El modo local guarda el correo en `local`; el modo Supabase, en `remote`.
+      sessionEmail = (
+        session?.remote?.user?.email ||
+        session?.local?.email ||
+        ''
+      )
+        .trim()
+        .toLowerCase();
+    } catch {
+      sessionEmail = '';
+    }
+    const effectiveCustomerEmail = sessionEmail || (typeof customer_email === 'string' ? customer_email.trim() : '');
+
     const effectiveRate = Number(exchange_rate) || lastCertifiedRate?.appliedRate || 877.90;
 
     // 0. ValidaciÃ³n previa de existencia en inventario (bloquear stock insuficiente o negativo)
@@ -1998,7 +2019,7 @@ app.post('/api/orders', async (req, res) => {
       order_number: orderNumber,
       customer_name: customer_name.trim(),
       customer_phone: customer_phone ? String(customer_phone).trim() : '',
-      customer_email: customer_email ? String(customer_email).trim() : '',
+      customer_email: effectiveCustomerEmail,
       customer_doc: customer_doc ? String(customer_doc).trim() : '',
       delivery_method: delivery_method === 'DOMICILIO' ? 'DOMICILIO' : 'RETIRO',
       delivery_address: delivery_address ? String(delivery_address).trim() : '',
@@ -2368,6 +2389,256 @@ const localQuotes = createLocalCollection('quotes.json');
 const localExpenses = createLocalCollection('expenses.json');
 const localExpenseCategories = createLocalCollection('expense_categories.json');
 const localExchangeRateHistory = createLocalCollection('exchange_rate_history.json');
+const localCustomerWishlist = createLocalCollection('customer_wishlist.json');
+const localShopCustomers = createLocalCollection('shop_customers.json');
+
+// ---------------------------------------------------------------------------
+// 4.E PORTAL DE CLIENTE (E-COMMERCE)
+// El cliente autenticado consulta unicamente su propia informacion. El
+// identificador se toma siempre de la sesion del servidor: nunca del cuerpo
+// de la peticion, para evitar acceso horizontal a datos de otros clientes.
+// ---------------------------------------------------------------------------
+
+/** Datos minimos del cliente autenticado segun la sesion httpOnly. */
+function resolveCustomerSession(res: AuthenticatedResponse): { email: string; userId: string; organizationId: string } | null {
+  const context = res.locals.supabaseContext;
+  if (!context) return null;
+  const email = (context.userEmail || '').trim().toLowerCase();
+  if (!email) return null;
+  return {
+    email,
+    userId: context.userId || '',
+    organizationId: context.organizationId || '00000000-0000-0000-0000-000000000001'
+  };
+}
+
+/** Pedidos web que pertenecen al cliente, uniendo Supabase y el respaldo local. */
+async function loadCustomerOrders(email: string, organizationId: string, accessToken?: string): Promise<any[]> {
+  const normalized = email.trim().toLowerCase();
+  const byNumber = new Map<string, any>();
+
+  try {
+    const queryRes = await supabaseRestRequest(
+      'orders?select=*,order_items(*)&customer_email=eq.' + encodeURIComponent(normalized) + '&order=created_at.desc',
+      {},
+      accessToken
+    );
+    if (!queryRes.error && Array.isArray(queryRes.data)) {
+      for (const order of queryRes.data) {
+        const key = order.order_number || order.id;
+        byNumber.set(key, {
+          ...order,
+          items: Array.isArray(order.order_items) && order.order_items.length > 0 ? order.order_items : (order.items || [])
+        });
+      }
+    }
+  } catch {
+    // La tabla orders puede no existir todavia en el proyecto.
+  }
+
+  for (const localOrder of loadPersistedOrders(organizationId)) {
+    const orderEmail = (localOrder.customer_email || '').trim().toLowerCase();
+    if (orderEmail !== normalized) continue;
+    const key = localOrder.order_number || localOrder.id;
+    if (!byNumber.has(key)) byNumber.set(key, localOrder);
+  }
+
+  return Array.from(byNumber.values()).sort(
+    (a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime()
+  );
+}
+
+/** Historial de compras del cliente en el ERP (facturas y cuentas por cobrar). */
+async function loadCustomerPurchases(email: string, organizationId: string): Promise<any[]> {
+  const normalized = email.trim().toLowerCase();
+  const purchases: any[] = [];
+
+  try {
+    const customersRes = await supabaseRestRequest(
+      'customers?select=id,name,email,phone&email=eq.' + encodeURIComponent(normalized) + '&organization_id=eq.' + encodeURIComponent(organizationId),
+      {}
+    );
+    const customerIds: string[] = [];
+    if (!customersRes.error && Array.isArray(customersRes.data)) {
+      for (const customer of customersRes.data) {
+        if (customer.id) customerIds.push(customer.id);
+      }
+    }
+
+    if (customerIds.length > 0) {
+      const idsParam = customerIds.map((id) => encodeURIComponent(id)).join(',');
+      const salesRes = await supabaseRestRequest(
+        'sales?select=*,sale_items(*)&customer_id=in.(' + idsParam + ')&order=created_at.desc',
+        {}
+      );
+      if (!salesRes.error && Array.isArray(salesRes.data)) {
+        for (const sale of salesRes.data) {
+          purchases.push({
+            id: sale.id,
+            doc_number: sale.doc_number,
+            doc_type: sale.doc_type,
+            status: sale.status,
+            payment_type: sale.payment_type,
+            subtotal_usd: Number(sale.subtotal_usd) || 0,
+            discount_usd: Number(sale.discount_usd) || 0,
+            total_usd: Number(sale.total_usd) || 0,
+            total_ves: Number(sale.total_ves) || 0,
+            exchange_rate: Number(sale.exchange_rate) || 0,
+            created_at: sale.created_at,
+            items: (sale.sale_items || []).map((item: any) => ({
+              sku: item.sku,
+              name: item.name,
+              quantity: Number(item.quantity) || 0,
+              unit_price_usd: Number(item.unit_price_usd) || 0,
+              total_usd: Number(item.total_usd) || 0,
+              total_ves: Number(item.total_ves) || 0
+            }))
+          });
+        }
+      }
+    }
+  } catch {
+    // Sin acceso a Supabase: se continua con el respaldo local.
+  }
+
+  if (purchases.length === 0) {
+    for (const sale of localSales.load(organizationId)) {
+      const customer = Array.isArray(sale.customers) ? sale.customers[0] : sale.customers;
+      const customerEmail = ((customer && customer.email) || '').trim().toLowerCase();
+      if (customerEmail !== normalized) continue;
+      purchases.push({
+        id: sale.id,
+        doc_number: sale.doc_number,
+        doc_type: sale.doc_type,
+        status: sale.status,
+        payment_type: sale.payment_type,
+        subtotal_usd: Number(sale.subtotal_usd) || 0,
+        discount_usd: Number(sale.discount_usd) || 0,
+        total_usd: Number(sale.total_usd) || 0,
+        total_ves: Number(sale.total_ves) || 0,
+        exchange_rate: Number(sale.exchange_rate) || 0,
+        created_at: sale.created_at,
+        items: (sale.sale_items || []).map((item: any) => ({
+          sku: item.sku,
+          name: item.name,
+          quantity: Number(item.quantity) || 0,
+          unit_price_usd: Number(item.unit_price_usd) || 0,
+          total_usd: Number(item.total_usd) || 0,
+          total_ves: Number(item.total_ves) || 0
+        }))
+      });
+    }
+  }
+
+  return purchases.sort((a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime());
+}
+
+/** Lista de deseos del cliente, con respaldo en disco cuando no hay tabla. */
+function loadCustomerWishlist(email: string, organizationId: string): any[] {
+  const normalized = email.trim().toLowerCase();
+  return localCustomerWishlist
+    .load(organizationId)
+    .filter((row: any) => String(row.customer_email || '').trim().toLowerCase() === normalized)
+    .sort((a: any, b: any) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime());
+}
+
+app.get('/api/customer/portal', async (_req, res: AuthenticatedResponse) => {
+  try {
+    const customer = resolveCustomerSession(res);
+    if (!customer) {
+      return res.status(401).json({ success: false, error: 'Debes iniciar sesion para ver tu portal de cliente.' });
+    }
+
+    const accessToken = res.locals.supabaseContext?.accessToken;
+    const [orders, purchases, wishlist] = await Promise.all([
+      loadCustomerOrders(customer.email, customer.organizationId, accessToken),
+      loadCustomerPurchases(customer.email, customer.organizationId),
+      Promise.resolve(loadCustomerWishlist(customer.email, customer.organizationId))
+    ]);
+
+    let profile: any = null;
+    try {
+      const profilesRes = await supabaseRestRequest(
+        'profiles?select=id,email,full_name,role&email=eq.' + encodeURIComponent(customer.email) + '&limit=1',
+        {}
+      );
+      if (!profilesRes.error && Array.isArray(profilesRes.data) && profilesRes.data[0]) {
+        profile = profilesRes.data[0];
+      }
+    } catch {
+      // Perfil no disponible: se mostraran los datos minimos de la sesion.
+    }
+
+    if (!profile) {
+      const local = localShopCustomers.load(customer.organizationId).find(
+        (row: any) => String(row.email || '').trim().toLowerCase() === customer.email
+      );
+      profile = local ? { id: local.id, email: local.email, full_name: local.full_name, role: 'cliente' } : null;
+    }
+
+    return res.json({
+      success: true,
+      data: {
+        customer: {
+          email: customer.email,
+          full_name: profile?.full_name || customer.email.split('@')[0],
+          role: profile?.role || 'cliente',
+          organization_id: customer.organizationId
+        },
+        orders,
+        purchases,
+        wishlist
+      }
+    });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message || 'Error cargando el portal de cliente.' });
+  }
+});
+
+app.post('/api/customer/wishlist', async (req, res: AuthenticatedResponse) => {
+  try {
+    const customer = resolveCustomerSession(res);
+    if (!customer) {
+      return res.status(401).json({ success: false, error: 'Debes iniciar sesion para usar tu lista de deseos.' });
+    }
+
+    const productId = String(req.body?.product_id || '').trim();
+    if (!productId) {
+      return res.status(400).json({ success: false, error: 'El producto es obligatorio.' });
+    }
+
+    const existing = loadCustomerWishlist(customer.email, customer.organizationId);
+    const alreadySaved = existing.some((row: any) => row.product_id === productId);
+    const updatedForCustomer = alreadySaved
+      ? existing.filter((row: any) => row.product_id !== productId)
+      : [
+          {
+            id: `wish-${customer.userId || customer.email}-${productId}`,
+            customer_email: customer.email,
+            customer_id: customer.userId,
+            organization_id: customer.organizationId,
+            product_id: productId,
+            sku: String(req.body?.sku || ''),
+            name: String(req.body?.name || ''),
+            price_usd: Number(req.body?.price_usd) || 0,
+            image_url: String(req.body?.image_url || ''),
+            created_at: new Date().toISOString()
+          },
+          ...existing
+        ];
+
+    // Se conservan las filas de los demas clientes del mismo inquilino.
+    const otherCustomers = localCustomerWishlist
+      .load(customer.organizationId)
+      .filter((row: any) => String(row.customer_email || '').trim().toLowerCase() !== customer.email);
+    localCustomerWishlist.save([...updatedForCustomer, ...otherCustomers]);
+
+    return res.json({ success: true, data: { saved: !alreadySaved, wishlist: updatedForCustomer } });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message || 'Error actualizando la lista de deseos.' });
+  }
+});
+
 
 // ---------------------------------------------------------------------------
 // 5. CUSTOMERS BACKEND PROXY
@@ -6095,6 +6366,7 @@ interface CachedSession {
   role: string;
   organizationId: string;
   email: string;
+  userId: string;
   expiresAt: number;
 }
 
@@ -6135,7 +6407,7 @@ async function resolveRequestSession(
       token,
       local: null,
       remote: {
-        user: { email: cached.email },
+        user: { email: cached.email, id: cached.userId },
         role: cached.role,
         organizationId: cached.organizationId
       }
@@ -6149,6 +6421,7 @@ async function resolveRequestSession(
       role: resolved.role,
       organizationId: resolved.organizationId,
       email: resolved.user.email || '',
+      userId: resolved.user.id || '',
       expiresAt: Math.min(tokenExpiry || Date.now() + 5 * 60_000, Date.now() + 5 * 60_000)
     });
     return { token, local: null, remote: resolved };
@@ -6184,6 +6457,7 @@ function applySessionContext(
       organizationId: session.local.organizationId,
       role: session.local.role,
       userEmail: session.local.email,
+      userId: session.local.sub,
       isLocalSession: true
     };
     return;
@@ -6193,6 +6467,7 @@ function applySessionContext(
     organizationId: session.remote!.organizationId,
     role: session.remote!.role,
     userEmail: session.remote!.user?.email || '',
+    userId: session.remote!.user?.id || '',
     isLocalSession: false
   };
 }
@@ -6600,7 +6875,7 @@ async function startServer() {
     app.use(vite.middlewares);
   } else {
     app.use(express.static(path.resolve(__dirname, 'dist')));
-    app.get('*', (_req, res) => {
+    app.get('/{*splat}', (_req, res) => {
       res.sendFile(path.resolve(__dirname, 'dist', 'index.html'));
     });
   }

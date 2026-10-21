@@ -2,7 +2,8 @@
 
 ## Estado actual
 - **Base del Sistema**: Frenyer ERP bimonetario (React 19, Vite, Express, TypeScript, Supabase PostgreSQL). Proyecto Supabase: `knyqrwpaksawuxoqcayu`.
-- **Servidor Activo**: Express + Vite funcionando en `http://localhost:3000` (`0.0.0.0`).
+- **Servidor Activo**: Express + Vite funcionando en `http://localhost:3000` (`0.0.0.0`). Arranque verificado: `GET /` → 200 (título "Frenyer") y `GET /api/auth/mode` → 200 con Supabase conectado (`credentialsSource: .env.local`, `localAccessEnabled: true`).
+  - **Logs del proceso**: `dev-server.log` (salida) y `dev-server.err.log` (errores), ambos en la raíz del proyecto y fuera de git (`dev-server*.log`).
 - **Repositorio Git**: `https://github.com/peterespanaadames-spec/frenyer.git` (rama `main`, publica). El historial previo (43 commits) se conservó: el local se reconstruyó sobre `origin/main` en lugar de forzar un push. `data/` y `.aistudio/` quedaron sin versionar por contener PII.
 - **Arquitectura de credenciales (Supabase solo en el servidor)**: el navegador **nunca** recibe una clave de Supabase. Todas las consultas pasan por `/api/*`; el servidor resuelve las credenciales, valida la sesión y aplica las RLS.
   - **Resolución en el servidor** (`server.ts`): `data/supabase-credentials.json` → variables de entorno (`SUPABASE_URL` / `SUPABASE_ANON_KEY` / `SUPABASE_SERVICE_ROLE_KEY`) → `.env.local` (mismos nombres, **sin** prefijo `VITE_`) → heredadas `VITE_*` (deprecadas). Estado en `/api/auth/mode` y `/api/supabase/status`, **sin claves**.
@@ -13,8 +14,18 @@
 - **Modo local**: `FRENYER_ACCESS_KEY` (servidor) habilita el ingreso directo con clave → cookie de sesión firmada con HMAC-SHA256 (12 h). Apagado si no se define. Auditoría en `data/auth-audit.log`.
 - **Persistencia local**: helper genérico `createLocalCollection` en `server.ts` con respaldo en `data/` para clientes, ventas, cotizaciones, gastos, categorías de gasto e historial de tasas (los 6 módulos que antes solo vivían en Supabase).
 - **Páginas de Login y Registro** (`LoginPage.tsx`): detectan el modo del servidor; muestran formulario de correo, botón de Google o clave de acceso. **Ya no solicitan claves**. `SupabaseConnectionModal` pasó a ser un panel de **solo lectura** del estado.
+- **Usuarios asociados (Configuración)**: el listado combina perfiles de Supabase (`profiles`) y el archivo local. La edición, el cambio de estado y el alta resuelven el usuario en **ambas** fuentes. `profiles` solo tiene `id, full_name, email, role, created_at` y su `role` admite únicamente gerente|administrador|cajero|cliente; el cargo, el estado activo y los permisos viven en `data/users.json` y mandan sobre Supabase al leer. El alta usa el id real que genera Supabase Auth (la FK `profiles.id → auth.users.id` impide inventarlo) y el rol se traduce con `toProfileRole()`.
+
+## Correcciones aplicadas (sesión actual)
+- **P-01 desbloqueado**: `server.ts:6603` `app.get('*')` → `app.get('/{*splat}')`. Express 5.3.0 + path-to-regexp 8.4.2 exige comodines nombrados. Verificado: `app.get('/{*splat}')` se registra sin error; `npm run build` (tsc + vite) → exit 0; `npm run lint` → exit 0.
+- **Portal del cliente (tienda)**: el clic en el avatar del usuario con rol `cliente` ya no abría el modal de autenticación (bug: la variable `isTrackerOpen` reutilizada) sino el **Portal Personal de Cliente** (`src/modules/shop/components/CustomerPortal.tsx`, namespace CSS `cp-*`) con 4 pestañas: Mis Pedidos, Mis Compras, Lista de Deseo y Mi Perfil.
+  - **Backend**: `GET /api/customer/portal` y `POST /api/customer/wishlist` (protegidos por sesión). El **correo del cliente se toma siempre de la sesión httpOnly** (`supabaseContext.userEmail`), nunca del cuerpo de la petición ⇒ sin acceso horizontal entre clientes. Se añadió `userId` al contexto de sesión y a la caché de sesiones para no resolver el usuario dos veces.
+  - **Datos**: pedidos desde `orders`/`order_items` + `data/orders.json`; compras desde `sales`/`sale_items` unidos por `customers.email`; lista de deseo en `data/customer_wishlist.json` (la tabla `customer_wishlist` no está aplicada en la base viva).
+  - **Verificado**: `npm run build` y `npm run lint` sin errores; prueba E2E con Playwright (Chrome) confirma que el clic abre el portal, que las 4 pestañas responden y que en 390 px el panel ocupa la pantalla. Aislamiento comprobado por API: cada cliente ve solo su pedido y su lista de deseo.
+  - **Vínculo pedido ↔ cuenta**: el checkout **no pedía correo** (`setCustomerEmail` nunca se invocaba), así que los pedidos nuevos no llegaban al portal. Corregido: el checkout ahora tiene campo de correo (prellenado y de solo lectura para el rol `cliente`) y `POST /api/orders` guarda el **correo de la sesión** por encima del que envía el navegador. Verificado: un pedido con sesión aparece en el portal del cliente y **no** en el de otro; el checkout anónimo sigue funcionando.
 
 ## Decisiones técnicas recientes
+- **El portal de cliente no reusa `isTrackerOpen`**: ese estado abre el modal de autenticación. El portal tiene su propio estado `isCustomerPortalOpen` en `ShopPage.tsx`.
 - **Estilos Vanilla / Design System**: `LoginPage.tsx` y `ProtectedRoute.tsx` migrados a clases semánticas `.auth-*` en `globals.css` alineadas con `tokens.css` (canvas gris frío, acento violeta `var(--brand-500)`, tarjetas redondeadas `var(--radius-lg)`), descartando utilidades Tailwind no configuradas.
 - **Dependencias de empaquetado**: Resuelta la instalación de binarios nativos para Windows x64 (`esbuild`, `@rolldown/binding-win32-x64-msvc`, `lightningcss-win32-x64-msvc`).
 - **Proxy para cotizaciones**: se añadieron `PATCH /api/quotes/:id`, `PATCH /api/quotes/:id/status` y `DELETE /api/quotes/:id` más `GET /api/sale-items`, porque esas cuatro funciones de `db.ts` usaban el cliente directo del navegador.
@@ -24,7 +35,12 @@
 - No usar clases Tailwind sin verificar su presencia en la configuración global; el proyecto utiliza CSS vainilla estructurado.
 - Siempre manejar el fallback de importes monetarios bimonetarios redondeados a dos decimales.
 - **Nunca reintroducir `https://your-project.supabase.co`**: rompe el OAuth de Google (redirige a un host inexistente) y el status de `/api/supabase/status`. La URL real es `https://knyqrwpaksawuxoqcayu.supabase.co`.
+- **`profiles.role` tiene un CHECK estricto** (gerente|administrador|cajero|cliente): enviar 'admin' o 'cashier' en minúsculas viola la restricción y la escritura se descarta en silencio. Traduce siempre con `toProfileRole()`.
+- **No insertar en `profiles` con un id inventado**: la FK hacia `auth.users(id)` lo rechaza y el trigger de Auth crea la fila con su propio id, dejando al usuario duplicado en el listado.
 - **Nunca usar el prefijo `VITE_` para credenciales**: Vite las inyecta en el bundle del navegador. `VITE_TURNSTILE_SITE_KEY` sí es pública por diseño.
 - `tsx server.ts` no recarga en caliente: tras cambiar `.env.local` hay que reiniciar el proceso de dev.
+- **El login local tiene rate limit de 5 intentos por 15 min e IP**: al probar rutas con `FRENYER_ACCESS_KEY` se agota rápido ⇒ reiniciar el servidor para limpiar el contador en memoria.
+- **`resolveRequestSession` distingue dos modos**: en modo local el correo está en `session.local.email` y `session.remote` es **null**; en modo Supabase está en `session.remote.user.email`. Leer solo uno de los dos deja la sesión sin correo. El contexto normalizado (`supabaseContext.userEmail`) sí cubre ambos.
+- **`/api/auth/local-login` es la vía para probar el portal sin Supabase**: acepta `{ accessKey, email }` y fija la cookie de sesión con ese correo, lo que permite verificar el aislamiento por cliente.
 - `lightningcss-win32-x64-msvc` se descargó truncado (589 KB) y rompía `npm run build` con error 193; se reinstaló con `npm install lightningcss-win32-x64-msvc@1.33.0 --no-save`.
 - **Los datos personales ya estuvieron versionados**: `data/` (correos, teléfonos y direcciones de clientes) se versionó en commits anteriores. Se retiró del árbol en `2482998`, pero sigue en el historial del repo público; eliminarlo del historial exige reescribirlo y hacer force-push.
