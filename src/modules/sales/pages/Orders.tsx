@@ -60,6 +60,7 @@ import {
   DeliveryMethod,
   PaymentMethod
 } from '../../../types/domain';
+import { OrderTrackerModal } from '../../shop/components/OrderTrackerModal';
 
 // Sound effect synthesizer via Web Audio API (graceful, no external mp3 needed)
 function playNotificationChime() {
@@ -134,6 +135,8 @@ export function OrdersPage() {
   const [selectedProductSku, setSelectedProductSku] = useState('');
   const [selectedQty, setSelectedQty] = useState(1);
   const [isSubmittingNew, setIsSubmittingNew] = useState(false);
+  const [isTrackerModalOpen, setIsTrackerModalOpen] = useState(false);
+  const [trackerModalOrder, setTrackerModalOrder] = useState<any>(null);
 
   // Toast notifications
   const [toast, setToast] = useState<{ message: string; type?: 'success' | 'info' } | null>(null);
@@ -1142,6 +1145,17 @@ export function OrdersPage() {
                 </Badge>
                 <button
                   type="button"
+                  onClick={() => {
+                    setTrackerModalOrder(selectedOrder);
+                    setIsTrackerModalOpen(true);
+                  }}
+                  className="btn-minimal-tracker"
+                  title="Ver estatus y vista en tiempo real que tiene el cliente"
+                >
+                  <Truck size={12} /> Tracker
+                </button>
+                <button
+                  type="button"
                   onClick={() => setSelectedOrder(null)}
                   style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: 'var(--muted)', marginLeft: 8 }}
                 >
@@ -1481,6 +1495,17 @@ export function OrdersPage() {
           </div>
         </div>
       )}
+
+      {/* Tracker Modal para vista previa del cliente y soporte */}
+      <OrderTrackerModal
+        isOpen={isTrackerModalOpen}
+        orderIdOrNumber={trackerModalOrder?.order_number || trackerModalOrder?.id}
+        initialOrder={trackerModalOrder}
+        onClose={() => {
+          setIsTrackerModalOpen(false);
+          setTrackerModalOrder(null);
+        }}
+      />
     </div>
   );
 }

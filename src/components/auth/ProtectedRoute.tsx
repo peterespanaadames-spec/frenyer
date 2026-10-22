@@ -36,12 +36,18 @@ export function ProtectedRoute({ children, allowedRoles }: ProtectedRouteProps) 
     return <Navigate to="/login" state={{ from: location }} replace />;
   }
 
-  // Si se definen roles permitidos y el usuario no cumple el rol
+  const userRole = (role || 'cliente').toLowerCase();
+  const internalRoles = ['gerente', 'administrador', 'cajero', 'admin', 'ventas', 'inventario', 'almacenista', 'contador', 'superadmin', 'soporte'];
+  const isInternal = internalRoles.includes(userRole);
+
+  if (!isInternal) {
+    return <Navigate to="/" replace />;
+  }
+
+  // Si se definen roles permitidos específicos y el usuario interno no lo cumple
   if (allowedRoles && allowedRoles.length > 0) {
-    const userRole = (role || 'cliente').toLowerCase();
     const isAllowed = allowedRoles.some((r) => r.toLowerCase() === userRole);
     if (!isAllowed) {
-      // Si un cliente intenta entrar al ERP, enviarlo a la tienda pública
       return <Navigate to="/" replace />;
     }
   }

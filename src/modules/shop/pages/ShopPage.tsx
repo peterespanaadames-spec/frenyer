@@ -62,6 +62,7 @@ import {
   PublicBusinessConfig
 } from '../../../types/domain';
 import { CustomerPortal } from '../components/CustomerPortal';
+import { OrderTrackerModal } from '../components/OrderTrackerModal';
 
 // --- LOGO SVG COMPONENT (Exact Match to CompuRepuestos CR Logo) ---
 function CompuRepuestosLogo({ className = '', size = 44 }: { className?: string; size?: number }) {
@@ -184,6 +185,7 @@ export function ShopPage() {
   const [activeDivision, setActiveDivision] = useState<'ALL' | 'MATERIALES' | 'MOTOS'>('ALL');
   const [selectedCategory, setSelectedCategory] = useState<string>('ALL');
   const [searchTerm, setSearchTerm] = useState('');
+  const [isSearchFocused, setIsSearchFocused] = useState(false);
 
   // Mobile drawer menu
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
@@ -210,6 +212,8 @@ export function ShopPage() {
   const [completedOrder, setCompletedOrder] = useState<any | null>(null);
   const [isTrackerOpen, setIsTrackerOpen] = useState(false);
   const [isCustomerPortalOpen, setIsCustomerPortalOpen] = useState(false);
+  const [isOrderTrackerOpen, setIsOrderTrackerOpen] = useState(false);
+  const [selectedTrackingOrder, setSelectedTrackingOrder] = useState<any>(null);
   const [isAuthRegisterMode, setIsAuthRegisterMode] = useState(false);
   const [authFullName, setAuthFullName] = useState('');
   const [authCompany, setAuthCompany] = useState('');
@@ -362,6 +366,7 @@ export function ShopPage() {
         setCurrentAuthUser(user);
 
         // --- ACCESO AL PANEL ADMINISTRATIVO SI ES LOGIN EXPLÍCITO ---
+        console.log('DEBUG: Is associated/admin, effectiveRole:', effectiveRole, 'isExplicitLogin:', isExplicitLogin);
         if (isExplicitLogin) {
           showToast(`¡Bienvenido(a), ${activeConfig.name}! Rol: ${activeConfig.role}. Accediendo al panel administrativo.`);
           setIsTrackerOpen(false);
@@ -660,12 +665,55 @@ export function ShopPage() {
     });
   }, [systemCategories]);
 
-  // Filtered catalog
+  const normalizeText = useCallback((str: string) => {
+    return (str || '')
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '');
+  }, []);
+
+  const intelligentMatch = useCallback((product: Product, query: string) => {
+    const cleanQuery = normalizeText(query);
+    if (!cleanQuery) return true;
+    const tokens = cleanQuery.split(/\s+/).filter(Boolean);
+    if (tokens.length === 0) return true;
+
+    const searchableText = normalizeText(
+      `${product.name} ${product.sku} ${product.category} ${product.brand} ${product.description || ''} ${product.barcode || ''}`
+    );
+
+    return tokens.every(token => searchableText.includes(token));
+  }, [normalizeText]);
+
+  // Predictive typing suggestions
+  const predictiveSuggestions = useMemo(() => {
+    const q = searchTerm.trim();
+    if (!q || q.length < 1) return { products: [], categories: [], brands: [] };
+
+    const matchedProducts = products
+      .filter(p => intelligentMatch(p, q))
+      .slice(0, 6);
+
+    const matchedCategories = systemCategories
+      .filter(cat => normalizeText(cat).includes(normalizeText(q)))
+      .slice(0, 3);
+
+    const matchedBrands = Array.from(new Set(products.map(p => p.brand).filter((b): b is string => Boolean(b))))
+      .filter(b => normalizeText(b).includes(normalizeText(q)))
+      .slice(0, 3);
+
+    return {
+      products: matchedProducts,
+      categories: matchedCategories,
+      brands: matchedBrands
+    };
+  }, [products, searchTerm, systemCategories, intelligentMatch, normalizeText]);
+
+  // Filtered catalog with intelligent search
   const filteredProducts = useMemo(() => {
     return products.filter(p => {
       const catLower = (p.category || '').toLowerCase();
       const nameLower = p.name.toLowerCase();
-      const descLower = (p.description || '').toLowerCase();
       const brandLower = (p.brand || '').toLowerCase();
 
       const isMaterial =
@@ -719,19 +767,14 @@ export function ShopPage() {
         if (p.category !== selectedCategory) return false;
       }
 
-      // 3. Search query
+      // 3. Intelligent Search query
       if (searchTerm.trim()) {
-        const q = searchTerm.toLowerCase().trim();
-        const matchName = nameLower.includes(q);
-        const matchSku = p.sku.toLowerCase().includes(q);
-        const matchCat = catLower.includes(q);
-        const matchDesc = descLower.includes(q);
-        if (!matchName && !matchSku && !matchCat && !matchDesc) return false;
+        if (!intelligentMatch(p, searchTerm)) return false;
       }
 
       return true;
     });
-  }, [products, activeDivision, selectedCategory, searchTerm]);
+  }, [products, activeDivision, selectedCategory, searchTerm, intelligentMatch]);
 
   // Cart operations
   const totalCartUnits = useMemo(() => cart.reduce((acc, item) => acc + item.quantity, 0), [cart]);
@@ -1940,7 +1983,18 @@ export function ShopPage() {
               </button>
             </div>
 
-
+            {/* Botón directo de Seguimiento / Tracker */}
+            <button
+              type="button"
+              onClick={() => {
+                setSelectedTrackingOrder(null);
+                setIsOrderTrackerOpen(true);
+              }}
+              className="btn-minimal-tracker"
+              title="Seguimiento en tiempo real de tu pedido"
+            >
+              <Truck size={12} /> Rastrear Pedido
+            </button>
 
             <div style={{ position: 'relative' }}>
               <button
@@ -2140,7 +2194,7 @@ export function ShopPage() {
                               textAlign: 'left'
                             }}
                           >
-                            <LayoutDashboard size={16} color="#7c3aed" /> Ir al Panel ERP ({associatedUserData?.role})
+                            <LayoutDashboard size={16} color="#7c3aed" /> Ir al Panel Administrativo ERP ({associatedUserData?.role})
                           </button>
                           <button
                             type="button"
@@ -2166,29 +2220,42 @@ export function ShopPage() {
                           </button>
                         </>
                       ) : (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setIsUserMenuOpen(false);
-                            setIsCustomerPortalOpen(true);
-                          }}
-                          style={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: 10,
-                            padding: '10px 14px',
-                            borderRadius: 10,
-                            border: '1px solid #a7f3d0',
-                            background: '#f0fdf4',
-                            color: '#065f46',
-                            fontSize: 13,
-                            fontWeight: 700,
-                            cursor: 'pointer',
-                            textAlign: 'left'
-                          }}
-                        >
-                          <FileText size={16} color="#059669" /> Mis Pedidos y Solicitudes
-                        </button>
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setIsUserMenuOpen(false);
+                              setIsCustomerPortalOpen(true);
+                            }}
+                            style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: 10,
+                              padding: '10px 14px',
+                              borderRadius: 10,
+                              border: '1px solid #a7f3d0',
+                              background: '#ecfdf5',
+                              color: '#065f46',
+                              fontSize: 13,
+                              fontWeight: 750,
+                              cursor: 'pointer',
+                              textAlign: 'left'
+                            }}
+                          >
+                            <UserCheck size={16} color="#059669" /> Mi Portal de Cliente
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setIsUserMenuOpen(false);
+                              setSelectedTrackingOrder(null);
+                              setIsOrderTrackerOpen(true);
+                            }}
+                            className="btn-minimal-tracker"
+                          >
+                            <Truck size={12} /> Tracker
+                          </button>
+                        </>
                       )}
 
                       {/* Opción para cambiar de cuenta o iniciar sesión */}
@@ -2259,32 +2326,161 @@ export function ShopPage() {
           </div>
         </div>
 
-        <div className="cr-mobile-search-row">
-          <div className="cr-mobile-search-box">
+        <div style={{ maxWidth: 1320, margin: '0 auto', padding: '0 16px 12px' }}>
+          <div className="cr-desktop-search-wrap" style={{ position: 'relative', width: '100%', maxWidth: '100%' }}>
             <input
               type="text"
-              className="cr-mobile-search-input"
-              placeholder="Buscar..."
+              className="cr-desktop-search-input"
+              placeholder="Búsqueda inteligente (ej. aceite, amortiguador, resma)..."
               value={searchTerm}
               onChange={e => setSearchTerm(e.target.value)}
+              onFocus={() => setIsSearchFocused(true)}
+              onBlur={() => setTimeout(() => setIsSearchFocused(false), 250)}
             />
             {searchTerm && (
               <button
                 type="button"
                 onClick={() => setSearchTerm('')}
-                style={{ border: 'none', background: 'transparent', padding: '0 6px', color: '#94a3b8' }}
+                style={{ border: 'none', background: 'transparent', padding: '0 6px', color: '#94a3b8', cursor: 'pointer' }}
+                title="Limpiar búsqueda"
               >
                 <X size={16} />
               </button>
             )}
-            <button
-              type="button"
-              className="cr-mobile-search-btn"
-              onClick={() => {}}
-              aria-label="Buscar"
-            >
+            <button type="button" className="cr-desktop-search-btn" aria-label="Buscar">
               <Search size={18} />
             </button>
+
+            {/* Predictive & Intelligent Search Dropdown */}
+            {isSearchFocused && searchTerm.trim().length > 0 && (
+              <div
+                style={{
+                  position: 'absolute',
+                  top: 'calc(100% + 8px)',
+                  left: 0,
+                  right: 0,
+                  background: '#ffffff',
+                  border: '1px solid #e2e8f0',
+                  borderRadius: 16,
+                  boxShadow: '0 16px 36px rgba(0, 0, 0, 0.12)',
+                  zIndex: 1300,
+                  padding: 12,
+                  maxHeight: 420,
+                  overflowY: 'auto'
+                }}
+                onMouseDown={(e) => e.preventDefault()}
+              >
+                <div style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: '#64748b', padding: '4px 8px 8px', borderBottom: '1px solid #f1f5f9', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span>Sugerencias Inteligentes ({predictiveSuggestions.products.length} resultados)</span>
+                  <span style={{ fontSize: 10, color: '#94a3b8' }}>Predictivo</span>
+                </div>
+
+                {/* Categories & Brands matching */}
+                {(predictiveSuggestions.categories.length > 0 || predictiveSuggestions.brands.length > 0) && (
+                  <div style={{ padding: '8px 0', borderBottom: '1px solid #f1f5f9', display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                    {predictiveSuggestions.categories.map(cat => (
+                      <button
+                        key={cat}
+                        type="button"
+                        onClick={() => {
+                          setSelectedCategory(cat);
+                          setSearchTerm('');
+                          setIsSearchFocused(false);
+                        }}
+                        style={{
+                          background: '#f8fafc',
+                          border: '1px solid #e2e8f0',
+                          borderRadius: 8,
+                          padding: '4px 10px',
+                          fontSize: 11.5,
+                          fontWeight: 600,
+                          color: '#1e3a8a',
+                          cursor: 'pointer'
+                        }}
+                      >
+                        📁 {cat}
+                      </button>
+                    ))}
+                    {predictiveSuggestions.brands.map(brand => (
+                      <button
+                        key={brand}
+                        type="button"
+                        onClick={() => {
+                          setSearchTerm(brand);
+                          setIsSearchFocused(false);
+                        }}
+                        style={{
+                          background: '#f8fafc',
+                          border: '1px solid #e2e8f0',
+                          borderRadius: 8,
+                          padding: '4px 10px',
+                          fontSize: 11.5,
+                          fontWeight: 600,
+                          color: '#b91c1c',
+                          cursor: 'pointer'
+                        }}
+                      >
+                        🏷️ {brand}
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                {/* Products list */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 8 }}>
+                  {predictiveSuggestions.products.length === 0 ? (
+                    <div style={{ padding: '16px', textAlign: 'center', color: '#64748b', fontSize: 13 }}>
+                      No se encontraron productos para "{searchTerm}".
+                    </div>
+                  ) : (
+                    predictiveSuggestions.products.map(prod => {
+                      const priceFormatted = activeCurrency === 'USD' ? formatUSD(prod.priceUsd) : formatVES(convertUSDtoVES(prod.priceUsd, bcvRate));
+                      return (
+                        <div
+                          key={prod.id || prod.sku}
+                          onClick={() => {
+                            setQuickViewProduct(prod);
+                            setIsSearchFocused(false);
+                          }}
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 12,
+                            padding: '8px 10px',
+                            borderRadius: 10,
+                            cursor: 'pointer',
+                            transition: 'background 0.15s ease'
+                          }}
+                          onMouseEnter={(e) => (e.currentTarget.style.background = '#f8fafc')}
+                          onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+                        >
+                          <div style={{ width: 38, height: 38, borderRadius: 8, background: '#f1f5f9', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, overflow: 'hidden' }}>
+                            {prod.image_url ? (
+                              <img src={prod.image_url} alt={prod.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                            ) : (
+                              <Package size={18} color="#64748b" />
+                            )}
+                          </div>
+                          <div style={{ flex: 1, overflow: 'hidden' }}>
+                            <div style={{ fontSize: 13, fontWeight: 700, color: '#0f172a', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                              {prod.name}
+                            </div>
+                            <div style={{ fontSize: 11, color: '#64748b', display: 'flex', gap: 6, alignItems: 'center' }}>
+                              <span>{prod.sku}</span>
+                              <span>·</span>
+                              <span style={{ color: '#1e3a8a', fontWeight: 600 }}>{prod.category}</span>
+                            </div>
+                          </div>
+                          <div style={{ fontSize: 13, fontWeight: 800, color: '#1e3a8a', whiteSpace: 'nowrap', fontFamily: 'monospace', fontVariantNumeric: 'tabular-nums' }}>
+                            {priceFormatted}
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </header>
@@ -2403,19 +2599,22 @@ export function ShopPage() {
       <div className="cr-desktop-subhead-row">
         <div className="cr-title-left">Materiales y Copias</div>
 
-        <div className="cr-desktop-search-wrap">
+        <div className="cr-desktop-search-wrap" style={{ position: 'relative' }}>
           <input
             type="text"
             className="cr-desktop-search-input"
-            placeholder="Buscar..."
+            placeholder="Búsqueda inteligente (ej. aceite, amortiguador, resma)..."
             value={searchTerm}
             onChange={e => setSearchTerm(e.target.value)}
+            onFocus={() => setIsSearchFocused(true)}
+            onBlur={() => setTimeout(() => setIsSearchFocused(false), 250)}
           />
           {searchTerm && (
             <button
               type="button"
               onClick={() => setSearchTerm('')}
-              style={{ border: 'none', background: 'transparent', padding: '0 6px', color: '#94a3b8' }}
+              style={{ border: 'none', background: 'transparent', padding: '0 6px', color: '#94a3b8', cursor: 'pointer' }}
+              title="Limpiar búsqueda"
             >
               <X size={16} />
             </button>
@@ -2423,6 +2622,137 @@ export function ShopPage() {
           <button type="button" className="cr-desktop-search-btn" aria-label="Buscar">
             <Search size={18} />
           </button>
+
+          {/* Predictive & Intelligent Search Dropdown */}
+          {isSearchFocused && searchTerm.trim().length > 0 && (
+            <div
+              style={{
+                position: 'absolute',
+                top: 'calc(100% + 8px)',
+                left: 0,
+                right: 0,
+                background: '#ffffff',
+                border: '1px solid #e2e8f0',
+                borderRadius: 16,
+                boxShadow: '0 16px 36px rgba(0, 0, 0, 0.12)',
+                zIndex: 1300,
+                padding: 12,
+                maxHeight: 420,
+                overflowY: 'auto'
+              }}
+              onMouseDown={(e) => e.preventDefault()}
+            >
+              <div style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: '#64748b', padding: '4px 8px 8px', borderBottom: '1px solid #f1f5f9', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span>Sugerencias Inteligentes ({predictiveSuggestions.products.length} resultados)</span>
+                <span style={{ fontSize: 10, color: '#94a3b8' }}>Predictivo</span>
+              </div>
+
+              {/* Categories & Brands matching */}
+              {(predictiveSuggestions.categories.length > 0 || predictiveSuggestions.brands.length > 0) && (
+                <div style={{ padding: '8px 0', borderBottom: '1px solid #f1f5f9', display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                  {predictiveSuggestions.categories.map(cat => (
+                    <button
+                      key={cat}
+                      type="button"
+                      onClick={() => {
+                        setSelectedCategory(cat);
+                        setSearchTerm('');
+                        setIsSearchFocused(false);
+                      }}
+                      style={{
+                        background: '#f8fafc',
+                        border: '1px solid #e2e8f0',
+                        borderRadius: 8,
+                        padding: '4px 10px',
+                        fontSize: 11.5,
+                        fontWeight: 600,
+                        color: '#1e3a8a',
+                        cursor: 'pointer'
+                      }}
+                    >
+                      📁 {cat}
+                    </button>
+                  ))}
+                  {predictiveSuggestions.brands.map(brand => (
+                    <button
+                      key={brand}
+                      type="button"
+                      onClick={() => {
+                        setSearchTerm(brand);
+                        setIsSearchFocused(false);
+                      }}
+                      style={{
+                        background: '#f8fafc',
+                        border: '1px solid #e2e8f0',
+                        borderRadius: 8,
+                        padding: '4px 10px',
+                        fontSize: 11.5,
+                        fontWeight: 600,
+                        color: '#b91c1c',
+                        cursor: 'pointer'
+                      }}
+                    >
+                      🏷️ {brand}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {/* Products list */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 8 }}>
+                {predictiveSuggestions.products.length === 0 ? (
+                  <div style={{ padding: '16px', textAlign: 'center', color: '#64748b', fontSize: 13 }}>
+                    No se encontraron productos para "{searchTerm}".
+                  </div>
+                ) : (
+                  predictiveSuggestions.products.map(prod => {
+                    const priceFormatted = activeCurrency === 'USD' ? formatUSD(prod.priceUsd) : formatVES(convertUSDtoVES(prod.priceUsd, bcvRate));
+                    return (
+                      <div
+                        key={prod.id || prod.sku}
+                        onClick={() => {
+                          setQuickViewProduct(prod);
+                          setIsSearchFocused(false);
+                        }}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 12,
+                          padding: '8px 10px',
+                          borderRadius: 10,
+                          cursor: 'pointer',
+                          transition: 'background 0.15s ease'
+                        }}
+                        onMouseEnter={(e) => (e.currentTarget.style.background = '#f8fafc')}
+                        onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+                      >
+                        <div style={{ width: 38, height: 38, borderRadius: 8, background: '#f1f5f9', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, overflow: 'hidden' }}>
+                          {prod.image_url ? (
+                            <img src={prod.image_url} alt={prod.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                          ) : (
+                            <Package size={18} color="#64748b" />
+                          )}
+                        </div>
+                        <div style={{ flex: 1, overflow: 'hidden' }}>
+                          <div style={{ fontSize: 13, fontWeight: 700, color: '#0f172a', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                            {prod.name}
+                          </div>
+                          <div style={{ fontSize: 11, color: '#64748b', display: 'flex', gap: 6, alignItems: 'center' }}>
+                            <span>{prod.sku}</span>
+                            <span>·</span>
+                            <span style={{ color: '#1e3a8a', fontWeight: 600 }}>{prod.category}</span>
+                          </div>
+                        </div>
+                        <div style={{ fontSize: 13, fontWeight: 800, color: '#1e3a8a', whiteSpace: 'nowrap', fontFamily: 'monospace', fontVariantNumeric: 'tabular-nums' }}>
+                          {priceFormatted}
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="cr-title-right">Repuestos de Motos</div>
@@ -2430,6 +2760,27 @@ export function ShopPage() {
 
       {/* 4. PASTILLAS DE FILTRO: CATEGORÍAS ESTRICTAMENTE DEL SISTEMA */}
       <div className="cr-chips-container">
+        {/* Mobile Search Bar */}
+        <div style={{ marginBottom: 14 }} className="md:hidden">
+          <div style={{ display: 'flex', alignItems: 'center', border: '1px solid #cbd5e1', borderRadius: 99, background: '#ffffff', padding: '3px 3px 3px 16px' }}>
+            <input
+              type="text"
+              placeholder="Búsqueda inteligente..."
+              value={searchTerm}
+              onChange={e => setSearchTerm(e.target.value)}
+              style={{ flex: 1, border: 'none', outline: 'none', fontSize: 13, background: 'transparent' }}
+            />
+            {searchTerm && (
+              <button type="button" onClick={() => setSearchTerm('')} style={{ border: 'none', background: 'transparent', padding: '0 6px', color: '#94a3b8', cursor: 'pointer' }}>
+                <X size={15} />
+              </button>
+            )}
+            <button type="button" style={{ width: 34, height: 34, borderRadius: '50%', background: '#1e3a8a', color: '#fff', border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
+              <Search size={15} />
+            </button>
+          </div>
+        </div>
+
         <div className="cr-mobile-heading-switcher">
           <h3
             className="cr-mobile-heading-title"
@@ -3473,25 +3824,55 @@ export function ShopPage() {
                   <p style={{ fontSize: 13, color: '#64748b', marginBottom: 20 }}>
                     Tu orden número <b>{completedOrder.order_number}</b> ha sido registrada en CompuRepuestos Flores Inversiones.
                   </p>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setIsCheckoutOpen(false);
-                      setCompletedOrder(null);
-                    }}
-                    style={{
-                      width: '100%',
-                      padding: '12px',
-                      borderRadius: 12,
-                      background: '#1e3a8a',
-                      color: '#fff',
-                      border: 'none',
-                      fontWeight: 700,
-                      cursor: 'pointer'
-                    }}
-                  >
-                    Volver a la tienda
-                  </button>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const ord = completedOrder;
+                        setIsCheckoutOpen(false);
+                        setCompletedOrder(null);
+                        setSelectedTrackingOrder(ord);
+                        setIsOrderTrackerOpen(true);
+                      }}
+                      style={{
+                        width: '100%',
+                        padding: '12px',
+                        borderRadius: 12,
+                        background: '#0284c7',
+                        color: '#fff',
+                        border: 'none',
+                        fontWeight: 800,
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: 8,
+                        fontSize: 14
+                      }}
+                    >
+                      <Truck size={18} /> Rastrear este Pedido en Tiempo Real
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsCheckoutOpen(false);
+                        setCompletedOrder(null);
+                      }}
+                      style={{
+                        width: '100%',
+                        padding: '11px',
+                        borderRadius: 12,
+                        background: '#f1f5f9',
+                        color: '#334155',
+                        border: '1px solid #cbd5e1',
+                        fontWeight: 700,
+                        cursor: 'pointer',
+                        fontSize: 13
+                      }}
+                    >
+                      Seguir comprando en la tienda
+                    </button>
+                  </div>
                 </div>
               )}
             </div>
@@ -3735,6 +4116,25 @@ export function ShopPage() {
             setIsCartOpen(true);
           }
         }}
+        onOpenTracker={orderData => {
+          setSelectedTrackingOrder(orderData);
+          setIsOrderTrackerOpen(true);
+        }}
+      />
+
+      {/* 12.C TRACKER MODAL (SEGUIMIENTO DE PEDIDO EN TIEMPO REAL) */}
+      <OrderTrackerModal
+        isOpen={isOrderTrackerOpen}
+        orderIdOrNumber={
+          typeof selectedTrackingOrder === 'string'
+            ? selectedTrackingOrder
+            : selectedTrackingOrder?.order_number || selectedTrackingOrder?.id || ''
+        }
+        initialOrder={typeof selectedTrackingOrder === 'object' ? selectedTrackingOrder : null}
+        onClose={() => {
+          setIsOrderTrackerOpen(false);
+          setSelectedTrackingOrder(null);
+        }}
       />
 
       {/* 13. AUTH MODAL ("CREAR CUENTA") */}
@@ -3926,8 +4326,7 @@ export function ShopPage() {
                     msg.includes('Invalid login credentials') ||
                     msg.includes('credentials') ||
                     msg.includes('not found') ||
-                    msg.includes('Invalid') ||
-                    !isAuthRegisterMode
+                    msg.includes('Invalid')
                   ) {
                     setAuthError('Usuario no registrado o credenciales inválidas');
                   } else {

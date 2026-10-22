@@ -173,7 +173,11 @@ const SUPABASE_SERVICE_ROLE_KEY = resolvedServiceRoleKey.value;
 const SUPABASE_CREDENTIALS_SOURCE = resolvedKey.source;
 
 let isSupabaseConfigured = isRealSupabaseUrl(SUPABASE_URL) && isRealSupabaseKey(SUPABASE_ANON_KEY);
-let supabaseServer = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+const FALLBACK_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.e30.placeholder';
+let supabaseServer = createClient(
+  SUPABASE_URL || DEFAULT_SUPABASE_URL,
+  isSupabaseConfigured ? SUPABASE_ANON_KEY : FALLBACK_ANON_KEY
+);
 
 // Cliente administrativo: solo para operaciones puntuales de Supabase Auth.
 // Nunca se usa para consultas de negocio, de modo que no se bypassan las RLS.
@@ -408,10 +412,18 @@ async function resolveSessionUser(accessToken: string): Promise<{ user: any; rol
   const { data: userData, error: userError } = await supabaseServer.auth.getUser(accessToken);
   if (userError || !userData?.user) return null;
 
-  const userSupabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-    auth: { persistSession: false, autoRefreshToken: false },
-    global: { headers: { Authorization: `Bearer ${accessToken}` } }
-  });
+  const email = (userData.user.email || '').trim().toLowerCase();
+  const internalAdminEmails = ['sharkvenimport@gmail.com', 'fotocopiasfyp@gmail.com'];
+  const isInternalAdminEmail = internalAdminEmails.includes(email);
+
+  const userSupabase = createClient(
+    SUPABASE_URL || DEFAULT_SUPABASE_URL,
+    isSupabaseConfigured ? SUPABASE_ANON_KEY : FALLBACK_ANON_KEY,
+    {
+      auth: { persistSession: false, autoRefreshToken: false },
+      global: { headers: { Authorization: `Bearer ${accessToken}` } }
+    }
+  );
   const { data: membership } = await userSupabase
     .from('organization_members')
     .select('organization_id, role')
@@ -420,9 +432,24 @@ async function resolveSessionUser(accessToken: string): Promise<{ user: any; rol
     .limit(1)
     .maybeSingle();
 
+  let resolvedRole = membership?.role;
+  if (!resolvedRole || resolvedRole === 'cliente' || resolvedRole === 'customer') {
+    if (isInternalAdminEmail) {
+      resolvedRole = 'admin';
+    } else {
+      const localUsers = loadPersistedUsers();
+      const match = localUsers.find(u => u.email && u.email.toLowerCase() === email);
+      if (match && match.role && !['cliente', 'customer'].includes(match.role.toLowerCase())) {
+        resolvedRole = match.role;
+      } else {
+        resolvedRole = isInternalAdminEmail ? 'admin' : 'cliente';
+      }
+    }
+  }
+
   return {
     user: userData.user,
-    role: membership?.role || 'admin',
+    role: resolvedRole || (isInternalAdminEmail ? 'admin' : 'admin'),
     organizationId: membership?.organization_id || '00000000-0000-0000-0000-000000000001'
   };
 }
@@ -477,9 +504,15 @@ app.use([
   '/api/customer'
 ], authenticateSupabaseRequest);
 
-// Lectura y actualizacion de pedidos quedan protegidas; el POST sigue publico
-// porque es el canal de compra de la tienda web.
-app.use('/api/orders', requireAuthForMethods(['GET', 'PUT', 'PATCH', 'DELETE']));
+// Lectura y actualizacion de pedidos quedan protegidas; el POST y el rastreo /track siguen publicos
+// para permitir la compra y el seguimiento por numero de pedido.
+app.use('/api/orders', (req: Request, res: AuthenticatedResponse, next: NextFunction): void => {
+  if (req.path.startsWith('/track') || req.method === 'POST') {
+    next();
+    return;
+  }
+  authenticateSupabaseRequest(req, res, next);
+});
 app.use('/api/users', requireAuthForMethods(['GET', 'PUT', 'PATCH', 'DELETE']));
 app.use('/api/inventory-movements', requireAuthForMethods(['GET', 'PUT', 'PATCH', 'DELETE']));
 
@@ -1497,10 +1530,14 @@ app.get('/api/inventory/movements', async (req, res) => {
           const { data: userData } = await supabaseServer.auth.getUser(match[1]);
           if (userData?.user) {
             token = match[1];
-            const userClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-              auth: { persistSession: false, autoRefreshToken: false },
-              global: { headers: { Authorization: `Bearer ${match[1]}` } }
-            });
+            const userClient = createClient(
+              SUPABASE_URL || DEFAULT_SUPABASE_URL,
+              isSupabaseConfigured ? SUPABASE_ANON_KEY : FALLBACK_ANON_KEY,
+              {
+                auth: { persistSession: false, autoRefreshToken: false },
+                global: { headers: { Authorization: `Bearer ${match[1]}` } }
+              }
+            );
             const { data: mem } = await userClient
               .from('organization_members')
               .select('organization_id')
@@ -1662,10 +1699,14 @@ app.post('/api/inventory/adjustments', async (req, res) => {
           const { data: userData } = await supabaseServer.auth.getUser(match[1]);
           if (userData?.user) {
             token = match[1];
-            const userClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-              auth: { persistSession: false, autoRefreshToken: false },
-              global: { headers: { Authorization: `Bearer ${match[1]}` } }
-            });
+            const userClient = createClient(
+              SUPABASE_URL || DEFAULT_SUPABASE_URL,
+              isSupabaseConfigured ? SUPABASE_ANON_KEY : FALLBACK_ANON_KEY,
+              {
+                auth: { persistSession: false, autoRefreshToken: false },
+                global: { headers: { Authorization: `Bearer ${match[1]}` } }
+              }
+            );
             const { data: mem } = await userClient
               .from('organization_members')
               .select('organization_id')
@@ -2530,6 +2571,28 @@ async function loadCustomerPurchases(email: string, organizationId: string): Pro
     }
   }
 
+  // Ademas, vincular facturas digitales de pedidos pagados o completados del cliente
+  for (const localOrder of loadPersistedOrders(organizationId)) {
+    const orderEmail = (localOrder.customer_email || '').trim().toLowerCase();
+    if (orderEmail !== normalized) continue;
+    const orderNum = localOrder.order_number || String(localOrder.id || '').slice(0, 6);
+    const docNum = `FAC-2026-${String(orderNum).replace(/\D/g, '').padStart(3, '0').slice(-3)}`;
+    if (!purchases.some((p: any) => p.doc_number === docNum || p.order_number === orderNum)) {
+      purchases.push({
+        id: `fac-${localOrder.id || orderNum}`,
+        doc_number: docNum,
+        order_number: orderNum,
+        doc_type: 'FACTURA',
+        status: localOrder.payment_status === 'PAGADO' ? 'PAGADA' : (localOrder.payment_status || 'PAGADA'),
+        payment_type: localOrder.payment_method === 'PAGO_MOVIL' ? 'PAGOMÓVIL' : (localOrder.payment_method || 'CONTADO'),
+        total_usd: Number(localOrder.total_usd) || 0,
+        total_ves: Number(localOrder.total_ves) || 0,
+        created_at: localOrder.created_at,
+        items: localOrder.items || []
+      });
+    }
+  }
+
   return purchases.sort((a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime());
 }
 
@@ -2566,22 +2629,22 @@ app.get('/api/customer/portal', async (_req, res: AuthenticatedResponse) => {
         profile = profilesRes.data[0];
       }
     } catch {
-      // Perfil no disponible: se mostraran los datos minimos de la sesion.
+      // Perfil no disponible
     }
 
-    if (!profile) {
-      const local = localShopCustomers.load(customer.organizationId).find(
-        (row: any) => String(row.email || '').trim().toLowerCase() === customer.email
-      );
-      profile = local ? { id: local.id, email: local.email, full_name: local.full_name, role: 'cliente' } : null;
-    }
+    const localCust = localShopCustomers.load(customer.organizationId).find(
+      (row: any) => String(row.email || '').trim().toLowerCase() === customer.email
+    );
 
     return res.json({
       success: true,
       data: {
         customer: {
           email: customer.email,
-          full_name: profile?.full_name || customer.email.split('@')[0],
+          full_name: localCust?.full_name || profile?.full_name || customer.email.split('@')[0],
+          document_id: localCust?.document_id || localCust?.rif || 'V-',
+          phone: localCust?.phone || '',
+          addresses: Array.isArray(localCust?.addresses) ? localCust.addresses : (localCust?.address ? [localCust.address] : []),
           role: profile?.role || 'cliente',
           organization_id: customer.organizationId
         },
@@ -2592,6 +2655,176 @@ app.get('/api/customer/portal', async (_req, res: AuthenticatedResponse) => {
     });
   } catch (err: any) {
     return res.status(500).json({ success: false, error: err?.message || 'Error cargando el portal de cliente.' });
+  }
+});
+
+app.post('/api/customer/profile', async (req, res: AuthenticatedResponse) => {
+  try {
+    const customer = resolveCustomerSession(res);
+    if (!customer) {
+      return res.status(401).json({ success: false, error: 'Debes iniciar sesión para editar tu perfil.' });
+    }
+
+    const { full_name, document_id, phone } = req.body || {};
+    const orgId = customer.organizationId;
+    const all = localShopCustomers.load(orgId);
+    let matched = all.find((row: any) => String(row.email || '').trim().toLowerCase() === customer.email);
+
+    if (matched) {
+      if (full_name) matched.full_name = String(full_name).trim();
+      if (document_id !== undefined) matched.document_id = String(document_id).trim();
+      if (phone !== undefined) matched.phone = String(phone).trim();
+      matched.updated_at = new Date().toISOString();
+      localShopCustomers.save(all);
+    } else {
+      matched = {
+        id: customer.userId || `cust-${Date.now()}`,
+        email: customer.email,
+        full_name: String(full_name || customer.email.split('@')[0]).trim(),
+        document_id: String(document_id || 'V-').trim(),
+        phone: String(phone || '').trim(),
+        addresses: [],
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      };
+      localShopCustomers.save([...all, matched]);
+    }
+
+    if (isSupabaseConfigured && customer.userId) {
+      try {
+        await supabaseServer.auth.admin.updateUserById(customer.userId, {
+          user_metadata: { full_name: matched.full_name, phone: matched.phone, document_id: matched.document_id }
+        });
+      } catch {
+        // ignore
+      }
+    }
+
+    return res.json({ success: true, data: matched });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message || 'Error actualizando perfil.' });
+  }
+});
+
+app.post('/api/customer/addresses', async (req, res: AuthenticatedResponse) => {
+  try {
+    const customer = resolveCustomerSession(res);
+    if (!customer) {
+      return res.status(401).json({ success: false, error: 'Debes iniciar sesión.' });
+    }
+
+    const { action, address } = req.body || {};
+    const orgId = customer.organizationId;
+    const all = localShopCustomers.load(orgId);
+    let matched = all.find((row: any) => String(row.email || '').trim().toLowerCase() === customer.email);
+
+    if (!matched) {
+      matched = {
+        id: customer.userId || `cust-${Date.now()}`,
+        email: customer.email,
+        full_name: customer.email.split('@')[0],
+        addresses: [],
+        created_at: new Date().toISOString()
+      };
+      all.push(matched);
+    }
+
+    if (!Array.isArray(matched.addresses)) {
+      matched.addresses = matched.address ? [matched.address] : [];
+    }
+
+    if (action === 'add' && address) {
+      const clean = String(address).trim();
+      if (clean && !matched.addresses.includes(clean)) {
+        matched.addresses.push(clean);
+      }
+    } else if (action === 'remove' && address) {
+      matched.addresses = matched.addresses.filter((a: string) => a !== address);
+    }
+
+    localShopCustomers.save(all);
+    return res.json({ success: true, data: { addresses: matched.addresses } });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message || 'Error modificando direcciones.' });
+  }
+});
+
+app.post('/api/customer/change-password', async (req, res: AuthenticatedResponse) => {
+  try {
+    const customer = resolveCustomerSession(res);
+    if (!customer) {
+      return res.status(401).json({ success: false, error: 'Debes iniciar sesión.' });
+    }
+
+    const { password } = req.body || {};
+    if (!password || password.length < 6) {
+      return res.status(400).json({ success: false, error: 'La contraseña debe contener al menos 6 caracteres.' });
+    }
+
+    if (isSupabaseConfigured && customer.userId) {
+      const { error } = await supabaseServer.auth.admin.updateUserById(customer.userId, { password });
+      if (error) {
+        return res.status(400).json({ success: false, error: error.message });
+      }
+    }
+
+    return res.json({ success: true, message: '¡Contraseña actualizada con éxito!' });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message || 'Error actualizando contraseña.' });
+  }
+});
+
+app.get('/api/orders/track/:query', async (req, res) => {
+  try {
+    const rawQuery = String(req.params.query || '').trim();
+    if (!rawQuery) {
+      return res.status(400).json({ success: false, error: 'Especifica un número de pedido o documento.' });
+    }
+
+    const cleanNum = rawQuery.replace(/^#/, '').replace(/^FAC-/, '').replace(/^PED-/, '').trim();
+    const cleanDigits = rawQuery.replace(/\D/g, '');
+    const cleanNumInt = cleanDigits ? parseInt(cleanDigits, 10) : NaN;
+    const orgId = '00000000-0000-0000-0000-000000000001';
+
+    // 1. Buscar en pedidos locales
+    const allOrders = loadPersistedOrders(orgId);
+    let matched = allOrders.find((o: any) => {
+      const oNum = String(o.order_number || '').trim();
+      const oDigits = oNum.replace(/\D/g, '');
+      const oNumInt = oDigits ? parseInt(oDigits, 10) : NaN;
+
+      if (o.id === rawQuery || oNum === rawQuery || oNum === cleanNum) return true;
+      if (!isNaN(cleanNumInt) && !isNaN(oNumInt) && cleanNumInt === oNumInt) return true;
+      if (cleanDigits && oDigits && (cleanDigits === oDigits || oDigits.endsWith(cleanDigits))) return true;
+      if (o.customer_phone && cleanDigits.length >= 7 && o.customer_phone.replace(/\D/g, '').endsWith(cleanDigits)) return true;
+      return false;
+    });
+
+    // 2. Si no esta en local y Supabase esta configurado, consultar Supabase
+    if (!matched) {
+      try {
+        const queryRes = await supabaseRestRequest(
+          `orders?select=*,order_items(*)&or=(order_number.eq.${encodeURIComponent(cleanNum)},id.eq.${encodeURIComponent(rawQuery)})&limit=1`
+        );
+        if (!queryRes.error && Array.isArray(queryRes.data) && queryRes.data[0]) {
+          const o = queryRes.data[0];
+          matched = {
+            ...o,
+            items: Array.isArray(o.order_items) && o.order_items.length > 0 ? o.order_items : (o.items || [])
+          };
+        }
+      } catch {
+        // ignore
+      }
+    }
+
+    if (!matched) {
+      return res.status(404).json({ success: false, error: `No se encontró ningún pedido con el número "${rawQuery}".` });
+    }
+
+    return res.json({ success: true, data: matched });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message || 'Error rastreando pedido.' });
   }
 });
 
@@ -4634,23 +4867,25 @@ app.get('/api/users', async (_req, res: AuthenticatedResponse) => {
       console.warn('Aviso consultando usuarios en Supabase:', sbErr);
     }
 
-    // 2. Si Supabase no responde o estÃ¡ en modo local resiliente
+    // 2. Si Supabase no responde o está en modo local resiliente
     let local = loadPersistedUsers();
-    if (local.length === 0) {
-      // Seed default user if empty
-      const defaultUser = {
-        id: 'usr-001',
-        name: 'Administrador Principal',
-        email: 'fotocopiasfyp@gmail.com',
-        role: 'Admin',
-        title: 'Director General',
-        active: true,
-        initials: 'AP',
-        permissions: ['ventas', 'inventario', 'finanzas', 'reportes', 'usuarios'],
-        created_at: new Date().toISOString()
-      };
-      savePersistedUser(defaultUser);
-      local = [defaultUser];
+    const requiredAdminEmails = ['fotocopiasfyp@gmail.com', 'sharkvenimport@gmail.com'];
+    for (const adminEmail of requiredAdminEmails) {
+      if (!local.some(u => u.email && u.email.toLowerCase() === adminEmail)) {
+        const adminUser = {
+          id: `usr-${adminEmail.split('@')[0]}`,
+          name: adminEmail === 'sharkvenimport@gmail.com' ? 'Sharkven Import Admin' : 'Administrador Principal',
+          email: adminEmail,
+          role: 'Admin',
+          title: 'Director / Propietario',
+          active: true,
+          initials: adminEmail === 'sharkvenimport@gmail.com' ? 'SI' : 'AP',
+          permissions: ['ventas', 'inventario', 'finanzas', 'reportes', 'usuarios'],
+          created_at: new Date().toISOString()
+        };
+        savePersistedUser(adminUser);
+        local.push(adminUser);
+      }
     }
     return res.json({ success: true, data: local });
   } catch (err: any) {

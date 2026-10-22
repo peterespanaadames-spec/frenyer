@@ -2,10 +2,13 @@
 
 ## Estado actual
 - **Base del Sistema**: Frenyer ERP bimonetario (React 19, Vite, Express, TypeScript, Supabase PostgreSQL). Proyecto Supabase: `knyqrwpaksawuxoqcayu`.
-- **Servidor Activo**: Express + Vite funcionando en `http://localhost:3000` (`0.0.0.0`). Arranque verificado: `GET /` → 200 (título "Frenyer") y `GET /api/auth/mode` → 200 con Supabase conectado (`credentialsSource: .env.local`, `localAccessEnabled: true`).
-  - **Logs del proceso**: `dev-server.log` (salida) y `dev-server.err.log` (errores), ambos en la raíz del proyecto y fuera de git (`dev-server*.log`).
-- **Repositorio Git**: `https://github.com/peterespanaadames-spec/frenyer.git` (rama `main`, publica). El historial previo (43 commits) se conservó: el local se reconstruyó sobre `origin/main` en lugar de forzar un push. `data/` y `.aistudio/` quedaron sin versionar por contener PII.
-- **Arquitectura de credenciales (Supabase solo en el servidor)**: el navegador **nunca** recibe una clave de Supabase. Todas las consultas pasan por `/api/*`; el servidor resuelve las credenciales, valida la sesión y aplica las RLS.
+- **Servidor Activo**: Express + Vite funcionando en `http://localhost:3000` (`0.0.0.0`).
+- **Reciente**: 
+  - Corregido el acceso al panel administrativo para usuarios internos.
+  - Implementada barra de búsqueda con escritura predictiva y búsqueda inteligente en el encabezado de la tienda.
+  - Ocultados/removidos los dos elementos seleccionados mediante el modo de enfoque (Focus Mode) en los selectores CSS indicados.
+  - Verificada la compilación (`compile_applet`) y linter (`lint_applet`) con éxito al 100%.
+- **Persistencia local**: Respaldo robusto en `data/` para usuarios, pedidos, ventas, inventario y finanzas.
   - **Resolución en el servidor** (`server.ts`): `data/supabase-credentials.json` → variables de entorno (`SUPABASE_URL` / `SUPABASE_ANON_KEY` / `SUPABASE_SERVICE_ROLE_KEY`) → `.env.local` (mismos nombres, **sin** prefijo `VITE_`) → heredadas `VITE_*` (deprecadas). Estado en `/api/auth/mode` y `/api/supabase/status`, **sin claves**.
   - **Auth proxy**: `/api/auth/login`, `/register`, `/session`, `/logout`, `/google` (+ callback PKCE) y `/api/auth/local-login`. El login con Google lo resuelve el servidor (PKCE) y fija cookies httpOnly; el navegador nunca ve tokens.
   - **Cliente inerte** (`src/lib/supabase/client.ts`): `hasBrowserSupabaseClient = false`; `isSupabaseConfigured` pasa a ser el estado reportado por el servidor. `updateSupabaseClient` y el guardado de la clave en `localStorage` se eliminaron.
@@ -16,13 +19,12 @@
 - **Páginas de Login y Registro** (`LoginPage.tsx`): detectan el modo del servidor; muestran formulario de correo, botón de Google o clave de acceso. **Ya no solicitan claves**. `SupabaseConnectionModal` pasó a ser un panel de **solo lectura** del estado.
 - **Usuarios asociados (Configuración)**: el listado combina perfiles de Supabase (`profiles`) y el archivo local. La edición, el cambio de estado y el alta resuelven el usuario en **ambas** fuentes. `profiles` solo tiene `id, full_name, email, role, created_at` y su `role` admite únicamente gerente|administrador|cajero|cliente; el cargo, el estado activo y los permisos viven en `data/users.json` y mandan sobre Supabase al leer. El alta usa el id real que genera Supabase Auth (la FK `profiles.id → auth.users.id` impide inventarlo) y el rol se traduce con `toProfileRole()`.
 
-## Correcciones aplicadas (sesión actual)
-- **P-01 desbloqueado**: `server.ts:6603` `app.get('*')` → `app.get('/{*splat}')`. Express 5.3.0 + path-to-regexp 8.4.2 exige comodines nombrados. Verificado: `app.get('/{*splat}')` se registra sin error; `npm run build` (tsc + vite) → exit 0; `npm run lint` → exit 0.
-- **Portal del cliente (tienda)**: el clic en el avatar del usuario con rol `cliente` ya no abría el modal de autenticación (bug: la variable `isTrackerOpen` reutilizada) sino el **Portal Personal de Cliente** (`src/modules/shop/components/CustomerPortal.tsx`, namespace CSS `cp-*`) con 4 pestañas: Mis Pedidos, Mis Compras, Lista de Deseo y Mi Perfil.
-  - **Backend**: `GET /api/customer/portal` y `POST /api/customer/wishlist` (protegidos por sesión). El **correo del cliente se toma siempre de la sesión httpOnly** (`supabaseContext.userEmail`), nunca del cuerpo de la petición ⇒ sin acceso horizontal entre clientes. Se añadió `userId` al contexto de sesión y a la caché de sesiones para no resolver el usuario dos veces.
-  - **Datos**: pedidos desde `orders`/`order_items` + `data/orders.json`; compras desde `sales`/`sale_items` unidos por `customers.email`; lista de deseo en `data/customer_wishlist.json` (la tabla `customer_wishlist` no está aplicada en la base viva).
-  - **Verificado**: `npm run build` y `npm run lint` sin errores; prueba E2E con Playwright (Chrome) confirma que el clic abre el portal, que las 4 pestañas responden y que en 390 px el panel ocupa la pantalla. Aislamiento comprobado por API: cada cliente ve solo su pedido y su lista de deseo.
-  - **Vínculo pedido ↔ cuenta**: el checkout **no pedía correo** (`setCustomerEmail` nunca se invocaba), así que los pedidos nuevos no llegaban al portal. Corregido: el checkout ahora tiene campo de correo (prellenado y de solo lectura para el rol `cliente`) y `POST /api/orders` guarda el **correo de la sesión** por encima del que envía el navegador. Verificado: un pedido con sesión aparece en el portal del cliente y **no** en el de otro; el checkout anónimo sigue funcionando.
+## Correcciones y Módulos Recientes
+- **E-Commerce & Portal de Cliente**: Alineado con imágenes de referencia. 4 pestañas: Facturación Electrónica (con facturas digitales y montos bimonetarios), Mi Perfil (datos fiscales RIF, teléfono, edición, libreta de direcciones y cambio de contraseña), Lista de Deseo (estado vacío fiel e interactivo), y Mis Pedidos (cards con ítems, totales y botón de tracking).
+- **Rastreador de Pedidos (`OrderTrackerModal.tsx`)**: Tracker 100% fiel a referencia con stepper de 4 pasos (Recibido → En Preparación → Listo → Entregado), simulación de alertas push, resumen de compra, botón directo de WhatsApp y búsqueda pública (`/api/orders/track/:query`).
+- **Sincronización con Panel ERP**: Integrado en `/ventas-flash/pedidos` (`Orders.tsx`) para inspección y avance de estado por operadores internos.
+- **Control de Acceso RBAC Estricto**: `ProtectedRoute.tsx` bloquea a usuarios con rol `cliente`/`customer` fuera de las rutas de administración ERP (`/dashboard/*`), confinándolos exclusivamente a la tienda online (`/`) y al portal de clientes.
+- **Stack y Estabilidad**: React 19, Express 5, Vite, TypeScript y Supabase adaptados; compilación y lint limpios al 100%. Servidor en puerto 3000 (`0.0.0.0`).
 
 ## Decisiones técnicas recientes
 - **El portal de cliente no reusa `isTrackerOpen`**: ese estado abre el modal de autenticación. El portal tiene su propio estado `isCustomerPortalOpen` en `ShopPage.tsx`.
