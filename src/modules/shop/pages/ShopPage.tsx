@@ -61,7 +61,7 @@ import {
   PaymentMethod,
   PublicBusinessConfig
 } from '../../../types/domain';
-import { CustomerPortal } from '../components/CustomerPortal';
+import { CustomerPortal, type PortalTab } from '../components/CustomerPortal';
 import { OrderTrackerModal } from '../components/OrderTrackerModal';
 
 // --- LOGO SVG COMPONENT (Exact Match to CompuRepuestos CR Logo) ---
@@ -146,7 +146,11 @@ async function fetchServerSession(): Promise<any | null> {
     const res = await fetch('/api/auth/session', { credentials: 'include' });
     if (!res.ok) return null;
     const json = await res.json();
-    return json?.data?.user || null;
+    if (!json?.data?.user) return null;
+    return {
+      ...json.data.user,
+      role: json.data.role || json.data.user?.user_metadata?.role
+    };
   } catch {
     return null;
   }
@@ -212,6 +216,7 @@ export function ShopPage() {
   const [completedOrder, setCompletedOrder] = useState<any | null>(null);
   const [isTrackerOpen, setIsTrackerOpen] = useState(false);
   const [isCustomerPortalOpen, setIsCustomerPortalOpen] = useState(false);
+  const [customerPortalTab, setCustomerPortalTab] = useState<PortalTab>('pedidos');
   const [isOrderTrackerOpen, setIsOrderTrackerOpen] = useState(false);
   const [selectedTrackingOrder, setSelectedTrackingOrder] = useState<any>(null);
   const [isAuthRegisterMode, setIsAuthRegisterMode] = useState(false);
@@ -2002,12 +2007,6 @@ export function ShopPage() {
                 onClick={async () => {
                   const sessionUser = await fetchServerSession();
                   if (sessionUser || currentAuthUser || currentUserRole) {
-                    // El cliente abre su portal; el asociado mantiene el menu de gestion.
-                    if (currentUserRole === 'cliente') {
-                      setIsUserMenuOpen(false);
-                      setIsCustomerPortalOpen(true);
-                      return;
-                    }
                     setIsUserMenuOpen((prev) => !prev);
                   } else {
                     navigate('/login');
@@ -2088,7 +2087,7 @@ export function ShopPage() {
                       position: 'absolute',
                       top: 'calc(100% + 10px)',
                       right: 0,
-                      width: 'min(320px, calc(100vw - 32px))',
+                      width: 'min(330px, calc(100vw - 32px))',
                       background: '#ffffff',
                       borderRadius: 18,
                       border: '1px solid #e2e8f0',
@@ -2169,7 +2168,7 @@ export function ShopPage() {
                       </div>
                     </div>
 
-                    {/* Acciones principales */}
+                    {/* Acciones del menú según tipo de usuario */}
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                       {currentUserRole === 'asociado' ? (
                         <>
@@ -2177,24 +2176,31 @@ export function ShopPage() {
                             type="button"
                             onClick={() => {
                               setIsUserMenuOpen(false);
+                              const targetRole = associatedUserData?.role || 'gerente';
+                              localStorage.setItem('frenyer_user_role', targetRole);
+                              if (associatedUserData) {
+                                localStorage.setItem('frenyer_active_user', JSON.stringify(associatedUserData));
+                              }
                               navigate('/dashboard');
                             }}
                             style={{
                               display: 'flex',
                               alignItems: 'center',
                               gap: 10,
-                              padding: '10px 14px',
-                              borderRadius: 10,
-                              border: '1px solid #d8b4fe',
-                              background: '#faf5ff',
+                              padding: '12px 14px',
+                              borderRadius: 12,
+                              border: '1.5px solid #c084fc',
+                              background: 'linear-gradient(135deg, #faf5ff 0%, #f3e8ff 100%)',
                               color: '#6b21a8',
                               fontSize: 13,
-                              fontWeight: 700,
+                              fontWeight: 800,
                               cursor: 'pointer',
-                              textAlign: 'left'
+                              textAlign: 'left',
+                              boxShadow: '0 2px 8px rgba(168, 85, 247, 0.12)'
                             }}
                           >
-                            <LayoutDashboard size={16} color="#7c3aed" /> Ir al Panel Administrativo ERP ({associatedUserData?.role})
+                            <LayoutDashboard size={18} color="#7c3aed" />
+                            <span>Ir al Panel Administrativo ERP ({associatedUserData?.role || 'Admin'})</span>
                           </button>
                           <button
                             type="button"
@@ -2216,15 +2222,18 @@ export function ShopPage() {
                               textAlign: 'left'
                             }}
                           >
-                            <Store size={16} color="#475569" /> Quedarse en la Tienda Online
+                            <Store size={16} color="#475569" />
+                            <span>Quedarse en la Tienda Online</span>
                           </button>
                         </>
                       ) : (
-                        <>
+                        /* Menú de opciones de Cliente: Mis Pedidos, Mis Compras, Lista de Deseo, Mi Perfil */
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                           <button
                             type="button"
                             onClick={() => {
                               setIsUserMenuOpen(false);
+                              setCustomerPortalTab('pedidos');
                               setIsCustomerPortalOpen(true);
                             }}
                             style={{
@@ -2233,16 +2242,92 @@ export function ShopPage() {
                               gap: 10,
                               padding: '10px 14px',
                               borderRadius: 10,
-                              border: '1px solid #a7f3d0',
-                              background: '#ecfdf5',
-                              color: '#065f46',
+                              border: '1px solid #bae6fd',
+                              background: '#f0f9ff',
+                              color: '#0369a1',
                               fontSize: 13,
                               fontWeight: 750,
                               cursor: 'pointer',
                               textAlign: 'left'
                             }}
                           >
-                            <UserCheck size={16} color="#059669" /> Mi Portal de Cliente
+                            <Package size={17} color="#0284c7" />
+                            <span>Mis Pedidos</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setIsUserMenuOpen(false);
+                              setCustomerPortalTab('compras');
+                              setIsCustomerPortalOpen(true);
+                            }}
+                            style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: 10,
+                              padding: '10px 14px',
+                              borderRadius: 10,
+                              border: '1px solid #e2e8f0',
+                              background: '#ffffff',
+                              color: '#1e293b',
+                              fontSize: 13,
+                              fontWeight: 700,
+                              cursor: 'pointer',
+                              textAlign: 'left'
+                            }}
+                          >
+                            <FileText size={17} color="#0284c7" />
+                            <span>Mis Compras (Facturación)</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setIsUserMenuOpen(false);
+                              setCustomerPortalTab('deseo');
+                              setIsCustomerPortalOpen(true);
+                            }}
+                            style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: 10,
+                              padding: '10px 14px',
+                              borderRadius: 10,
+                              border: '1px solid #e2e8f0',
+                              background: '#ffffff',
+                              color: '#1e293b',
+                              fontSize: 13,
+                              fontWeight: 700,
+                              cursor: 'pointer',
+                              textAlign: 'left'
+                            }}
+                          >
+                            <Heart size={17} color="#e11d48" />
+                            <span>Lista de Deseos</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setIsUserMenuOpen(false);
+                              setCustomerPortalTab('perfil');
+                              setIsCustomerPortalOpen(true);
+                            }}
+                            style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: 10,
+                              padding: '10px 14px',
+                              borderRadius: 10,
+                              border: '1px solid #e2e8f0',
+                              background: '#ffffff',
+                              color: '#1e293b',
+                              fontSize: 13,
+                              fontWeight: 700,
+                              cursor: 'pointer',
+                              textAlign: 'left'
+                            }}
+                          >
+                            <User size={17} color="#059669" />
+                            <span>Mi Perfil</span>
                           </button>
                           <button
                             type="button"
@@ -2251,11 +2336,25 @@ export function ShopPage() {
                               setSelectedTrackingOrder(null);
                               setIsOrderTrackerOpen(true);
                             }}
-                            className="btn-minimal-tracker"
+                            style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: 10,
+                              padding: '9px 14px',
+                              borderRadius: 10,
+                              border: '1px dashed #cbd5e1',
+                              background: '#f8fafc',
+                              color: '#475569',
+                              fontSize: 12.5,
+                              fontWeight: 650,
+                              cursor: 'pointer',
+                              textAlign: 'left'
+                            }}
                           >
-                            <Truck size={12} /> Tracker
+                            <Truck size={15} color="#0284c7" />
+                            <span>Rastrear Pedido (Tracker)</span>
                           </button>
-                        </>
+                        </div>
                       )}
 
                       {/* Opción para cambiar de cuenta o iniciar sesión */}
@@ -4096,6 +4195,7 @@ export function ShopPage() {
       {/* 12.B PORTAL DE CLIENTE (PEDIDOS, COMPRAS, LISTA DE DESEO Y PERFIL) */}
       <CustomerPortal
         isOpen={isCustomerPortalOpen}
+        initialTab={customerPortalTab}
         email={currentAuthUser?.email || ''}
         displayName={
           currentAuthUser?.user_metadata?.full_name ||

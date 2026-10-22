@@ -85,30 +85,59 @@ export function DashboardLayout() {
   // Guard de rol: Clientes solo se quedan en la tienda e-commerce
   useEffect(() => {
     const guardRole = async () => {
-      const storedRole = localStorage.getItem('frenyer_user_role');
-      if (storedRole === 'cliente') {
-        navigate('/', { replace: true });
+      const internalRoles = [
+        'gerente',
+        'administrador',
+        'admin',
+        'cajero',
+        'ventas',
+        'inventario',
+        'almacenista',
+        'contador',
+        'superadmin',
+        'soporte',
+        'director',
+        'propietario',
+        'asociado',
+        'personal'
+      ];
+
+      // Si el perfil de autenticación en contexto ya es un rol interno, conceder paso y sincronizar
+      if (authProfile?.role && internalRoles.includes(authProfile.role.toLowerCase())) {
+        localStorage.setItem('frenyer_user_role', authProfile.role);
         return;
       }
 
-      // La sesion vive en el servidor: se consulta por HTTP, no con el cliente del navegador.
+      // La sesión vive en el servidor: se consulta por HTTP con credenciales
       let sessionUser: { email?: string; name?: string; user_metadata?: { role?: string } } | null = null;
+      let sessionRole = '';
       try {
         const sessionRes = await fetch('/api/auth/session', { credentials: 'include' });
         if (sessionRes.ok) {
           const sessionJson = await sessionRes.json();
           sessionUser = sessionJson?.data?.user || null;
+          sessionRole = (sessionJson?.data?.role || '').toLowerCase();
         }
       } catch {
+        return;
+      }
+
+      if (sessionRole && internalRoles.includes(sessionRole)) {
+        localStorage.setItem('frenyer_user_role', sessionRole);
+      } else if (sessionRole === 'cliente') {
+        localStorage.setItem('frenyer_user_role', 'cliente');
+        navigate('/', { replace: true });
         return;
       }
 
       if (sessionUser) {
         const metaRole = (sessionUser.user_metadata?.role || '').toLowerCase();
         if (metaRole === 'cliente' || metaRole === 'customer') {
-          localStorage.setItem('frenyer_user_role', 'cliente');
-          navigate('/', { replace: true });
-          return;
+          if (!internalRoles.includes(sessionRole)) {
+            localStorage.setItem('frenyer_user_role', 'cliente');
+            navigate('/', { replace: true });
+            return;
+          }
         }
 
         try {
@@ -148,7 +177,7 @@ export function DashboardLayout() {
       }
     };
     guardRole();
-  }, [navigate]);
+  }, [navigate, signOut, authProfile]);
 
   // Proposed Rate Notification Banner
   const [proposedRate, setProposedRate] = useState<{

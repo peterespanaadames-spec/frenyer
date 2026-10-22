@@ -43,7 +43,7 @@ interface AuthContextType {
   role: string;
   isLoading: boolean;
   signInWithEmail: (email: string, password: string) => Promise<{ error: AuthErrorLike | null }>;
-  signUpWithEmail: (email: string, password: string, fullName: string) => Promise<{ error: AuthErrorLike | null }>;
+  signUpWithEmail: (email: string, password: string, fullName: string, role?: string) => Promise<{ error: AuthErrorLike | null }>;
   signInWithAccessKey: (accessKey: string, email?: string) => Promise<{ error: AuthErrorLike | null }>;
   signInWithGoogle: () => Promise<{ error: AuthErrorLike | null }>;
   signOut: () => Promise<void>;
@@ -200,13 +200,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  const signUpWithEmail = async (email: string, password: string, fullName: string) => {
+  const signUpWithEmail = async (email: string, password: string, fullName: string, role?: string) => {
     try {
       const res = await fetch('/api/auth/register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify({ email, password, fullName })
+        body: JSON.stringify({ email, password, fullName, role })
       });
       const json = await res.json().catch(() => null);
 
@@ -218,7 +218,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         return { error: null };
       }
 
-      await applySession({ user: { email, name: fullName }, role: 'cliente' });
+      const assignedRole = json.data?.role || role || 'cliente';
+      await applySession({
+        user: { email, name: fullName, id: json.data?.user?.id },
+        role: assignedRole,
+        organizationId: json.data?.organizationId
+      });
       window.dispatchEvent(new CustomEvent('frenyer:auth-changed'));
       return { error: null };
     } catch (err: any) {

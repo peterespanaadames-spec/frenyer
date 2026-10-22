@@ -21,8 +21,8 @@ import {
   Edit2,
   Plus,
   Lock,
-  Calendar,
-  AlertCircle
+  AlertCircle,
+  ArrowLeft
 } from 'lucide-react';
 import { formatUSD, formatVES } from '../../../lib/currency';
 
@@ -93,13 +93,14 @@ interface CustomerPortalProps {
   isOpen: boolean;
   email: string;
   displayName: string;
+  initialTab?: PortalTab;
   onClose: () => void;
   onSignOut: () => void;
   onAddToCartFromWishlist?: (sku: string) => void;
   onOpenTracker?: (orderData: CustomerPortalOrder | string) => void;
 }
 
-type PortalTab = 'pedidos' | 'compras' | 'deseo' | 'perfil';
+export type PortalTab = 'pedidos' | 'compras' | 'deseo' | 'perfil';
 
 const DELIVERY_STATUS_LABELS: Record<string, string> = {
   RECIBIDO: 'RECIBIDO',
@@ -143,15 +144,22 @@ export function CustomerPortal({
   isOpen,
   email,
   displayName,
+  initialTab = 'pedidos',
   onClose,
   onSignOut,
   onAddToCartFromWishlist,
   onOpenTracker
 }: CustomerPortalProps) {
-  const [activeTab, setActiveTab] = useState<PortalTab>('pedidos');
+  const [activeTab, setActiveTab] = useState<PortalTab>(initialTab);
   const [payload, setPayload] = useState<CustomerPortalPayload | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
+
+  useEffect(() => {
+    if (initialTab) {
+      setActiveTab(initialTab);
+    }
+  }, [initialTab, isOpen]);
 
   // Date filter for orders
   const [orderDateFilter, setOrderDateFilter] = useState('');
@@ -427,6 +435,14 @@ export function CustomerPortal({
             </div>
           </div>
           <div className="cp-header-actions">
+            <button
+              type="button"
+              className="cp-btn-exit"
+              onClick={onClose}
+              title="Salir de la pantalla y volver a la tienda"
+            >
+              <ArrowLeft size={14} /> Salir a la tienda
+            </button>
             <button type="button" className="cp-signout" onClick={onSignOut}>
               <LogOut size={14} /> Cerrar Sesión
             </button>
@@ -967,6 +983,16 @@ export function CustomerPortal({
         }
         .cp-header-email { font-size: 12.5px; color: #94a3b8; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .cp-header-actions { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
+        .cp-btn-exit {
+          display: inline-flex; align-items: center; gap: 6px;
+          background: rgba(255, 255, 255, 0.12); color: #ffffff;
+          border: 1px solid rgba(255, 255, 255, 0.25);
+          border-radius: 9px; padding: 7px 13px; font-size: 12px; font-weight: 750; cursor: pointer;
+          transition: all 0.15s ease;
+        }
+        .cp-btn-exit:hover {
+          background: rgba(255, 255, 255, 0.24); border-color: #ffffff;
+        }
         .cp-signout {
           display: inline-flex; align-items: center; gap: 6px;
           background: #dc2626; color: #ffffff; border: none;

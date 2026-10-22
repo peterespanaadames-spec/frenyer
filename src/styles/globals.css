@@ -1169,6 +1169,7 @@
 }
 
 .auth-card {
+  display: block !important;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
@@ -1446,9 +1447,99 @@
 }
 .btn-minimal-tracker:hover { background: #f1f5f9; color: #0f172a; border-color: #94a3b8; }
 
-/* Focus mode element removal */
-div#root:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(2),
-div#root:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(2) > div:nth-of-type(1) > div:nth-of-type(1) {
+/* Focus mode element removal (restringido a la tienda pública, sin interferir en login) */
+.cr-public-catalog div#root:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(2),
+.cr-public-catalog div#root:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(2) > div:nth-of-type(1) > div:nth-of-type(1) {
   display: none !important;
 }
+
+/* Auth Tabs & Quick Access Helpers */
+.auth-tabs {
+  display: flex;
+  background: #f1f5f9;
+  border-radius: var(--radius-md);
+  padding: 4px;
+  gap: 4px;
+  margin-bottom: 20px;
+}
+.auth-tab {
+  flex: 1;
+  border: none;
+  background: transparent;
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  font-weight: 600;
+  color: #64748b;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  transition: all 0.15s ease;
+}
+.auth-tab:hover {
+  color: #1e293b;
+}
+.auth-tab.active {
+  background: #ffffff;
+  color: var(--brand-700);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+}
+.auth-quick-card {
+  background: #f8fafc;
+  border: 1px dashed #cbd5e1;
+  border-radius: var(--radius-sm);
+  padding: 12px 14px;
+  margin-bottom: 16px;
+  font-size: 12.5px;
+  color: #475569;
+}
+.auth-quick-card strong {
+  color: #0f172a;
+}
+.auth-quick-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  background: var(--brand-50);
+  color: var(--brand-700);
+  border: 1px solid var(--brand-200);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.auth-quick-btn:hover {
+  background: var(--brand-100);
+}
+.auth-role-select {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.auth-role-option {
+  border: 1.5px solid var(--border);
+  background: #ffffff;
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #475569;
+  cursor: pointer;
+  text-align: center;
+  transition: all 0.15s ease;
+}
+.auth-role-option:hover {
+  border-color: #cbd5e1;
+}
+.auth-role-option.selected {
+  border-color: var(--brand-500);
+  background: var(--brand-50);
+  color: var(--brand-700);
+}
+
 
