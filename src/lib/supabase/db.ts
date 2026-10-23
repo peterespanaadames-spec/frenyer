@@ -187,26 +187,8 @@ export async function fetchCustomersFromSupabase(): Promise<DbCustomer[]> {
     // Fall back to direct client
   }
 
-  if (!isSupabaseConfigured) {
-    return [];
-  }
-
-  // 2. Direct Supabase client
-  try {
-    const { data, error } = await supabase
-      .from('customers')
-      .select('*')
-      .order('created_at', { ascending: false });
-
-    if (error) {
-      console.warn('Error querying Supabase customers:', error.message);
-      return [];
-    }
-    return data || [];
-  } catch (err) {
-    console.error('Network error fetching customers from Supabase:', err);
-    return [];
-  }
+  // Cero simulación: solo datos reales registrados en Supabase
+  return [];
 }
 
 export async function createCustomerInSupabase(customer: Omit<DbCustomer, 'id' | 'created_at'>): Promise<DbCustomer | null> {
@@ -2209,6 +2191,20 @@ export async function rejectQuoteInSupabase(quoteId: string): Promise<{ success:
 // ---------------------------------------------------------------------------
 
 export async function fetchBankAccountsFromSupabase(): Promise<{ success: boolean; data: any[]; error?: string }> {
+  // 1. Try server proxy
+  try {
+    const res = await authenticatedFetch('/api/bank-accounts');
+    if (res.ok) {
+      const json = await res.json();
+      if (json.success && Array.isArray(json.data)) {
+        return { success: true, data: json.data };
+      }
+    }
+  } catch {
+    // Fall back to direct client
+  }
+
+  // 2. Direct Supabase client
   try {
     const { data, error } = await supabase
       .from('bank_accounts')
@@ -3215,24 +3211,6 @@ export async function fetchExpensesFromSupabase(): Promise<DbExpense[]> {
     }
   } catch (err) {
     console.warn('Aviso consultando /api/expenses:', err);
-  }
-
-  if (isSupabaseConfigured) {
-    try {
-      const orgId = await getActiveOrgId();
-      if (orgId) {
-        const { data, error } = await supabase
-          .from('expenses')
-          .select('*')
-          .eq('organization_id', orgId)
-          .order('due_date', { ascending: true });
-        if (!error && Array.isArray(data)) {
-          return data;
-        }
-      }
-    } catch (err) {
-      console.warn('Aviso consultando gastos directamente en Supabase:', err);
-    }
   }
 
   // Cero simulación: solo datos reales registrados en Supabase

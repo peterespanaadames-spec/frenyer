@@ -1062,7 +1062,7 @@ function supabaseAuthRequest(
   });
 }
 
-function authenticatedSupabaseRestRequest(
+async function authenticatedSupabaseRestRequest(
   res: AuthenticatedResponse,
   endpoint: string,
   options: { method?: string; body?: any; headers?: Record<string, string> } = {}
@@ -1072,6 +1072,7 @@ function authenticatedSupabaseRestRequest(
     organizationId: '00000000-0000-0000-0000-000000000001',
     role: 'admin'
   };
+  console.log('Requesting endpoint:', endpoint, 'with context:', context);
 
   const method = options.method || 'GET';
   const table = endpoint.split('?')[0].split('/')[0];
@@ -1091,7 +1092,11 @@ function authenticatedSupabaseRestRequest(
     body = Array.isArray(body) ? rows : rows[0];
   }
 
-  return supabaseRestRequest(endpoint, { ...options, body }, context.accessToken);
+  const res_supa = await supabaseRestRequest(endpoint, { ...options, body }, context.accessToken);
+  if (res_supa.error) {
+    console.error('DEBUG: authenticatedSupabaseRestRequest failed:', { endpoint, error: res_supa.error, status: res_supa.status });
+  }
+  return res_supa;
 }
 
 const DEFAULT_CATALOG_PRODUCTS = [
@@ -2980,41 +2985,40 @@ app.delete('/api/customers/:id', async (req, res: AuthenticatedResponse) => {
 
 app.get('/api/quotes', async (_req, res: AuthenticatedResponse) => {
   try {
-    const orgId = res.locals.supabaseContext!.organizationId;
-    // 1. Intentar consulta completa con columnas de ciclo de vida (migraciÃ³n 0011)
-    let result = await authenticatedSupabaseRestRequest(
-      res,
-      `sales?organization_id=eq.${encodeURIComponent(orgId)}&doc_type=eq.COTIZACION&select=id,organization_id,customer_id,doc_number,status,payment_type,exchange_rate,subtotal_usd,total_usd,total_ves,notes,quote_status,expires_at,converted_to_sale_id,created_at,customers(id,name,phone,doc_type,doc_number,email),sale_items(id,sku,name,quantity,unit_price_usd,total_usd,total_ves)&order=created_at.desc`
-    );
-
-    // 2. Si la columna quote_status aÃºn no existe en Supabase, reintentar sin las columnas opcionales
-    if (
-      result.error &&
-      typeof result.error === 'string' &&
-      (result.error.includes('quote_status') || result.error.includes('column') || result.error.includes('42703'))
-    ) {
-      const fallbackResult = await authenticatedSupabaseRestRequest(
+    const orgId = res.locals.supabaseContext?.organizationId || '00000000-0000-0000-0000-000000000001';
+    let dbQuotes: any[] = [];
+    try {
+      let result = await authenticatedSupabaseRestRequest(
         res,
-        `sales?organization_id=eq.${encodeURIComponent(orgId)}&doc_type=eq.COTIZACION&select=id,organization_id,customer_id,doc_number,status,payment_type,exchange_rate,subtotal_usd,total_usd,total_ves,notes,created_at,customers(id,name,phone,doc_type,doc_number,email),sale_items(id,sku,name,quantity,unit_price_usd,total_usd,total_ves)&order=created_at.desc`
+        `sales?doc_type=eq.COTIZACION&select=id,organization_id,customer_id,doc_number,status,payment_type,exchange_rate,subtotal_usd,total_usd,total_ves,notes,quote_status,expires_at,converted_to_sale_id,created_at,customers(id,name,phone,doc_type,doc_number,email),sale_items(id,sku,name,quantity,unit_price_usd,total_usd,total_ves)&order=created_at.desc`
       );
 
-      if (!fallbackResult.error && Array.isArray(fallbackResult.data)) {
-        const enriched = fallbackResult.data.map((item: any) => ({
-          ...item,
-          quote_status: item.status === 'CANCELADA' ? 'Rechazada' : 'Creada',
-          expires_at: null,
-          converted_to_sale_id: null
-        }));
-        return res.json({ success: true, data: enriched, schemaNotice: 'quote_status_missing' });
+      if (result.error) {
+        result = await authenticatedSupabaseRestRequest(
+          res,
+          `sales?doc_type=eq.COTIZACION&select=id,organization_id,customer_id,doc_number,status,payment_type,exchange_rate,subtotal_usd,total_usd,total_ves,notes,created_at&order=created_at.desc`
+        );
       }
-    }
 
-    if (result.error) {
-      return res.status(200).json({ success: false, error: result.error, data: [] });
+      if (!result.error && Array.isArray(result.data)) {
+        dbQuotes = result.data.map((item: any) => ({
+          ...item,
+          quote_status: item.quote_status || (item.status === 'CANCELADA' ? 'Rechazada' : 'Creada')
+        }));
+      }
+    } catch {}
+
+    const localList = localQuotes.load(orgId);
+    const map = new Map<string, any>();
+    for (const item of localList) if (item.id) map.set(item.id, item);
+    for (const item of dbQuotes) if (item.id) {
+      const local = map.get(item.id) || {};
+      map.set(item.id, { ...local, ...item });
     }
-    return res.json({ success: true, data: result.data || [] });
+    const merged = Array.from(map.values()).sort((a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime());
+    return res.json({ success: true, data: merged });
   } catch (err: any) {
-    return res.status(200).json({ success: false, error: err?.message, data: [] });
+    return res.status(200).json({ success: true, data: localQuotes.load(res.locals.supabaseContext?.organizationId), source: 'local' });
   }
 });
 
@@ -3345,41 +3349,7 @@ function loadPersistedBankAccounts(): any[] {
   } catch (err) {
     console.warn('Aviso cargando cuentas bancarias locales:', err);
   }
-  return [
-    {
-      id: 'a37f2b1e-2ee8-46ef-b76b-44a4f3d6b517',
-      organization_id: '00000000-0000-0000-0000-000000000001',
-      bank_name: 'Banesco',
-      account_number: '0134-0055-26',
-      account_type: 'Corriente',
-      currency: 'VES',
-      balance: 192259.61,
-      status: 'Activo',
-      created_at: new Date().toISOString()
-    },
-    {
-      id: 'ba063cfe-3aef-4a50-b86f-52ef90bf7fdb',
-      organization_id: '00000000-0000-0000-0000-000000000001',
-      bank_name: 'Efectivo USD',
-      account_number: '0001',
-      account_type: 'Efectivo',
-      currency: 'USD',
-      balance: 31.42,
-      status: 'Activo',
-      created_at: new Date().toISOString()
-    },
-    {
-      id: 'ef41a1a3-abce-443a-9f3c-0cfb434d06e2',
-      organization_id: '00000000-0000-0000-0000-000000000001',
-      bank_name: 'Vzla Bolivares',
-      account_number: '0102',
-      account_type: 'Corriente',
-      currency: 'VES',
-      balance: 112361.04,
-      status: 'Activo',
-      created_at: new Date().toISOString()
-    }
-  ];
+  return [];
 }
 
 function savePersistedBankAccount(account: any) {
@@ -3405,6 +3375,7 @@ app.get('/api/bank-accounts', async (_req, res) => {
     const local = loadPersistedBankAccounts();
     try {
       const result = await authenticatedSupabaseRestRequest(res, 'bank_accounts?select=*&order=bank_name.asc');
+      console.log('DEBUG: authenticatedSupabaseRestRequest bank_accounts result:', result);
       if (!result.error && Array.isArray(result.data) && result.data.length > 0) {
         const map = new Map<string, any>();
         for (const item of local) map.set(item.id, item);
@@ -5169,18 +5140,18 @@ app.get('/api/expense-categories', async (_req, res: AuthenticatedResponse) => {
   try {
     const orgId = res.locals.supabaseContext?.organizationId;
     if (!orgId) {
-      return res.status(200).json({ success: true, data: [] });
+      return res.status(200).json({ success: true, data: localExpenseCategories.load(), source: 'local' });
     }
     const result = await authenticatedSupabaseRestRequest(
       res,
       `expense_categories?organization_id=eq.${encodeURIComponent(orgId)}&select=*&order=name.asc`
     );
     if (result.error) {
-      return res.status(200).json({ success: false, error: result.error, data: [] });
+      return res.status(200).json({ success: true, data: localExpenseCategories.load(orgId), source: 'local' });
     }
     return res.json({ success: true, data: result.data || [] });
   } catch (err: any) {
-    return res.status(200).json({ success: false, error: err?.message, data: [] });
+    return res.status(200).json({ success: true, data: localExpenseCategories.load(res.locals.supabaseContext?.organizationId), source: 'local' });
   }
 });
 
@@ -5189,7 +5160,7 @@ app.post('/api/expense-categories', async (req, res: AuthenticatedResponse) => {
     const orgId = res.locals.supabaseContext?.organizationId;
     const { name, is_default } = req.body || {};
     if (!name || typeof name !== 'string' || !name.trim()) {
-      return res.status(400).json({ success: false, error: 'El nombre de la categorÃ­a es obligatorio.' });
+      return res.status(400).json({ success: false, error: 'El nombre de la categoría es obligatorio.' });
     }
     const result = await authenticatedSupabaseRestRequest(res, 'expense_categories', {
       method: 'POST',
@@ -5224,18 +5195,18 @@ app.get('/api/expenses', async (_req, res: AuthenticatedResponse) => {
   try {
     const orgId = res.locals.supabaseContext?.organizationId;
     if (!orgId) {
-      return res.status(200).json({ success: true, data: [] });
+      return res.status(200).json({ success: true, data: localExpenses.load(), source: 'local' });
     }
     const result = await authenticatedSupabaseRestRequest(
       res,
       `expenses?organization_id=eq.${encodeURIComponent(orgId)}&select=*&order=due_date.asc,created_at.desc`
     );
     if (result.error) {
-      return res.status(200).json({ success: false, error: result.error, data: [] });
+      return res.status(200).json({ success: true, data: localExpenses.load(orgId), source: 'local' });
     }
     return res.json({ success: true, data: result.data || [] });
   } catch (err: any) {
-    return res.status(200).json({ success: false, error: err?.message, data: [] });
+    return res.status(200).json({ success: true, data: localExpenses.load(res.locals.supabaseContext?.organizationId), source: 'local' });
   }
 });
 
@@ -5546,6 +5517,19 @@ app.get('/api/sales', async (_req, res: AuthenticatedResponse) => {
     return res.json({ success: true, data: result.data || [] });
   } catch (err: any) {
     return res.status(200).json({ success: true, data: localSales.load(res.locals.supabaseContext?.organizationId), source: 'local' });
+  }
+});
+
+app.get('/api/sales/last-doc-number', async (req, res: AuthenticatedResponse) => {
+  const type = req.query.type as string || 'FACTURA';
+  try {
+    const result = await authenticatedSupabaseRestRequest(res, `sales?doc_type=eq.${type}&select=doc_number&order=created_at.desc&limit=1`);
+    if (!result.error) {
+      return res.json({ success: true, data: result.data && result.data.length > 0 ? result.data[0] : null });
+    }
+    return res.json({ success: false, error: result.error });
+  } catch (err: any) {
+    return res.status(200).json({ success: false, error: err?.message });
   }
 });
 

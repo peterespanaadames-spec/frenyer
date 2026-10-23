@@ -150,36 +150,42 @@ export function ManualBcvRateModal({
       }}
     >
       <div
-        className="card"
+        className="modal-container"
         style={{
           width: '100%',
-          maxWidth: 480,
+          maxWidth: 520,
           padding: 0,
           overflow: 'hidden',
-          background: '#fff',
-          boxShadow: '0 20px 40px rgba(0,0,0,0.2)'
+          background: '#FFFFFF',
+          borderRadius: 24,
+          boxShadow: '0 10px 30px rgba(0,0,0,0.12)',
+          position: 'relative'
         }}
       >
-        {/* Header (Amber Warning Style for Contingency) */}
+        {/* Cashea Top Yellow Progress Indicator Bar */}
+        <div className="modal-progress-bar" />
+
+        {/* Header */}
         <div
           style={{
-            background: '#991b1b',
-            color: 'white',
-            padding: '16px 20px',
+            background: '#2D2E32',
+            color: '#FFFFFF',
+            padding: '20px 24px',
             display: 'flex',
             justifyContent: 'space-between',
             alignItems: 'center'
           }}
         >
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <ShieldAlert size={20} style={{ color: '#fca5a5' }} />
-            <h3 style={{ margin: 0, fontSize: 14, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <ShieldAlert size={20} style={{ color: '#FFF275' }} />
+            <h3 style={{ margin: 0, fontSize: 15, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.03em', color: '#FFFFFF' }}>
               Intervención Manual de Tasa BCV
             </h3>
           </div>
           <button
+            type="button"
             onClick={onClose}
-            style={{ background: 'transparent', border: 'none', color: '#fca5a5', cursor: 'pointer' }}
+            style={{ background: 'transparent', border: 'none', color: '#9CA3AF', cursor: 'pointer', padding: 4 }}
           >
             <X size={20} />
           </button>

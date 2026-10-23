@@ -61,17 +61,10 @@ export function Dashboard() {
       setIsLoading(true);
       setLoadError('');
 
-      const status = await refreshSupabaseStatus();
-      if (!status.supabaseConnected) {
-        setSummary(EMPTY_SUMMARY);
-        setIsLoading(false);
-        return;
-      }
-
       try {
+        refreshSupabaseStatus().catch(() => {});
         const activeRate = getActiveExchangeRate();
 
-        // Todas las consultas van por el servidor: el navegador no maneja credenciales.
         const fetchTable = async (url: string): Promise<Array<Record<string, any>>> => {
           try {
             const res = await authenticatedFetch(url);
@@ -83,7 +76,6 @@ export function Dashboard() {
           }
         };
 
-        // 1. Consultar todos los datos requeridos (mismo esquema de Salud de Empresa)
         const [products, allSales, saleItems, expenses, cxcRows, cxpRows] = await Promise.all([
           fetchTable('/api/products'),
           fetchTable('/api/sales'),
@@ -95,7 +87,6 @@ export function Dashboard() {
 
         const sales = allSales.filter((s: any) => !s.status || s.status === 'COMPLETADA');
 
-        // 2. Mapeo de costos de productos por SKU (idéntico a Salud de Empresa)
         const productCostMap = new Map<string, number>();
         const productMap = new Map<string, Product>();
         const productList = products as unknown as Product[];
@@ -104,7 +95,6 @@ export function Dashboard() {
           if (p.id) productMap.set(p.id, p);
         });
 
-        // 3. Mapeo de costos de venta a través de sale_items
         const costBySale = new Map<string, number>();
         saleItems.forEach((it: any) => {
           if (!it.sale_id) return;
@@ -113,7 +103,6 @@ export function Dashboard() {
           costBySale.set(it.sale_id, (costBySale.get(it.sale_id) || 0) + itemTotalCost);
         });
 
-        // 4. Ingresos y Costos de Venta Reales
         let totalSalesUsd = 0;
         let totalCostUsd = 0;
         sales.forEach((s: any) => {
@@ -123,7 +112,6 @@ export function Dashboard() {
           totalCostUsd += saleCost;
         });
 
-        // 5. Gastos Operativos Reales (expenses)
         let totalExpensesUsd = 0;
         expenses.forEach((e: any) => {
           const amt = Number(e.amount) || 0;
@@ -132,11 +120,9 @@ export function Dashboard() {
           totalExpensesUsd += expenseUsd;
         });
 
-        // 6. Utilidad Neta (Fórmula de Salud de Empresa: Ingresos - Costos de Ventas - Gastos)
         const utilidadBruta = totalSalesUsd - totalCostUsd;
         const utilidadNeta = Math.round((utilidadBruta - totalExpensesUsd) * 100) / 100;
 
-        // 7. Top 5 Productos Más Vendidos (agrupando por nombre real en sale_items)
         const productSales = new Map<string, number>();
         saleItems.forEach((it: any) => {
           const qty = Number(it.quantity) || 0;
@@ -150,13 +136,11 @@ export function Dashboard() {
           .sort((a, b) => b.totalQuantity - a.totalQuantity)
           .slice(0, 5);
 
-        // 8. Productos con Bajo Stock (stock actual <= min_stock configurado)
         const lowStockProductsList = productList
           .filter((p) => Number(p.stock) <= Number(p.min_stock))
           .sort((a, b) => Number(a.stock) - Number(b.stock))
           .slice(0, 5);
 
-        // Helper: Evaluar si una cuenta vence en los próximos 21 días o corresponde al mes en curso
         const now = new Date();
         const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
         const limit21Days = new Date(today.getTime() + 21 * 86400000);
@@ -189,7 +173,6 @@ export function Dashboard() {
           return isUpcoming21Days || isThisMonth;
         };
 
-        // 9. Cuentas por Cobrar Pendientes a Vencer (Próximas en 21 días o del mes)
         let receivableDue = 0;
         let receivableDueCount = 0;
         let allReceivables: any[] = [];
@@ -217,7 +200,6 @@ export function Dashboard() {
         );
         receivableDueCount = filteredReceivables.length;
 
-        // 10. Cuentas por Pagar Pendientes a Vencer (Próximas en 21 días o del mes)
         let payableDue = 0;
         let payableDueCount = 0;
         let allPayables: any[] = [];
@@ -291,26 +273,32 @@ export function Dashboard() {
         <>
           <div className="grid grid-4">
             <Card>
-              <div className="kpi-label">Ventas (7 días)</div>
-              <div className="kpi-value">{isLoading ? '—' : formatUSD(summary.salesUsd)}</div>
+              <div className="kpi-label">Ventas Totales (7 días)</div>
+              <div className="kpi-value positive">{isLoading ? '—' : formatUSD(summary.salesUsd)}</div>
+              <div style={{ fontSize: 12, color: '#6B7280' }}>Recibes por ventas</div>
             </Card>
             <Card>
               <div className="kpi-label">Utilidad Mensual</div>
-              <div className="kpi-value" style={{ color: summary.monthlyProfit >= 0 ? 'var(--brand-700, #7e22ce)' : 'var(--danger, #dc2626)' }}>
+              <div className="kpi-value" style={{ color: summary.monthlyProfit >= 0 ? '#15803D' : '#DC2626' }}>
                 {isLoading ? '—' : formatUSD(summary.monthlyProfit)}
               </div>
+              <div style={{ fontSize: 12, color: '#6B7280' }}>Resultado neto acumulado</div>
             </Card>
             <Card>
               <div className="kpi-label">Inventario (Unidades)</div>
               <div className="kpi-value">{isLoading ? '—' : summary.stockUnits.toLocaleString('es-VE')}</div>
+              <div style={{ fontSize: 12, color: '#6B7280' }}>En almacén activo</div>
             </Card>
             <Card>
               <div className="kpi-label">Productos bajo mínimo</div>
-              <div className="kpi-value">{isLoading ? '—' : summary.lowStockProductsCount}</div>
+              <div className="kpi-value" style={{ color: summary.lowStockProductsCount > 0 ? '#DC2626' : '#1F2937' }}>
+                {isLoading ? '—' : summary.lowStockProductsCount}
+              </div>
+              <div style={{ fontSize: 12, color: '#6B7280' }}>Requieren reposición</div>
             </Card>
           </div>
 
-          <div className="grid grid-2" style={{ marginTop: 14 }}>
+          <div className="grid grid-2" style={{ marginTop: 16 }}>
             <Card>
               <h3>Top 5 productos más vendidos</h3>
               {summary.topProducts.length === 0 && !isLoading ? (
@@ -320,19 +308,19 @@ export function Dashboard() {
                   <div
                     key={i}
                     style={{
-                      padding: '10px 0',
-                      borderBottom: i === summary.topProducts.length - 1 ? 'none' : '1px solid var(--border)',
+                      padding: '12px 0',
+                      borderBottom: i === summary.topProducts.length - 1 ? 'none' : '1px solid #E5E7EB',
                       display: 'flex',
                       justifyContent: 'space-between',
                       alignItems: 'center'
                     }}
                   >
-                    <span style={{ fontSize: 13, fontWeight: 500, color: 'var(--text)' }}>
+                    <span style={{ fontSize: 13.5, fontWeight: 600, color: '#1F2937' }}>
                       {p.name}
                     </span>
-                    <b style={{ fontSize: 13, color: 'var(--text)' }}>
+                    <Badge tone="dark">
                       {p.totalQuantity} {p.totalQuantity === 1 ? 'ud.' : 'uds.'}
-                    </b>
+                    </Badge>
                   </div>
                 ))
               )}
@@ -347,44 +335,44 @@ export function Dashboard() {
                   <div
                     key={p.id}
                     style={{
-                      padding: '10px 0',
-                      borderBottom: i === summary.lowStockProductsList.length - 1 ? 'none' : '1px solid var(--border)',
+                      padding: '12px 0',
+                      borderBottom: i === summary.lowStockProductsList.length - 1 ? 'none' : '1px solid #E5E7EB',
                       display: 'flex',
                       justifyContent: 'space-between',
                       alignItems: 'center'
                     }}
                   >
-                    <span style={{ fontSize: 13, fontWeight: 500, color: 'var(--text)' }}>
+                    <span style={{ fontSize: 13.5, fontWeight: 600, color: '#1F2937' }}>
                       {p.name}
                     </span>
-                    <Badge tone="warning">Stock: {p.stock}</Badge>
+                    <Badge tone="danger">Stock: {p.stock}</Badge>
                   </div>
                 ))
               )}
             </Card>
           </div>
 
-          <div className="grid grid-2" style={{ marginTop: 14 }}>
+          <div className="grid grid-2" style={{ marginTop: 16 }}>
             <Card>
               <h3>Cuentas por Cobrar a Vencer</h3>
-              <div className="kpi-value">{isLoading ? '—' : formatUSD(summary.receivableDueUsd)}</div>
-              <div className="muted small">
+              <div className="kpi-value positive">{isLoading ? '—' : formatUSD(summary.receivableDueUsd)}</div>
+              <div className="muted small" style={{ fontSize: 13, marginTop: 4 }}>
                 {isLoading
                   ? 'Cargando pendientes...'
                   : summary.receivableDueCount === 0
                   ? 'Sin cobros en los próximos 21 días o del mes'
-                  : `${summary.receivableDueCount} ${summary.receivableDueCount === 1 ? 'cuenta por cobrar' : 'cuentas por cobrar'} (próximos 21 días o del mes)`}
+                  : `${summary.receivableDueCount} ${summary.receivableDueCount === 1 ? 'cuenta por cobrar' : 'cuentas por cobrar'} a recibir`}
               </div>
             </Card>
             <Card>
               <h3>Cuentas por Pagar a Vencer</h3>
-              <div className="kpi-value">{isLoading ? '—' : formatUSD(summary.payableDueUsd)}</div>
-              <div className="muted small">
+              <div className="kpi-value negative">{isLoading ? '—' : formatUSD(summary.payableDueUsd)}</div>
+              <div className="muted small" style={{ fontSize: 13, marginTop: 4 }}>
                 {isLoading
                   ? 'Cargando obligaciones...'
                   : summary.payableDueCount === 0
                   ? 'Sin pagos en los próximos 21 días o del mes'
-                  : `${summary.payableDueCount} ${summary.payableDueCount === 1 ? 'compromiso' : 'compromisos'} (próximos 21 días o del mes)`}
+                  : `${summary.payableDueCount} ${summary.payableDueCount === 1 ? 'compromiso pendiente' : 'compromisos pendientes'}`}
               </div>
             </Card>
           </div>

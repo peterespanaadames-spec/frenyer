@@ -122,66 +122,66 @@ export const CompanyHealthPage = () => {
       const monthlyBuckets = createEmptyMonthlyData();
       const detectedYears = new Set<string>([new Date().getFullYear().toString()]);
 
-      if (isSupabaseConfigured) {
-        // Todas las consultas van por el servidor: el navegador no maneja credenciales.
-        const fetchTable = async (url: string): Promise<{ data: Array<Record<string, any>> }> => {
-          try {
-            const res = await authenticatedFetch(url);
-            if (!res.ok) return { data: [] };
-            const json = await res.json();
-            return { data: Array.isArray(json?.data) ? json.data : [] };
-          } catch {
-            return { data: [] };
+      // Todas las consultas van por el servidor proxy /api/*: el navegador no maneja credenciales.
+      const fetchTable = async (url: string): Promise<{ data: Array<Record<string, any>> }> => {
+        try {
+          const res = await authenticatedFetch(url);
+          if (!res.ok) return { data: [] };
+          const json = await res.json();
+          return { data: Array.isArray(json?.data) ? json.data : [] };
+        } catch {
+          return { data: [] };
+        }
+      };
+
+      const [productsRes, banksRes, cxcRes, cxpRes, salesRes, expensesRes, saleItemsRes] = await Promise.all([
+        fetchTable('/api/products'),
+        fetchTable('/api/bank-accounts'),
+        fetchTable('/api/accounts-receivable'),
+        fetchTable('/api/accounts-payable'),
+        fetchTable('/api/sales'),
+        fetchTable('/api/expenses'),
+        fetchTable('/api/sale-items')
+      ]);
+
+      // 1. Inventario Real
+      const productCostMap = new Map<string, number>();
+      if (productsRes.data && productsRes.data.length > 0) {
+        invVal = productsRes.data.reduce((acc, p) => {
+          const stock = Math.max(0, Number(p.stock) || 0);
+          const cost = Number(p.cost_usd ?? p.costUsd) || Number(p.price_usd ?? p.priceUsd) || 0;
+          if (p.sku) {
+            productCostMap.set(p.sku, Number(p.cost_usd ?? p.costUsd) || 0);
           }
-        };
+          return acc + (stock * cost);
+        }, 0);
+      }
 
-        const [productsRes, banksRes, cxcRes, cxpRes, salesRes, expensesRes, saleItemsRes] = await Promise.all([
-          fetchTable('/api/products'),
-          fetchTable('/api/bank-accounts'),
-          fetchTable('/api/accounts-receivable'),
-          fetchTable('/api/accounts-payable'),
-          fetchTable('/api/sales'),
-          fetchTable('/api/expenses'),
-          fetchTable('/api/sale-items')
-        ]);
+      // 2. Cuentas Bancarias Reales
+      if (banksRes.data && banksRes.data.length > 0) {
+        bankVal = banksRes.data.reduce((acc, b) => {
+          if (b.status === 'Inactivo') return acc;
+          const bal = Number(b.balance ?? b.balance_usd ?? b.amount ?? 0);
+          if ((b.currency || 'USD') === 'VES' && activeRate > 0) {
+            return acc + (bal / activeRate);
+          }
+          return acc + bal;
+        }, 0);
+      }
 
-        // 1. Inventario Real
-        const productCostMap = new Map<string, number>();
-        if (productsRes.data && productsRes.data.length > 0) {
-          invVal = productsRes.data.reduce((acc, p) => {
-            const stock = Math.max(0, Number(p.stock) || 0);
-            const cost = Number(p.cost_usd) || Number(p.price_usd) || 0;
-            if (p.sku) {
-              productCostMap.set(p.sku, Number(p.cost_usd) || 0);
-            }
-            return acc + (stock * cost);
-          }, 0);
-        }
+      // 3. Cuentas por Cobrar Reales (sólo saldos pendientes activos)
+      if (cxcRes.data && cxcRes.data.length > 0) {
+        cxcVal = cxcRes.data
+          .filter((c) => c.status !== 'PAGADO' && c.status !== 'Pagada')
+          .reduce((acc, c) => acc + Math.max(0, Number(c.balance_usd ?? c.remaining_amount ?? c.balanceUsd ?? c.total_usd ?? 0)), 0);
+      }
 
-        // 2. Cuentas Bancarias Reales
-        if (banksRes.data && banksRes.data.length > 0) {
-          bankVal = banksRes.data.reduce((acc, b) => {
-            const bal = Number(b.balance) || 0;
-            if (b.currency === 'VES' && activeRate > 0) {
-              return acc + (bal / activeRate);
-            }
-            return acc + bal;
-          }, 0);
-        }
-
-        // 3. Cuentas por Cobrar Reales (sólo saldos pendientes activos)
-        if (cxcRes.data && cxcRes.data.length > 0) {
-          cxcVal = cxcRes.data
-            .filter((c) => c.status !== 'PAGADO')
-            .reduce((acc, c) => acc + Math.max(0, Number(c.balance_usd) || 0), 0);
-        }
-
-        // 4. Cuentas por Pagar Reales (sólo saldos pendientes activos)
-        if (cxpRes.data && cxpRes.data.length > 0) {
-          cxpVal = cxpRes.data
-            .filter((p) => p.status !== 'PAGADO')
-            .reduce((acc, p) => acc + Math.max(0, Number(p.balance_usd) || 0), 0);
-        }
+      // 4. Cuentas por Pagar Reales (sólo saldos pendientes activos)
+      if (cxpRes.data && cxpRes.data.length > 0) {
+        cxpVal = cxpRes.data
+          .filter((p) => p.status !== 'PAGADO' && p.status !== 'Pagada')
+          .reduce((acc, p) => acc + Math.max(0, Number(p.balance_usd ?? p.remaining_amount ?? p.balanceUsd ?? p.total_usd ?? 0)), 0);
+      }
 
         // 5. Mapeo de Costos por Venta a través de Artículos Reales
         const costBySale = new Map<string, number>();
@@ -244,7 +244,6 @@ export const CompanyHealthPage = () => {
             }
           });
         }
-      }
 
       setAvailableYears(Array.from(detectedYears).sort((a, b) => Number(b) - Number(a)));
       setMonthlyEvolution(monthlyBuckets);

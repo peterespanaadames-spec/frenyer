@@ -309,7 +309,7 @@ export function DashboardLayout() {
           <div className="topbar-title">{businessProfile.businessName || 'Frenyer'}</div>
 
           {/* Right Header Area with BCV Pill & Actions */}
-          <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+          <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
             
             {/* Supabase Status Pill */}
             <button
@@ -320,46 +320,44 @@ export function DashboardLayout() {
                 display: 'flex',
                 alignItems: 'center',
                 gap: 6,
-                background: isDbReady ? '#ecfdf5' : '#fffbeb',
-                border: isDbReady ? '1px solid #a7f3d0' : '1px solid #fde68a',
-                borderRadius: 8,
-                padding: '6px 10px',
+                background: isDbReady ? '#DCFCE7' : '#FEF3C7',
+                border: isDbReady ? '1px solid #86EFAC' : '1px solid #FDE68A',
+                borderRadius: 9999,
+                padding: '6px 14px',
                 fontSize: 12,
                 fontWeight: 700,
-                color: isDbReady ? '#065f46' : '#92400e',
+                color: isDbReady ? '#15803D' : '#B45309',
                 cursor: 'pointer',
                 transition: 'all 0.15s ease'
               }}
             >
-              <Database size={14} style={{ color: isDbReady ? '#059669' : '#d97706' }} />
+              <Database size={14} style={{ color: isDbReady ? '#16A34A' : '#D97706' }} />
               <span>{isDbReady ? 'Supabase' : 'Sin BD'}</span>
             </button>
 
-            {/* Live BCV Exchange Rate Pill (Minimalist Amount Only - Click to modify) */}
+            {/* Live BCV Exchange Rate Pill (Cashea Yellow Highlight Pill) */}
             <div
               onClick={() => setIsManualModalOpen(true)}
               title="Haga clic para modificar la tasa de cambio"
               style={{
                 display: 'flex',
                 alignItems: 'center',
-                background: rateSource === 'MANUAL' ? '#fef2f2' : '#f8fafc',
-                border: rateSource === 'MANUAL' ? '1px solid #f87171' : '1px solid var(--border)',
-                borderRadius: 8,
-                padding: '6px 12px',
+                background: '#FFF275',
+                border: '1px solid #FDF06F',
+                borderRadius: 9999,
+                padding: '6px 14px',
                 fontSize: 13,
                 fontWeight: 800,
-                color: '#0f172a',
+                color: '#1F2937',
                 cursor: 'pointer',
                 transition: 'all 0.15s ease',
                 userSelect: 'none'
               }}
               onMouseEnter={(e) => {
-                e.currentTarget.style.background = '#f1f5f9';
-                e.currentTarget.style.borderColor = 'var(--brand-500)';
+                e.currentTarget.style.background = '#FDF06F';
               }}
               onMouseLeave={(e) => {
-                e.currentTarget.style.background = rateSource === 'MANUAL' ? '#fef2f2' : '#f8fafc';
-                e.currentTarget.style.borderColor = rateSource === 'MANUAL' ? '#f87171' : 'var(--border)';
+                e.currentTarget.style.background = '#FFF275';
               }}
             >
               Bs. {bcvRate.toFixed(2)}
@@ -372,22 +370,22 @@ export function DashboardLayout() {
                 display: 'inline-flex',
                 alignItems: 'center',
                 gap: 6,
-                padding: '5px 11px',
-                borderRadius: 8,
-                border: '1px solid #e2e8f0',
-                background: '#f8fafc',
-                color: '#334155',
+                padding: '6px 14px',
+                borderRadius: 9999,
+                border: '1px solid #E2E8F0',
+                background: '#FFFFFF',
+                color: '#1F2937',
                 fontSize: 12,
-                fontWeight: 650,
+                fontWeight: 700,
                 cursor: 'pointer',
                 transition: 'all 0.15s ease'
               }}
               title="Abrir Tienda Online (Catálogo público)"
             >
-              <Store size={14} color="#7c3aed" /> Tienda Online
+              <Store size={14} color="#1F2937" /> Tienda Online
             </button>
 
-            <span className="muted" style={{ fontSize: 12 }}>
+            <span className="muted" style={{ fontSize: 12, fontWeight: 500 }}>
               Sucursal Principal
             </span>
             <div
@@ -397,33 +395,34 @@ export function DashboardLayout() {
                 display: 'flex',
                 alignItems: 'center',
                 gap: 8,
-                padding: '4px 10px',
-                borderRadius: 8,
-                border: '1px solid var(--border)',
-                background: '#fff',
+                padding: '4px 12px 4px 6px',
+                borderRadius: 9999,
+                border: '1px solid #E2E8F0',
+                background: '#FFFFFF',
                 cursor: 'pointer',
                 transition: 'border-color 0.15s ease'
               }}
             >
               <div
-                className="avatar"
                 style={{
-                  width: 26,
-                  height: 26,
+                  width: 28,
+                  height: 28,
+                  borderRadius: '50%',
                   fontSize: 11,
-                  fontWeight: 700,
-                  background: '#f3e8ff',
-                  color: '#7e22ce',
-                  border: '1px solid #e9d5ff'
+                  fontWeight: 800,
+                  background: '#2D2E32',
+                  color: '#FFFFFF',
+                  display: 'grid',
+                  placeItems: 'center'
                 }}
               >
                 {activeUser?.initials || 'AP'}
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', lineHeight: 1.1 }}>
-                <span style={{ fontSize: 11, fontWeight: 700, color: '#1e293b' }}>
+                <span style={{ fontSize: 11, fontWeight: 700, color: '#111827' }}>
                   {activeUser?.name?.split(' ')[0] || 'Admin'}
                 </span>
-                <span style={{ fontSize: 9, fontWeight: 700, color: '#7e22ce', textTransform: 'uppercase' }}>
+                <span style={{ fontSize: 9, fontWeight: 800, color: '#6B7280', textTransform: 'uppercase' }}>
                   {activeUser?.role || 'Admin'}
                 </span>
               </div>
@@ -441,24 +440,24 @@ export function DashboardLayout() {
                 display: 'inline-flex',
                 alignItems: 'center',
                 justifyContent: 'center',
-                width: 32,
-                height: 32,
-                borderRadius: 8,
-                border: '1px solid var(--border)',
-                background: '#fff',
-                color: '#64748b',
+                width: 36,
+                height: 36,
+                borderRadius: 9999,
+                border: '1px solid #E2E8F0',
+                background: '#FFFFFF',
+                color: '#4B5563',
                 cursor: 'pointer',
                 transition: 'all 0.15s ease'
               }}
               onMouseEnter={(e) => {
-                e.currentTarget.style.color = '#ef4444';
-                e.currentTarget.style.borderColor = '#fca5a5';
-                e.currentTarget.style.background = '#fef2f2';
+                e.currentTarget.style.color = '#DC2626';
+                e.currentTarget.style.borderColor = '#FCA5A5';
+                e.currentTarget.style.background = '#FEF2F2';
               }}
               onMouseLeave={(e) => {
-                e.currentTarget.style.color = '#64748b';
-                e.currentTarget.style.borderColor = 'var(--border)';
-                e.currentTarget.style.background = '#fff';
+                e.currentTarget.style.color = '#4B5563';
+                e.currentTarget.style.borderColor = '#E2E8F0';
+                e.currentTarget.style.background = '#FFFFFF';
               }}
             >
               <LogOut size={15} />

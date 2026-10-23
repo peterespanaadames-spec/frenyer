@@ -73,7 +73,8 @@ export function SupabaseConnectionModal({ isOpen, onClose }: SupabaseConnectionM
         padding: 16
       }}
     >
-      <Card
+      <div
+        className="modal-container"
         style={{
           width: '100%',
           maxWidth: 620,
@@ -82,9 +83,15 @@ export function SupabaseConnectionModal({ isOpen, onClose }: SupabaseConnectionM
           flexDirection: 'column',
           padding: 0,
           overflow: 'hidden',
-          boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)'
+          borderRadius: 24,
+          boxShadow: '0 10px 30px rgba(0, 0, 0, 0.12)',
+          background: '#FFFFFF',
+          position: 'relative'
         }}
       >
+        {/* Cashea Top Yellow Progress Indicator Bar */}
+        <div className="modal-progress-bar" />
+
         {/* Header */}
         <div
           style={{
@@ -93,7 +100,8 @@ export function SupabaseConnectionModal({ isOpen, onClose }: SupabaseConnectionM
             display: 'flex',
             justifyContent: 'space-between',
             alignItems: 'center',
-            background: '#fafbfc'
+            background: '#2D2E32',
+            color: '#FFFFFF'
           }}
         >
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
@@ -101,73 +109,76 @@ export function SupabaseConnectionModal({ isOpen, onClose }: SupabaseConnectionM
               style={{
                 width: 40,
                 height: 40,
-                borderRadius: 10,
-                background: isConnectedNow ? '#ecfdf5' : '#f5f3ff',
-                color: isConnectedNow ? '#059669' : '#7c3aed',
+                borderRadius: 9999,
+                background: isConnectedNow ? '#DCFCE7' : '#FFF275',
+                color: isConnectedNow ? '#15803D' : '#1F2937',
                 display: 'grid',
                 placeItems: 'center',
-                border: `1px solid ${isConnectedNow ? '#a7f3d0' : '#ddd6fe'}`
+                border: `1px solid ${isConnectedNow ? '#86EFAC' : '#FDF06F'}`
               }}
             >
               <Database size={20} />
             </div>
             <div>
-              <h2 style={{ margin: 0, fontSize: 17, fontWeight: 800, color: '#0f172a' }}>
+              <h2 style={{ margin: 0, fontSize: 17, fontWeight: 800, color: '#FFFFFF' }}>
                 Estado de la base de datos
               </h2>
-              <span style={{ fontSize: 12, color: '#64748b' }}>
-                Conexion administrada desde el servidor
+              <span style={{ fontSize: 12, color: '#9CA3AF' }}>
+                Conexión administrada desde el servidor
               </span>
             </div>
           </div>
           <button
+            type="button"
             onClick={onClose}
             style={{
               background: 'transparent',
               border: 'none',
-              color: '#94a3b8',
+              color: '#9CA3AF',
               cursor: 'pointer',
               padding: 4,
-              borderRadius: 6
+              borderRadius: 9999
             }}
           >
             <X size={20} />
           </button>
         </div>
 
-        {/* Tabs */}
-        <div style={{ display: 'flex', borderBottom: '1px solid var(--border)', background: '#fff' }}>
+        {/* Cashea Segmented Tabs */}
+        <div style={{ display: 'flex', padding: '12px 24px 0 24px', gap: 8, background: '#F8F9FA', borderBottom: '1px solid var(--border)' }}>
           <button
+            type="button"
             onClick={() => setActiveTab('conexion')}
             style={{
-              flex: 1,
-              padding: '12px 16px',
+              padding: '10px 20px',
               border: 'none',
-              borderBottom: activeTab === 'conexion' ? '2px solid var(--brand-500)' : '2px solid transparent',
-              background: 'transparent',
-              fontWeight: activeTab === 'conexion' ? 700 : 500,
-              color: activeTab === 'conexion' ? 'var(--brand-700)' : '#64748b',
+              borderRadius: '9999px 9999px 0 0',
+              background: activeTab === 'conexion' ? '#FFFFFF' : 'transparent',
+              fontWeight: activeTab === 'conexion' ? 800 : 600,
+              color: activeTab === 'conexion' ? '#111827' : '#6B7280',
               fontSize: 13,
-              cursor: 'pointer'
+              cursor: 'pointer',
+              boxShadow: activeTab === 'conexion' ? '0 -2px 6px rgba(0,0,0,0.03)' : 'none'
             }}
           >
-            Estado de la conexion
+            Estado de la conexión
           </button>
           <button
+            type="button"
             onClick={() => {
               setActiveTab('migraciones');
               loadMigrationSql();
             }}
             style={{
-              flex: 1,
-              padding: '12px 16px',
+              padding: '10px 20px',
               border: 'none',
-              borderBottom: activeTab === 'migraciones' ? '2px solid var(--brand-500)' : '2px solid transparent',
-              background: 'transparent',
-              fontWeight: activeTab === 'migraciones' ? 700 : 500,
-              color: activeTab === 'migraciones' ? 'var(--brand-700)' : '#64748b',
+              borderRadius: '9999px 9999px 0 0',
+              background: activeTab === 'migraciones' ? '#FFFFFF' : 'transparent',
+              fontWeight: activeTab === 'migraciones' ? 800 : 600,
+              color: activeTab === 'migraciones' ? '#111827' : '#6B7280',
               fontSize: 13,
-              cursor: 'pointer'
+              cursor: 'pointer',
+              boxShadow: activeTab === 'migraciones' ? '0 -2px 6px rgba(0,0,0,0.03)' : 'none'
             }}
           >
             Esquema SQL de Migraciones
@@ -356,7 +367,7 @@ export function SupabaseConnectionModal({ isOpen, onClose }: SupabaseConnectionM
             </div>
           )}
         </div>
-      </Card>
+      </div>
     </div>
   );
 }

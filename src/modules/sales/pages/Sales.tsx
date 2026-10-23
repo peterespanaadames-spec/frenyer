@@ -89,18 +89,14 @@ interface PaymentEntry {
 }
 
 async function getNextDocumentNumber(type: 'FACTURA' | 'NOTA'): Promise<string> {
-  const { data, error } = await supabase
-    .from('sales')
-    .select('doc_number')
-    .eq('doc_type', type)
-    .order('created_at', { ascending: false })
-    .limit(1);
+  const res = await authenticatedFetch(`/api/sales/last-doc-number?type=${type}`);
+  const json = await res.json();
 
-  if (error) {
-    throw error;
+  if (!json.success) {
+    throw new Error(json.error || 'No se pudo consultar el correlativo en Supabase.');
   }
 
-  const lastNumber = data?.[0]?.doc_number;
+  const lastNumber = json.data?.doc_number;
   if (!lastNumber) {
     return '0001';
   }
@@ -281,8 +277,13 @@ export function Sales() {
     const [dbProds, dbCusts, accountsRes, bcvRes] = await Promise.all([
       fetchProductsFromSupabase(),
       fetchCustomersFromSupabase(),
-      authenticatedFetch(`/api/bank-accounts?t=${ts}`).then(r => r.json()).catch(async () => {
-        return await fetchBankAccountsFromSupabase();
+      authenticatedFetch(`/api/bank-accounts?t=${ts}`).then(async (r) => { 
+        const json = await r.json(); 
+        console.log('accountsRes:', json); 
+        return json; 
+      }).catch(async (e) => { 
+        console.error('accountsRes error:', e); 
+        return await fetchBankAccountsFromSupabase(); 
       }),
       fetch(`/api/bcv/rates?t=${ts}`).then(r => r.json()).catch(() => null)
     ]);
@@ -321,7 +322,7 @@ export function Sales() {
         rawAccounts = direct.data;
       }
     }
-    const activeAccs = (rawAccounts || []).filter((a: any) => a.status === 'Activo');
+    const activeAccs = (rawAccounts || []).filter((a: any) => a.status === 'Activo' || a.status === 'Habilitada' || !a.status);
     setDbAccounts(activeAccs);
     if (activeAccs.length > 0) {
       setInitialCapitalBankId(prev => prev || activeAccs[0].id);

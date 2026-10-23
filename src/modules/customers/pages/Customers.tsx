@@ -109,21 +109,19 @@ export function Customers() {
     const fetchClientAnalytics = async () => {
       setIsLoadingDetails(true);
       try {
-        // 1. Fetch real sales/orders for this customer
-        const { data: salesData, error: salesError } = await supabase
-          .from('sales')
-          .select('id, doc_number, doc_type, created_at, total_usd, status')
-          .eq('customer_id', selectedClient.id)
-          .order('created_at', { ascending: false });
-
+        // 1. Fetch real sales/orders for this customer via server proxy
+        const salesRes = await authenticatedFetch(`/api/sales?customer_id=eq.${selectedClient.id}`);
+        
         let ordersList: CustomerOrder[] = [];
-        if (salesError) {
-          console.warn('Error fetching client sales:', salesError.message);
+        if (!salesRes.ok) {
+          console.warn('Error fetching client sales');
           setClientOrders([]);
           setTopProducts([]);
         } else {
-          const rawSales = salesData || [];
-          // Deduplicate sales by composite key (doc_number + doc_type + total_usd) to prevent duplicate records
+          const salesJson = await salesRes.json();
+          const rawSales = salesJson.data || [];
+          
+          // Deduplicate sales by composite key (doc_number + doc_type + total_usd)
           const uniqueSalesMap = new Map<string, CustomerOrder>();
           for (const s of rawSales) {
             const key = `${s.doc_number || ''}-${s.doc_type || ''}-${s.total_usd || 0}`;
@@ -135,7 +133,7 @@ export function Customers() {
           setClientOrders(ordersList);
         }
 
-        // 1.B Fetch real accounts receivable for this customer to reflect payments and pending balance
+        // 1.B Fetch real accounts receivable for this customer
         try {
           const cxcRes = await authenticatedFetch('/api/accounts-receivable');
           if (cxcRes.ok) {
@@ -161,12 +159,13 @@ export function Customers() {
         // 2. Fetch sale items for these orders to calculate top purchased products
         if (ordersList.length > 0) {
           const saleIds = ordersList.map(o => o.id);
-          const { data: itemsData, error: itemsError } = await supabase
-            .from('sale_items')
-            .select('sku, name, quantity, total_usd')
-            .in('sale_id', saleIds);
-
-          if (!itemsError && itemsData && itemsData.length > 0) {
+          // Use authenticatedFetch with `in` operator as a query param
+          const itemsRes = await authenticatedFetch(`/api/sale_items?sale_id=in.(${saleIds.join(',')})`);
+          
+          if (itemsRes.ok) {
+            const itemsJson = await itemsRes.json();
+            const itemsData = itemsJson.data || [];
+            
             // Aggregate by SKU / Product Name
             const productMap: Record<string, { name: string; sku: string; total_qty: number; total_spent: number }> = {};
             
@@ -201,6 +200,7 @@ export function Customers() {
 
     fetchClientAnalytics();
   }, [selectedClient]);
+
 
   // KPIs
   const activeCount = customers.filter(c => c.status === 'Activo').length;

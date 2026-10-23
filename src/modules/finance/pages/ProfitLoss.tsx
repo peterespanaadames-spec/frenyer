@@ -12,7 +12,7 @@ import { jsPDF } from 'jspdf';
 import html2canvas from 'html2canvas';
 import { Card } from '../../../components/ui/Card';
 import { Button } from '../../../components/ui/Button';
-import { supabase } from '../../../lib/supabase/client';
+import { authenticatedFetch } from '../../../lib/supabase/api';
 import { getActiveExchangeRate, formatUSD, formatVES } from '../../../lib/currency';
 import { getBusinessProfile } from '../../../lib/businessProfile';
 
@@ -67,23 +67,24 @@ export function ProfitLossPage() {
   const fetchPnLData = async () => {
     setIsLoading(true);
     try {
-      const { data: ratesData } = await supabase
-        .from('exchange_rates')
-        .select('rate')
-        .order('observed_at', { ascending: false })
-        .limit(1);
-      
-      const currentRate = ratesData?.[0]?.rate || getActiveExchangeRate();
+      const currentRate = getActiveExchangeRate();
 
-      const { data: salesData, error: salesError } = await supabase
-        .from('sales')
-        .select('total_usd, created_at, status')
-        .eq('status', 'COMPLETADA');
-
-      if (salesError) console.error('Error fetching sales:', salesError);
+      let salesData: any[] = [];
+      try {
+        const salesRes = await authenticatedFetch('/api/sales');
+        if (salesRes.ok) {
+          const salesJson = await salesRes.json();
+          if (salesJson.success && Array.isArray(salesJson.data)) {
+            salesData = salesJson.data;
+          }
+        }
+      } catch (salesErr) {
+        console.warn('Aviso cargando ventas en reporte PnL:', salesErr);
+      }
 
       const now = new Date();
       const filteredSales = (salesData || []).filter(item => {
+        if (item.status && item.status !== 'COMPLETADA') return false;
         if (period === 'all') return true;
         const saleDate = new Date(item.created_at);
         if (period === 'month') {
@@ -103,11 +104,18 @@ export function ProfitLossPage() {
       const costOfSales = totalSales * 0.55; 
       const grossProfit = totalSales - costOfSales;
 
-      const { data: expensesData, error: expensesError } = await supabase
-        .from('expenses')
-        .select('amount, category, currency, exchange_rate, created_at, status');
-
-      if (expensesError) console.error('Error fetching expenses:', expensesError);
+      let expensesData: any[] = [];
+      try {
+        const expRes = await authenticatedFetch('/api/expenses');
+        if (expRes.ok) {
+          const expJson = await expRes.json();
+          if (expJson.success && Array.isArray(expJson.data)) {
+            expensesData = expJson.data;
+          }
+        }
+      } catch (expErr) {
+        console.warn('Aviso cargando gastos en reporte PnL:', expErr);
+      }
 
       const filteredExpenses = (expensesData || []).filter(item => {
         if (period === 'all') return true;

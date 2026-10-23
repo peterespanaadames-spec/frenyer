@@ -53,11 +53,7 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 function getInitials(name: string): string {
-  const parts = name.trim().split(/\s+/);
-  if (parts.length >= 2) {
-    return (parts[0][0] + parts[1][0]).toUpperCase();
-  }
-  return name.slice(0, 2).toUpperCase() || 'US';
+  return name.trim().slice(0, 2).toUpperCase() || 'US';
 }
 
 function clearLocalIdentity(): void {
@@ -74,27 +70,36 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
+  const apiPost = async (endpoint: string, body: object, errorMessage: string) => {
+    const res = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify(body)
+    });
+    const json = await res.json().catch(() => null);
+    if (!res.ok || !json?.success) throw new Error(json?.error || errorMessage);
+    return json;
+  };
+
   const resolveProfile = useCallback(async (currentUser: AuthUser | null, sessionRole?: string): Promise<UserProfile | null> => {
     if (!currentUser) return null;
 
     const email = currentUser.email || '';
-    const metadataName = currentUser.user_metadata?.full_name || currentUser.user_metadata?.name;
-    const metadataRole = currentUser.user_metadata?.role || sessionRole || 'cliente';
-
-    let resolvedName = metadataName || email.split('@')[0] || 'Usuario';
-    let resolvedRole = metadataRole;
-    let resolvedPermissions: string[] = ['compras'];
+    let resolvedName = currentUser.user_metadata?.full_name || currentUser.user_metadata?.name || email.split('@')[0] || 'Usuario';
+    let resolvedRole = currentUser.user_metadata?.role || sessionRole || 'cliente';
+    let resolvedPermissions: string[] = [];
 
     try {
       const res = await fetch('/api/users', { credentials: 'include' });
       if (res.ok) {
         const json = await res.json();
         if (json.success && Array.isArray(json.data)) {
-          const matched = json.data.find((u: any) => u.email && u.email.toLowerCase() === email.toLowerCase());
+          const matched = json.data.find((u: any) => u.email?.toLowerCase() === email.toLowerCase());
           if (matched) {
             resolvedName = matched.name || resolvedName;
             resolvedRole = matched.role || resolvedRole;
-            resolvedPermissions = matched.permissions || ['ventas', 'inventario', 'finanzas'];
+            resolvedPermissions = matched.permissions || [];
           }
         }
       }
@@ -180,87 +185,46 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const signInWithEmail = async (email: string, password: string) => {
     try {
-      const res = await fetch('/api/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({ email, password })
-      });
-      const json = await res.json().catch(() => null);
-
-      if (!res.ok || !json?.success) {
-        return { error: { message: json?.error || 'No se pudo iniciar sesión.' } };
-      }
-
+      const json = await apiPost('/api/auth/login', { email, password }, 'No se pudo iniciar sesión.');
       await applySession(json.data);
       window.dispatchEvent(new CustomEvent('frenyer:auth-changed'));
       return { error: null };
     } catch (err: any) {
-      return { error: { message: err?.message || 'Error de conexión con el servidor.' } };
+      return { error: { message: err.message } };
     }
   };
 
   const signUpWithEmail = async (email: string, password: string, fullName: string, role?: string) => {
     try {
-      const res = await fetch('/api/auth/register', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({ email, password, fullName, role })
-      });
-      const json = await res.json().catch(() => null);
+      const json = await apiPost('/api/auth/register', { email, password, fullName, role }, 'No se pudo completar el registro.');
+      if (json.requiresEmailConfirmation) return { error: null };
 
-      if (!res.ok || !json?.success) {
-        return { error: { message: json?.error || 'No se pudo completar el registro.' } };
-      }
-
-      if (json.requiresEmailConfirmation) {
-        return { error: null };
-      }
-
-      const assignedRole = json.data?.role || role || 'cliente';
       await applySession({
         user: { email, name: fullName, id: json.data?.user?.id },
-        role: assignedRole,
+        role: json.data?.role || role || 'cliente',
         organizationId: json.data?.organizationId
       });
       window.dispatchEvent(new CustomEvent('frenyer:auth-changed'));
       return { error: null };
     } catch (err: any) {
-      return { error: { message: err?.message || 'Error de conexión con el servidor.' } };
+      return { error: { message: err.message } };
     }
   };
 
   const signInWithAccessKey = async (accessKey: string, email?: string) => {
     try {
-      const res = await fetch('/api/auth/local-login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({ accessKey, email })
-      });
-      const json = await res.json().catch(() => null);
-
-      if (!res.ok || !json?.success) {
-        return { error: { message: json?.error || 'Clave de acceso incorrecta.' } };
-      }
-
+      const json = await apiPost('/api/auth/local-login', { accessKey, email }, 'Clave de acceso incorrecta.');
       await applySession(json.data);
       window.dispatchEvent(new CustomEvent('frenyer:auth-changed'));
       return { error: null };
     } catch (err: any) {
-      return { error: { message: err?.message || 'Error de conexión con el servidor.' } };
+      return { error: { message: err.message } };
     }
   };
 
   const signInWithGoogle = async () => {
-    try {
-      // El servidor gestiona el intercambio con Google: el navegador no ve tokens.
-      window.location.href = '/api/auth/google';
-      return { error: null };
-    } catch (err: any) {
-      return { error: { message: err?.message || 'No se pudo iniciar sesión con Google.' } };
-    }
+    window.location.href = '/api/auth/google';
+    return { error: null };
   };
 
   const signOut = async () => {
