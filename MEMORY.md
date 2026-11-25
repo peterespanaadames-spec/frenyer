@@ -32,6 +32,13 @@
 - Diseño: `docs/design-system/README.md`, `DESIGN_SYSTEM.md`, `COMPONENTS_AND_PATTERNS.md`.
 - Sesiones y adaptaciones móviles: `02-DOCS/wiki/features/2026-11-*`.
 
+## Pendiente RLS (2026-11-25)
+- Alerta Supabase `rls_disabled_in_public`: 26 de 33 tablas sin RLS (0023/0027 las desactivaron); ~20 políticas `USING (true)` abiertas.
+- Prerrequisito: `api/server.ts` usa ANON en `supabaseServer` (L202) y en `supabaseRestRequest` (79 usos); service role solo en 13 sitios. Migrar el backend a service role ANTES de activar RLS, o la app se cae.
+- Plan: (A) backend a service role + deploy; (B) migración `enable_rls_security.sql` (habilitar RLS, borrar políticas, revocar anon/authenticated, conservar service_role); (C) verificar 106 endpoints.
+- Riesgo: fuga cross-tenant si un GET no filtra `organization_id` (auditar 1-2 días).
+- Frontend sin acceso directo (cliente inerte, clave falsa); realtime muerto; `SaleDetailModal` consulta `sales` directo y probablemente no muestra ventas del POS.
+
 ## Pendiente
 - Pruebas integrales en 320/360/390/430/768 px + escritorio (bloqueadas: sesión expirada sin credenciales de prueba).
 - 2026-11-16 (commit 26f6a42): Módulo de FILTROS y BÚSQUEDA de movimientos en la pestaña Bancarias del Reporte de Cuentas (`AccountsReport.tsx`): tarjeta de 2 filas — (1) pestañas de periodo «Hoy / 7 días / Este mes (activa por defecto) / Mes anterior / Histórico completo» estilo píldora (`.acc-period-tabs`, fondo #f0f1f6 + activo blanco con sombra) y selector de Tipo con ícono embudo (Todos / Ingresos (+) / Egresos (-)); (2) Desde/Hasta con `<input type="date">` + ícono calendario y buscador en línea «Referencia, concepto, notas...» + botón Limpiar (aparece solo con filtros activos). Los KPI ahora responden al periodo: saldo inicial = saldo al corte − neto del periodo; saldo al corte = saldo de la cuenta − neto de movimientos posteriores al corte. «Histórico completo» = comportamiento anterior. Fechas comparadas con clave local AAAA-MM-DD (no ISO UTC, desfase UTC-4). Cambiar fecha manual marca periodo «custom». CxC/CxP conservan su buscador simple. CSS: `.acc-filters*` con bloques ≤767px (periodo a ancho, fechas en par, búsqueda completa) y ≤360px (un punto menos). Build y lint limpios. Ambos repos sincronizados.
