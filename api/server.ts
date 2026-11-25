@@ -199,9 +199,14 @@ const SUPABASE_CREDENTIALS_SOURCE = resolvedKey.source;
 
 let isSupabaseConfigured = isRealSupabaseUrl(SUPABASE_URL) && isRealSupabaseKey(SUPABASE_ANON_KEY);
 const FALLBACK_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.e30.placeholder';
+// El servidor es el unico que habla con la base: usa la clave de servicio
+// (bypassa RLS). La anon queda solo para el flujo de autenticacion.
 let supabaseServer = createClient(
   SUPABASE_URL || DEFAULT_SUPABASE_URL,
-  isSupabaseConfigured ? SUPABASE_ANON_KEY : FALLBACK_ANON_KEY
+  isSupabaseConfigured
+    ? (SUPABASE_SERVICE_ROLE_KEY || SUPABASE_ANON_KEY)
+    : FALLBACK_ANON_KEY,
+  { auth: { persistSession: false, autoRefreshToken: false } }
 );
 
 // Cliente administrativo: solo para operaciones puntuales de Supabase Auth.
@@ -1433,13 +1438,17 @@ function supabaseRestRequest(
     );
     const method = options.method || 'GET';
     const bodyStr = options.body ? JSON.stringify(options.body) : null;
+    // Datos: siempre con la clave de servicio cuando existe (bypassa RLS).
+    // La clave anon queda reservada para el flujo de autenticacion.
+    const dataKey = SUPABASE_SERVICE_ROLE_KEY || SUPABASE_ANON_KEY;
     const headers: Record<string, string> = {
-      'apikey': SUPABASE_ANON_KEY,
-      'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+      'apikey': dataKey,
+      'Authorization': `Bearer ${dataKey}`,
       'Accept': 'application/json',
       ...options.headers
     };
-    if (accessToken) headers['Authorization'] = `Bearer ${accessToken}`;
+    // El token del usuario solo se usa si no hay clave de servicio configurada.
+    if (accessToken && !SUPABASE_SERVICE_ROLE_KEY) headers['Authorization'] = `Bearer ${accessToken}`;
 
     if (bodyStr) {
       headers['Content-Type'] = 'application/json';
@@ -2072,15 +2081,9 @@ app.get('/api/inventory/movements', async (req, res) => {
           const { data: userData } = await supabaseServer.auth.getUser(match[1]);
           if (userData?.user) {
             token = match[1];
-            const userClient = createClient(
-              SUPABASE_URL || DEFAULT_SUPABASE_URL,
-              isSupabaseConfigured ? SUPABASE_ANON_KEY : FALLBACK_ANON_KEY,
-              {
-                auth: { persistSession: false, autoRefreshToken: false },
-                global: { headers: { Authorization: `Bearer ${match[1]}` } }
-              }
-            );
-            const { data: mem } = await userClient
+            // El servidor ya usa la clave de servicio: no hace falta un cliente
+            // por usuario para leer la membresia.
+            const { data: mem } = await supabaseServer
               .from('organization_members')
               .select('organization_id')
               .eq('user_id', userData.user.id)
@@ -2226,15 +2229,9 @@ app.post('/api/inventory/adjustments', async (req, res) => {
           const { data: userData } = await supabaseServer.auth.getUser(match[1]);
           if (userData?.user) {
             token = match[1];
-            const userClient = createClient(
-              SUPABASE_URL || DEFAULT_SUPABASE_URL,
-              isSupabaseConfigured ? SUPABASE_ANON_KEY : FALLBACK_ANON_KEY,
-              {
-                auth: { persistSession: false, autoRefreshToken: false },
-                global: { headers: { Authorization: `Bearer ${match[1]}` } }
-              }
-            );
-            const { data: mem } = await userClient
+            // El servidor ya usa la clave de servicio: no hace falta un cliente
+            // por usuario para leer la membresia.
+            const { data: mem } = await supabaseServer
               .from('organization_members')
               .select('organization_id')
               .eq('user_id', userData.user.id)

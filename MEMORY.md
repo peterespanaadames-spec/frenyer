@@ -32,11 +32,10 @@
 - Diseño: `docs/design-system/README.md`, `DESIGN_SYSTEM.md`, `COMPONENTS_AND_PATTERNS.md`.
 - Sesiones y adaptaciones móviles: `02-DOCS/wiki/features/2026-11-*`.
 
-## Pendiente RLS (2026-11-25)
-- Alerta Supabase `rls_disabled_in_public`: 26 de 33 tablas sin RLS (0023/0027 las desactivaron); ~20 políticas `USING (true)` abiertas.
-- Prerrequisito: `api/server.ts` usa ANON en `supabaseServer` (L202) y en `supabaseRestRequest` (79 usos); service role solo en 13 sitios. Migrar el backend a service role ANTES de activar RLS, o la app se cae.
-- Plan: (A) backend a service role + deploy; (B) migración `enable_rls_security.sql` (habilitar RLS, borrar políticas, revocar anon/authenticated, conservar service_role); (C) verificar 106 endpoints.
-- Riesgo: fuga cross-tenant si un GET no filtra `organization_id` (auditar 1-2 días).
+## RLS (2026-11-25)
+- Implementado: `api/server.ts` usa SERVICE_ROLE en `supabaseServer` y en `supabaseRestRequest`; la anon queda solo para `/auth/v1`. Migración `0032_enable_rls_security.sql`: habilita RLS en todas las tablas de public, borra políticas (incluidas las `USING (true)`), revoca anon/authenticated y conserva service_role.
+- PENDIENTE DEL USUARIO: esperar el despliegue de frenyer y después ejecutar la 0032 en el SQL Editor de Supabase. Si se ejecuta antes del despliegue, la app se cae.
+- Riesgo abierto: fuga cross-tenant si un GET no filtra `organization_id` (auditar 1-2 días).
 - Frontend sin acceso directo (cliente inerte, clave falsa); realtime muerto; `SaleDetailModal` consulta `sales` directo y probablemente no muestra ventas del POS.
 
 ## Pendiente
