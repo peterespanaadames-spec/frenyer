@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
+import { useAuth } from '../../context/AuthContext';
 import {
   LayoutDashboard,
   ShoppingCart,
@@ -50,6 +51,9 @@ interface SidebarProps {
 
 export function Sidebar({ isMobileOpen = false, onNavigate }: SidebarProps) {
   const location = useLocation();
+  const { userOrganizations, activeOrganizationId } = useAuth();
+  const activeOrg = userOrganizations.find(o => o.isActive) || userOrganizations.find(o => o.id === activeOrganizationId) || userOrganizations[0];
+  const slug = activeOrg?.slug || 'demostras';
 
   // Permisos del usuario activo (RBAC)
   const [userPermissions, setUserPermissions] = useState<string[]>(() => {
@@ -283,7 +287,7 @@ export function Sidebar({ isMobileOpen = false, onNavigate }: SidebarProps) {
 
       <div className="sidebar-bottom" style={{ marginTop: 'auto', paddingTop: '16px' }}>
         <NavLink
-          to="/"
+          to={`/tienda/${slug}`}
           onClick={onNavigate}
           className="sidebar-parent"
           style={{ marginBottom: 4 }}

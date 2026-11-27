@@ -4,7 +4,8 @@ import { ProtectedRoute } from '../../components/auth/ProtectedRoute';
 import { lazyRoute } from './lazyRoute';
 
 export const router = createBrowserRouter([
-  { path: '/', lazy: lazyRoute(() => import('../../modules/shop/pages/ShopPage').then(m => ({ Component: m.ShopPage }))) },
+  { path: '/', lazy: lazyRoute(() => import('../../pages/auth/LoginPage').then(m => ({ Component: m.LoginPage }))) },
+  { path: '/tienda', lazy: lazyRoute(() => import('../../modules/shop/pages/ShopPage').then(m => ({ Component: m.ShopPage }))) },
   { path: '/tienda/:slug', lazy: lazyRoute(() => import('../../modules/shop/pages/ShopPage').then(m => ({ Component: m.ShopPage }))) },
   { path: '/login', lazy: lazyRoute(() => import('../../pages/auth/LoginPage').then(m => ({ Component: m.LoginPage }))) },
   { path: '/registro', lazy: lazyRoute(() => import('../../pages/auth/LoginPage').then(m => ({ Component: m.LoginPage }))) },

@@ -85,13 +85,13 @@ export function ProtectedRoute({ children, allowedRoles }: ProtectedRouteProps) 
 
   // El panel administrativo es solo para usuarios internos; los clientes van a la tienda.
   if (!isInternalRole(effectiveRole)) {
-    return <Navigate to="/" replace />;
+    return <Navigate to="/login" replace />;
   }
 
   if (allowedRoles && allowedRoles.length > 0) {
     const isAllowed = allowedRoles.some((r) => r.toLowerCase() === effectiveRole);
     if (!isAllowed) {
-      return <Navigate to="/" replace />;
+      return <Navigate to="/login" replace />;
     }
   }
 

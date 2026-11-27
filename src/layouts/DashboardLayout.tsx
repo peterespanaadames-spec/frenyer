@@ -24,7 +24,7 @@ export function DashboardLayout() {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isMoreSheetOpen, setIsMoreSheetOpen] = useState(false);
 
-  const { signOut, profile: authProfile } = useAuth();
+  const { signOut, profile: authProfile, userOrganizations, activeOrganizationId } = useAuth();
 
   // Business Profile State (Nombre del negocio, RIF, etc.)
   const [businessProfile, setBusinessProfile] = useState<BusinessProfile>(() => getBusinessProfile());
@@ -283,7 +283,11 @@ export function DashboardLayout() {
 
             <button
               type="button"
-              onClick={() => navigate('/')}
+              onClick={() => {
+                const activeOrg = userOrganizations.find(o => o.isActive) || userOrganizations.find(o => o.id === activeOrganizationId) || userOrganizations[0];
+                const slug = activeOrg?.slug || 'demostras';
+                navigate(`/tienda/${slug}`);
+              }}
               style={{
                 display: 'inline-flex',
                 alignItems: 'center',

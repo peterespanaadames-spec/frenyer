@@ -1,4 +1,5 @@
 import { useNavigate } from 'react-router-dom';
+import { useAuth } from '../../context/AuthContext';
 import {
   ClipboardList, FileText, Inbox, ArrowLeftRight, FileText as FileText2,
   Landmark, Building, Receipt, CreditCard, FileSpreadsheet, Coins, Users, User, Truck,
@@ -34,13 +35,16 @@ const GROUPS: { title: string; items: MoreItem[] }[] = [
     { label: 'Marketing', icon: Megaphone, to: '/marketing' },
   ]},
   { title: 'Otros', items: [
-    { label: 'Tienda online', icon: Store, to: '/' },
+    { label: 'Tienda online', icon: Store, to: '/tienda' },
     { label: 'Configuración', icon: Settings, to: '/configuracion' },
   ]},
 ];
 
 export function MobileMoreSheet({ open, onClose, permissions }: { open: boolean; onClose: () => void; permissions: string[] }) {
   const navigate = useNavigate();
+  const { userOrganizations, activeOrganizationId } = useAuth();
+  const activeOrg = userOrganizations.find(o => o.isActive) || userOrganizations.find(o => o.id === activeOrganizationId) || userOrganizations[0];
+  const slug = activeOrg?.slug || 'demostras';
   if (!open) return null;
 
   const hasPerm = (k?: string) => !k || permissions.includes(k);
@@ -63,9 +67,10 @@ export function MobileMoreSheet({ open, onClose, permissions }: { open: boolean;
                 <div className="mobile-more-sheet__grid">
                   {visible.map((it) => {
                     const Icon = it.icon;
+                    const targetTo = it.label === 'Tienda online' ? `/tienda/${slug}` : it.to;
                     return (
                       <button key={it.to} type="button" className="mobile-more-sheet__item"
-                        onClick={() => { onClose(); navigate(it.to); }}>
+                        onClick={() => { onClose(); navigate(targetTo); }}>
                         <Icon size={18} />
                         <span>{it.label}</span>
                       </button>
