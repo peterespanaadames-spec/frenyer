@@ -5746,26 +5746,48 @@ function mergePersistedUsersWithSupabase(mappedRows: any[]): any[] {
   return combined;
 }
 
-app.get('/api/users', async (_req, res: AuthenticatedResponse) => {
+app.get('/api/users', async (req, res: AuthenticatedResponse) => {
   try {
-    // 1. Intento autenticado: el administrador debe ver TODOS los usuarios asociados.
-    try {
-      const result = await authenticatedSupabaseRestRequest(res, 'profiles?select=*&order=created_at.desc');
-      if (!result.error && Array.isArray(result.data) && result.data.length > 0) {
-        return res.json({ success: true, data: mergePersistedUsersWithSupabase(mapPersistedUserRows(result.data)) });
-      }
-    } catch (sbErr) {
-      console.warn('Aviso consultando usuarios en Supabase (autenticado):', sbErr);
+    const orgId = res.locals.supabaseContext?.organizationId;
+    if (!orgId) {
+      return res.status(403).json({ success: false, error: 'Sin organizaciÃ³n asignada.' });
     }
 
-    // 2. Respaldo con service role SOLO para sesiones autenticadas:
-    //    si RLS bloqueó la lectura de la sesión, el administrador con acceso
-    //    total todavía ve la lista completa. Anónimos no deben ver perfiles.
-    const session = res.locals.supabaseContext;
-    const isAuthenticated = !!(session?.userEmail || session?.userId);
-    if (isAuthenticated) {
+    // 1. Obtener los user_id de los miembros de esta organización.
+    let memberIds: string[] = [];
+    try {
+      const { data: members, error: membersError } = await supabaseServer
+        .from('organization_members')
+        .select('user_id')
+        .eq('organization_id', orgId);
+      if (!membersError && Array.isArray(members)) {
+        memberIds = members.map((m: any) => m.user_id).filter(Boolean);
+      }
+    } catch (memErr) {
+      console.warn('Aviso consultando organization_members:', memErr);
+    }
+
+    // 2. Consultar perfiles solo de los miembros de esta org.
+    if (memberIds.length > 0) {
       try {
-        const backup = await supabaseServiceRestRequest('profiles?select=*&order=created_at.desc');
+        const result = await authenticatedSupabaseRestRequest(
+          res,
+          `profiles?select=*&id=in.(${memberIds.map((id) => encodeURIComponent(id)).join(',')})&order=created_at.desc`
+        );
+        if (!result.error && Array.isArray(result.data) && result.data.length > 0) {
+          return res.json({ success: true, data: mergePersistedUsersWithSupabase(mapPersistedUserRows(result.data)) });
+        }
+      } catch (sbErr) {
+        console.warn('Aviso consultando usuarios en Supabase (autenticado):', sbErr);
+      }
+    }
+
+    // 3. Respaldo con service role, filtrado por membresía.
+    if (memberIds.length > 0) {
+      try {
+        const backup = await supabaseServiceRestRequest(
+          `profiles?select=*&id=in.(${memberIds.map((id) => encodeURIComponent(id)).join(',')})&order=created_at.desc`
+        );
         if (!backup.error && Array.isArray(backup.data) && backup.data.length > 0) {
           return res.json({ success: true, data: mergePersistedUsersWithSupabase(mapPersistedUserRows(backup.data)) });
         }
@@ -5774,11 +5796,11 @@ app.get('/api/users', async (_req, res: AuthenticatedResponse) => {
       }
     }
 
-    // 3. Respaldo local resiliente, SIN reinsertar correos administrativos:
-    //    lo que el usuario elimina deja de volver a aparecer en cada sincronización.
-    return res.json({ success: true, data: loadPersistedUsers() });
+    // 4. Respaldo local filtrado por org.
+    const localFiltered = loadPersistedUsers().filter((u: any) => !u.organization_id || u.organization_id === orgId);
+    return res.json({ success: true, data: localFiltered });
   } catch (err: any) {
-    return res.status(200).json({ success: false, error: err?.message, data: loadPersistedUsers() });
+    return res.status(200).json({ success: false, error: err?.message, data: [] });
   }
 });
 
@@ -5896,6 +5918,19 @@ app.post('/api/users', async (req, res: AuthenticatedResponse) => {
       }
     } catch (sbErr) {
       console.warn('Aviso sincronizando usuario con Supabase profiles:', sbErr);
+    }
+
+    // Asignar el nuevo usuario a la organización del administrador que lo crea.
+    if (authUserId) {
+      try {
+        await supabaseServer.from('organization_members').upsert({
+          organization_id: orgId,
+          user_id: authUserId,
+          role: toProfileRole(newUser.role) === 'gerente' ? 'admin' : 'cliente'
+        }, { onConflict: 'organization_id,user_id' });
+      } catch (memErr) {
+        console.warn('Aviso asignando membresía de organización:', memErr);
+      }
     }
 
     return res.json({ success: true, data: newUser, message: 'Usuario registrado exitosamente.' });
