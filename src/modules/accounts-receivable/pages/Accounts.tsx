@@ -21,7 +21,8 @@ import {
   Receipt,
   ArrowRight,
   Filter,
-  RefreshCw
+  RefreshCw,
+  Banknote
 } from 'lucide-react';
 import { Card } from '../../../components/ui/Card';
 import { MobileSearchBar } from '../../../components/mobile/MobileSearchBar';
@@ -35,11 +36,13 @@ import { formatUSD, formatVES, getActiveExchangeRate } from '../../../lib/curren
 import { supabase } from '../../../lib/supabase/client';
 import { authenticatedFetch } from '../../../lib/supabase/api';
 import { createCustomerInSupabase } from '../../../lib/supabase/db';
+import { CustomerAdvancesPanel } from '../components/CustomerAdvancesPanel';
 import { getReportHeaderHtml, getReportFooterHtml } from '../../../lib/reportUtils';
 import { getBusinessProfile } from '../../../lib/businessProfile';
 
 interface ReceivableRecord {
   id: string;
+  customer_id?: string;
   customer_name: string;
   customer_doc?: string;
   customer_phone?: string;
@@ -85,7 +88,17 @@ interface ClientGroup {
   paidCount: number;
   hasOverdue: boolean;
   status: 'Pagada' | 'Parcial' | 'Pendiente' | 'Vencida';
+  advanceAvailable: number;
 }
+
+interface AdvanceBalances {
+  byId: Record<string, number>;
+  byName: Record<string, number>;
+  total: number;
+}
+
+const normalizeCustomerName = (value: string) =>
+  (value || '').trim().toLowerCase().replace(/\s+/g, ' ');
 
 export function Accounts() {
   const [accounts, setAccounts] = useState<ReceivableRecord[]>([]);
@@ -96,6 +109,10 @@ export function Accounts() {
   const [selectedClientFilter, setSelectedClientFilter] = useState('Todos');
   const [selectedStatusFilter, setSelectedStatusFilter] = useState('Todos');
   const [selectedAccount, setSelectedAccount] = useState<ReceivableRecord | null>(null);
+
+  // Sección activa: cartera por cobrar o anticipos de clientes.
+  const [activeSection, setActiveSection] = useState<'cobrar' | 'anticipos'>('cobrar');
+  const [advanceBalances, setAdvanceBalances] = useState<AdvanceBalances>({ byId: {}, byName: {}, total: 0 });
 
   // Grouped vs Flat view toggle
   const [viewMode, setViewMode] = useState<'grouped' | 'flat'>('grouped');
@@ -252,6 +269,7 @@ export function Accounts() {
 
         return {
           id: item.id,
+          customer_id: item.customer_id || item.customers?.id || undefined,
           customer_name: formattedName,
           customer_doc: item.customer_doc || item.customers?.doc_number || item.customers?.document_number || '',
           customer_phone: item.customer_phone || item.customers?.phone || '',
@@ -269,6 +287,34 @@ export function Accounts() {
           items: saleItems
         };
       });
+
+      // 3. Anticipos disponibles por cliente (saldo a favor, fuera de la cartera)
+      try {
+        const advRes = await authenticatedFetch('/api/customer-advances');
+        if (advRes.ok) {
+          const advJson = await advRes.json();
+          if (advJson.success && Array.isArray(advJson.data)) {
+            const byId: Record<string, number> = {};
+            const byName: Record<string, number> = {};
+            let total = 0;
+            for (const row of advJson.data) {
+              const balance = Number(row.balance_usd) || 0;
+              if (row.status === 'ANULADO' || balance <= 0.005) continue;
+              if (row.customer_id) {
+                byId[row.customer_id] = Math.round(((byId[row.customer_id] || 0) + balance) * 100) / 100;
+              }
+              const nameKey = normalizeCustomerName(row.customer_name || row.customers?.name || '');
+              if (nameKey) {
+                byName[nameKey] = Math.round(((byName[nameKey] || 0) + balance) * 100) / 100;
+              }
+              total = Math.round((total + balance) * 100) / 100;
+            }
+            setAdvanceBalances({ byId, byName, total });
+          }
+        }
+      } catch {
+        // El módulo de anticipos es opcional mientras no se aplique la migración 0033.
+      }
 
       setAccounts(mapped);
 
@@ -341,6 +387,10 @@ export function Accounts() {
       const paidCount = orders.filter(o => o.remaining_amount <= 0.01).length;
       const hasOverdue = orders.some(o => o.status !== 'Pagada' && o.due_date && new Date(o.due_date) < nowDate);
       const customerDoc = orders[0]?.customer_doc || '';
+      const advanceAvailable =
+        (orders[0]?.customer_id ? advanceBalances.byId[orders[0].customer_id] : 0) ||
+        advanceBalances.byName[normalizeCustomerName(clientName)] ||
+        0;
 
       let status: 'Pagada' | 'Parcial' | 'Pendiente' | 'Vencida' = 'Pendiente';
       if (totalPending <= 0.01) {
@@ -363,7 +413,8 @@ export function Accounts() {
         pendingCount,
         paidCount,
         hasOverdue,
-        status
+        status,
+        advanceAvailable
       });
     });
 
@@ -373,7 +424,7 @@ export function Accounts() {
       if (a.totalPending <= 0.01 && b.totalPending > 0.01) return 1;
       return a.clientName.localeCompare(b.clientName);
     });
-  }, [filteredAccounts]);
+  }, [filteredAccounts, advanceBalances]);
 
   // Toggle client accordion
   const toggleClientAccordion = (clientName: string) => {
@@ -850,6 +901,7 @@ export function Accounts() {
           </h1>
 
         </div>
+        {activeSection === 'cobrar' && (
         <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
           <button
             onClick={() => {
@@ -960,8 +1012,40 @@ export function Accounts() {
             )}
           </div>
         </div>
+        )}
       </div>
 
+      {/* Pestañas: cartera por cobrar vs anticipos a favor del cliente */}
+      <div className="adv-tabs">
+        <button
+          type="button"
+          className={activeSection === 'cobrar' ? 'adv-tab is-active' : 'adv-tab'}
+          onClick={() => setActiveSection('cobrar')}
+        >
+          <Receipt size={14} /> Cuentas por cobrar
+        </button>
+        <button
+          type="button"
+          className={activeSection === 'anticipos' ? 'adv-tab is-active' : 'adv-tab'}
+          onClick={() => setActiveSection('anticipos')}
+        >
+          <Banknote size={14} /> Anticipos de clientes
+          {advanceBalances.total > 0.005 && (
+            <span className="adv-tab-badge">{formatUSD(advanceBalances.total, '$ ')}</span>
+          )}
+        </button>
+      </div>
+
+      {activeSection === 'anticipos' ? (
+        <CustomerAdvancesPanel
+          bankAccounts={bankAccounts}
+          customers={manualCustomers}
+          receivables={accounts}
+          activeRate={activeRate}
+          onChanged={loadData}
+        />
+      ) : (
+        <>
       {/* 4 KPI Cards */}
       <div className="fin-kpi-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 16, marginBottom: 20 }}>
         <div className="card" style={{ padding: 20 }}>
@@ -1009,6 +1093,18 @@ export function Accounts() {
           </div>
           <span className="muted small" style={{ fontSize: 11, color: '#94a3b8', display: 'block', marginTop: 4 }}>
             Con cuentas abiertas
+          </span>
+        </div>
+
+        <div className="card" style={{ padding: 20 }}>
+          <div className="kpi-label" style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: '#64748b', letterSpacing: '0.05em' }}>
+            ANTICIPOS A FAVOR
+          </div>
+          <div style={{ fontSize: 18, fontWeight: 800, color: '#15803D', marginTop: 8 }}>
+            {formatVES(advanceBalances.total * activeRate)} · {formatUSD(advanceBalances.total, '$ ')}
+          </div>
+          <span className="muted small" style={{ fontSize: 11, color: '#15803D', display: 'block', marginTop: 4 }}>
+            Saldo de clientes, no suma a la cartera
           </span>
         </div>
       </div>
@@ -1280,6 +1376,11 @@ export function Accounts() {
                           </div>
 
                           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                            {client.advanceAvailable > 0.005 && (
+                              <span className="adv-client-chip" title="Saldo de anticipos a favor del cliente">
+                                Anticipo {formatUSD(client.advanceAvailable, '$ ')}
+                              </span>
+                            )}
                             <Badge
                               tone={
                                 client.status === 'Pagada'
@@ -1895,6 +1996,8 @@ export function Accounts() {
           )}
         </div>
       </div>
+        </>
+      )}
 
       {/* MODAL 1: Cuenta Manual */}
       {isManualModalOpen && (

@@ -562,7 +562,9 @@ const tenantScopedTables = new Set([
   'expenses',
   'expense_categories',
   'expense_payments',
-  'inventory_movements'
+  'inventory_movements',
+  'customer_advances',
+  'customer_advance_movements'
 ]);
 
 // ---------------------------------------------------------------------------
@@ -585,6 +587,7 @@ const authRequiredPrefixes = [
   '/api/quotes',
   '/api/sales',
   '/api/accounts-receivable',
+  '/api/customer-advances',
   '/api/accounts-payable',
   '/api/purchases',
   '/api/branches',
@@ -7086,6 +7089,318 @@ app.post('/api/accounts-receivable/:id/payments', async (req, res: Authenticated
     });
   } catch (err: any) {
     return res.status(500).json({ success: false, error: err?.message || 'Error procesando abono' });
+  }
+});
+
+// ============================================================================
+// 7.b ANTICIPOS DE CLIENTES (migración 0033)
+// Toda la operación es transaccional en PostgreSQL: las funciones RPC crean o
+// mueven el anticipo, el banco y la bitácora en una sola transacción. Aquí no
+// se hace ningún PATCH parcial para no romper las invariantes contables.
+// ============================================================================
+const CUSTOMER_ADVANCES_MIGRATION_HINT =
+  'Falta aplicar la migración 0033_customer_advances.sql en Supabase y recargar el esquema de la API.';
+
+function isMissingCustomerAdvancesSchema(error?: string): boolean {
+  if (!error) return false;
+  const msg = String(error).toLowerCase();
+  if (!msg.includes('customer_advance')) return false;
+  return (
+    msg.includes('does not exist') ||
+    msg.includes('schema cache') ||
+    msg.includes('could not find') ||
+    msg.includes('no existe')
+  );
+}
+
+function parseMoney(value: unknown): number {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return 0;
+  return Math.round(num * 100) / 100;
+}
+
+function customerAdvancesErrorMessage(error: string): string {
+  // Los RAISE EXCEPTION de PostgreSQL llegan con prefijo de Supabase.
+  return String(error)
+    .replace(/^.*?:\s*/, '')
+    .replace(/^ERROR:\s*/i, '')
+    .trim();
+}
+
+app.get('/api/customer-advances', async (req, res: AuthenticatedResponse) => {
+  try {
+    const orgId = res.locals.supabaseContext?.organizationId || '00000000-0000-0000-0000-000000000001';
+    const customerId = typeof req.query.customer_id === 'string' ? req.query.customer_id : '';
+    const status = typeof req.query.status === 'string' ? req.query.status : '';
+
+    let endpoint =
+      `customer_advances?organization_id=eq.${encodeURIComponent(orgId)}` +
+      '&select=*,customers(id,name,doc_number,phone)' +
+      '&order=received_at.desc,created_at.desc';
+    if (customerId) endpoint += `&customer_id=eq.${encodeURIComponent(customerId)}`;
+    if (status) endpoint += `&status=eq.${encodeURIComponent(status)}`;
+
+    const result = await authenticatedSupabaseRestRequest(res, endpoint);
+    if (result.error) {
+      if (isMissingCustomerAdvancesSchema(result.error)) {
+        return res.status(409).json({ success: false, error: CUSTOMER_ADVANCES_MIGRATION_HINT, code: 'MIGRATION_PENDING' });
+      }
+      return res.status(200).json({ success: false, error: result.error });
+    }
+
+    const rows: any[] = Array.isArray(result.data) ? result.data : [];
+    const data = rows.map((row) => ({
+      ...row,
+      amount_usd: Number(row.amount_usd) || 0,
+      applied_usd: Number(row.applied_usd) || 0,
+      refunded_usd: Number(row.refunded_usd) || 0,
+      balance_usd: Number(row.balance_usd) || 0,
+      amount_original: Number(row.amount_original) || 0,
+      exchange_rate: Number(row.exchange_rate) || 1,
+      customer_name: row.customers?.name || 'Cliente'
+    }));
+
+    const summary = data.reduce(
+      (acc, row) => {
+        acc.total_usd = Math.round((acc.total_usd + row.amount_usd) * 100) / 100;
+        acc.applied_usd = Math.round((acc.applied_usd + row.applied_usd) * 100) / 100;
+        acc.refunded_usd = Math.round((acc.refunded_usd + row.refunded_usd) * 100) / 100;
+        if (row.status !== 'ANULADO') {
+          acc.available_usd = Math.round((acc.available_usd + row.balance_usd) * 100) / 100;
+        }
+        return acc;
+      },
+      { total_usd: 0, applied_usd: 0, refunded_usd: 0, available_usd: 0 }
+    );
+
+    const byCustomerMap = new Map<string, { customer_id: string; customer_name: string; available_usd: number }>();
+    for (const row of data) {
+      if (row.status === 'ANULADO' || row.balance_usd <= 0.005) continue;
+      const key = String(row.customer_id || row.customer_name);
+      const current = byCustomerMap.get(key) || {
+        customer_id: String(row.customer_id || ''),
+        customer_name: row.customer_name,
+        available_usd: 0
+      };
+      current.available_usd = Math.round((current.available_usd + row.balance_usd) * 100) / 100;
+      byCustomerMap.set(key, current);
+    }
+
+    return res.json({
+      success: true,
+      data,
+      summary,
+      by_customer: Array.from(byCustomerMap.values())
+    });
+  } catch (err: any) {
+    return res.status(200).json({ success: false, error: err?.message || 'Error consultando anticipos.' });
+  }
+});
+
+app.post('/api/customer-advances', async (req, res: AuthenticatedResponse) => {
+  try {
+    const orgId = res.locals.supabaseContext?.organizationId || '00000000-0000-0000-0000-000000000001';
+    const raw = req.body || {};
+    const amount = parseMoney(raw.amount_original);
+    const currency = String(raw.currency || 'USD').toUpperCase() === 'VES' ? 'VES' : 'USD';
+    const rate = Number(raw.exchange_rate) > 0 ? Number(raw.exchange_rate) : 1;
+
+    if (!raw.customer_id) {
+      return res.status(400).json({ success: false, error: 'El cliente es obligatorio.' });
+    }
+    if (!raw.bank_account_id) {
+      return res.status(400).json({ success: false, error: 'La cuenta bancaria de destino es obligatoria.' });
+    }
+    if (amount <= 0) {
+      return res.status(400).json({ success: false, error: 'El monto del anticipo debe ser mayor a cero.' });
+    }
+
+    const rpc = await authenticatedSupabaseRestRequest(res, 'rpc/customer_advance_create', {
+      method: 'POST',
+      body: {
+        p_organization_id: orgId,
+        p_customer_id: raw.customer_id,
+        p_bank_account_id: raw.bank_account_id,
+        p_amount_original: amount,
+        p_currency: currency,
+        p_exchange_rate: rate,
+        p_received_at: raw.received_at || new Date().toISOString().slice(0, 10),
+        p_payment_method: raw.payment_method || null,
+        p_reference: raw.reference || null,
+        p_notes: raw.notes || null,
+        p_created_by: raw.created_by || res.locals.supabaseContext?.userEmail || 'Sistema'
+      }
+    });
+
+    if (rpc.error) {
+      if (isMissingCustomerAdvancesSchema(rpc.error)) {
+        return res.status(409).json({ success: false, error: CUSTOMER_ADVANCES_MIGRATION_HINT, code: 'MIGRATION_PENDING' });
+      }
+      return res.status(400).json({ success: false, error: customerAdvancesErrorMessage(rpc.error) });
+    }
+
+    return res.json({ success: true, ...(rpc.data || {}) });
+  } catch (err: any) {
+    return res.status(200).json({ success: false, error: err?.message || 'Error registrando el anticipo.' });
+  }
+});
+
+app.post('/api/customer-advances/:id/apply', async (req, res: AuthenticatedResponse) => {
+  try {
+    const orgId = res.locals.supabaseContext?.organizationId || '00000000-0000-0000-0000-000000000001';
+    const { id } = req.params;
+    const raw = req.body || {};
+    const amount = parseMoney(raw.amount_usd);
+
+    if (!raw.receivable_id) {
+      return res.status(400).json({ success: false, error: 'Selecciona la cuenta por cobrar a la que se aplica el anticipo.' });
+    }
+    if (amount <= 0) {
+      return res.status(400).json({ success: false, error: 'El monto a aplicar debe ser mayor a cero.' });
+    }
+
+    const rpc = await authenticatedSupabaseRestRequest(res, 'rpc/customer_advance_apply', {
+      method: 'POST',
+      body: {
+        p_organization_id: orgId,
+        p_advance_id: id,
+        p_receivable_id: raw.receivable_id,
+        p_amount_usd: amount,
+        p_reference: raw.reference || null,
+        p_notes: raw.notes || null,
+        p_created_by: raw.created_by || res.locals.supabaseContext?.userEmail || 'Sistema'
+      }
+    });
+
+    if (rpc.error) {
+      if (isMissingCustomerAdvancesSchema(rpc.error)) {
+        return res.status(409).json({ success: false, error: CUSTOMER_ADVANCES_MIGRATION_HINT, code: 'MIGRATION_PENDING' });
+      }
+      return res.status(400).json({ success: false, error: customerAdvancesErrorMessage(rpc.error) });
+    }
+
+    return res.json({ success: true, ...(rpc.data || {}) });
+  } catch (err: any) {
+    return res.status(200).json({ success: false, error: err?.message || 'Error aplicando el anticipo.' });
+  }
+});
+
+app.post('/api/customer-advances/:id/refund', async (req, res: AuthenticatedResponse) => {
+  try {
+    const orgId = res.locals.supabaseContext?.organizationId || '00000000-0000-0000-0000-000000000001';
+    const { id } = req.params;
+    const raw = req.body || {};
+    const amount = parseMoney(raw.amount_usd);
+    const isVoid = raw.void === true;
+
+    if (amount <= 0) {
+      return res.status(400).json({ success: false, error: 'El monto a devolver debe ser mayor a cero.' });
+    }
+    if (!raw.bank_account_id) {
+      return res.status(400).json({ success: false, error: 'La cuenta bancaria de la devolución es obligatoria.' });
+    }
+
+    const rpc = await authenticatedSupabaseRestRequest(res, 'rpc/customer_advance_refund', {
+      method: 'POST',
+      body: {
+        p_organization_id: orgId,
+        p_advance_id: id,
+        p_bank_account_id: raw.bank_account_id,
+        p_amount_usd: amount,
+        p_exchange_rate: Number(raw.exchange_rate) > 0 ? Number(raw.exchange_rate) : null,
+        p_reference: raw.reference || null,
+        p_notes: raw.notes || null,
+        p_created_by: raw.created_by || res.locals.supabaseContext?.userEmail || 'Sistema',
+        p_void: isVoid
+      }
+    });
+
+    if (rpc.error) {
+      if (isMissingCustomerAdvancesSchema(rpc.error)) {
+        return res.status(409).json({ success: false, error: CUSTOMER_ADVANCES_MIGRATION_HINT, code: 'MIGRATION_PENDING' });
+      }
+      return res.status(400).json({ success: false, error: customerAdvancesErrorMessage(rpc.error) });
+    }
+
+    return res.json({ success: true, ...(rpc.data || {}) });
+  } catch (err: any) {
+    return res.status(200).json({ success: false, error: err?.message || 'Error devolviendo el anticipo.' });
+  }
+});
+
+app.post('/api/customer-advances/:id/void', async (req, res: AuthenticatedResponse) => {
+  try {
+    const orgId = res.locals.supabaseContext?.organizationId || '00000000-0000-0000-0000-000000000001';
+    const { id } = req.params;
+    const raw = req.body || {};
+
+    // Anular = devolver el saldo disponible completo y marcar el anticipo como ANULADO.
+    const current = await authenticatedSupabaseRestRequest(
+      res,
+      `customer_advances?id=eq.${encodeURIComponent(id)}&organization_id=eq.${encodeURIComponent(orgId)}&select=id,balance_usd,bank_account_id,applied_usd`
+    );
+    if (current.error) {
+      if (isMissingCustomerAdvancesSchema(current.error)) {
+        return res.status(409).json({ success: false, error: CUSTOMER_ADVANCES_MIGRATION_HINT, code: 'MIGRATION_PENDING' });
+      }
+      return res.status(400).json({ success: false, error: customerAdvancesErrorMessage(current.error) });
+    }
+    const advance = Array.isArray(current.data) ? current.data[0] : null;
+    if (!advance) {
+      return res.status(404).json({ success: false, error: 'El anticipo no existe.' });
+    }
+    if (Number(advance.applied_usd) > 0.005) {
+      return res.status(400).json({ success: false, error: 'El anticipo tiene aplicaciones registradas. Debe reversarlas antes de anularlo.' });
+    }
+
+    const rpc = await authenticatedSupabaseRestRequest(res, 'rpc/customer_advance_refund', {
+      method: 'POST',
+      body: {
+        p_organization_id: orgId,
+        p_advance_id: id,
+        p_bank_account_id: raw.bank_account_id || advance.bank_account_id,
+        p_amount_usd: parseMoney(advance.balance_usd),
+        p_exchange_rate: Number(raw.exchange_rate) > 0 ? Number(raw.exchange_rate) : null,
+        p_reference: raw.reference || null,
+        p_notes: raw.notes || 'Anulación de anticipo sin uso',
+        p_created_by: raw.created_by || res.locals.supabaseContext?.userEmail || 'Sistema',
+        p_void: true
+      }
+    });
+
+    if (rpc.error) {
+      if (isMissingCustomerAdvancesSchema(rpc.error)) {
+        return res.status(409).json({ success: false, error: CUSTOMER_ADVANCES_MIGRATION_HINT, code: 'MIGRATION_PENDING' });
+      }
+      return res.status(400).json({ success: false, error: customerAdvancesErrorMessage(rpc.error) });
+    }
+
+    return res.json({ success: true, ...(rpc.data || {}) });
+  } catch (err: any) {
+    return res.status(200).json({ success: false, error: err?.message || 'Error anulando el anticipo.' });
+  }
+});
+
+app.get('/api/customer-advances/:id/movements', async (req, res: AuthenticatedResponse) => {
+  try {
+    const orgId = res.locals.supabaseContext?.organizationId || '00000000-0000-0000-0000-000000000001';
+    const { id } = req.params;
+    const result = await authenticatedSupabaseRestRequest(
+      res,
+      `customer_advance_movements?advance_id=eq.${encodeURIComponent(id)}` +
+        `&organization_id=eq.${encodeURIComponent(orgId)}` +
+        '&select=*,accounts_receivable(doc_number,concept)' +
+        '&order=created_at.asc'
+    );
+    if (result.error) {
+      if (isMissingCustomerAdvancesSchema(result.error)) {
+        return res.status(409).json({ success: false, error: CUSTOMER_ADVANCES_MIGRATION_HINT, code: 'MIGRATION_PENDING' });
+      }
+      return res.status(200).json({ success: false, error: result.error });
+    }
+    return res.json({ success: true, data: result.data || [] });
+  } catch (err: any) {
+    return res.status(200).json({ success: false, error: err?.message || 'Error consultando el historial del anticipo.' });
   }
 });
 
