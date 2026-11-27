@@ -46,14 +46,18 @@ import {
   formatUSD,
   formatVES
 } from '../../../lib/currency';
-import { getBusinessProfile } from '../../../lib/businessProfile';
+import {
+  DEFAULT_BUSINESS_PROFILE,
+  applyBrandingToDocument,
+  getBusinessProfile,
+  withBusinessDefaults
+} from '../../../lib/businessProfile';
 import {
   fetchProductsFromSupabase,
   fetchPublicConfigFromApi,
   fetchPublicProductsFromSupabase,
   createOrderInApi,
-  fetchOrdersFromApi,
-  DbProduct
+  fetchOrdersFromApi
 } from '../../../lib/supabase/db';
 import {
   Currency,
@@ -68,75 +72,80 @@ import { lookupCedula, parseCedulaDoc, useCedulaAutofill } from '../../../lib/ce
 import { OrderTrackerModal } from '../components/OrderTrackerModal';
 import { Button } from '../../../components/ui/Button';
 
-// --- LOGO SVG COMPONENT (Exact Match to CompuRepuestos CR Logo) ---
-function CompuRepuestosLogo({ className = '', size = 44 }: { className?: string; size?: number }) {
-  return (
-    <div className={`compu-logo-container ${className}`} style={{ width: size, height: size, flexShrink: 0 }}>
-      <svg
-        viewBox="0 0 160 160"
-        width="100%"
-        height="100%"
-        fill="none"
-        xmlns="http://www.w3.org/2000/svg"
+/** Logotipo dinámico de la tienda: muestra la imagen cargada por el negocio o un monograma limpio. */
+function StoreBrandLogo({
+  logo,
+  businessName,
+  size = 44,
+  className = ''
+}: {
+  logo?: string | null;
+  businessName: string;
+  size?: number;
+  className?: string;
+}) {
+  const [imgError, setImgError] = useState(false);
+
+  useEffect(() => {
+    setImgError(false);
+  }, [logo]);
+
+  const initials = (businessName || 'SF')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((word) => word[0]?.toUpperCase() || '')
+    .join('') || 'SF';
+
+  if (logo && !imgError) {
+    return (
+      <div
+        className={`store-brand-logo-box ${className}`}
+        style={{
+          width: size,
+          height: size,
+          borderRadius: Math.max(8, Math.round(size * 0.22)),
+          border: '1px solid #e2e8f0',
+          background: '#ffffff',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          overflow: 'hidden',
+          padding: 3,
+          flexShrink: 0
+        }}
       >
-        <defs>
-          <linearGradient id="blueGearGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-            <stop offset="0%" stopColor="#1e3a8a" />
-            <stop offset="100%" stopColor="#0f172a" />
-          </linearGradient>
-          <linearGradient id="redSwooshGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-            <stop offset="0%" stopColor="#DC2626" />
-            <stop offset="100%" stopColor="#b91c1c" />
-          </linearGradient>
-          <linearGradient id="pencilGrad1" x1="0%" y1="100%" x2="100%" y2="0%">
-            <stop offset="0%" stopColor="#D97706" />
-            <stop offset="100%" stopColor="#d97706" />
-          </linearGradient>
-          <linearGradient id="pencilGrad2" x1="0%" y1="100%" x2="100%" y2="0%">
-            <stop offset="0%" stopColor="#2563EB" />
-            <stop offset="100%" stopColor="#0284c7" />
-          </linearGradient>
-          <linearGradient id="pencilGrad3" x1="0%" y1="100%" x2="100%" y2="0%">
-            <stop offset="0%" stopColor="#15803D" />
-            <stop offset="100%" stopColor="#15803D" />
-          </linearGradient>
-        </defs>
-
-        {/* Outer Circular Swooshes */}
-        <circle cx="75" cy="85" r="54" stroke="url(#blueGearGrad)" strokeWidth="11" strokeDasharray="14 10" />
-        <path
-          d="M 60 145 C 105 148, 142 120, 142 80 C 142 45, 120 25, 100 20"
-          stroke="url(#redSwooshGrad)"
-          strokeWidth="11"
-          strokeLinecap="round"
+        <img
+          src={logo}
+          alt={businessName}
+          referrerPolicy="no-referrer"
+          onError={() => setImgError(true)}
+          style={{ width: '100%', height: '100%', objectFit: 'contain' }}
         />
+      </div>
+    );
+  }
 
-        {/* Decorative Tools / Pencils / Brushes at top */}
-        <g transform="translate(10, 0)">
-          <rect x="70" y="10" width="7" height="28" rx="2" fill="url(#pencilGrad1)" transform="rotate(-20 70 20)" />
-          <polygon points="70,10 77,10 73.5,4" fill="#fbbf24" transform="rotate(-20 70 20)" />
-          <rect x="85" y="8" width="7" height="30" rx="2" fill="url(#pencilGrad2)" transform="rotate(5 85 20)" />
-          <polygon points="85,8 92,8 88.5,2" fill="#2563EB" transform="rotate(5 85 20)" />
-          <rect x="98" y="14" width="7" height="26" rx="2" fill="url(#pencilGrad3)" transform="rotate(25 98 20)" />
-          <polygon points="98,14 105,14 101.5,8" fill="#15803D" transform="rotate(25 98 20)" />
-        </g>
-
-        {/* Central Gear teeth */}
-        <path
-          d="M 40 70 L 32 68 L 30 75 L 38 78 Z M 38 95 L 30 98 L 32 105 L 40 103 Z M 52 118 L 47 124 L 53 129 L 58 123 Z"
-          fill="#1e3a8a"
-        />
-
-        {/* Central "CR" Monogram */}
-        <path
-          d="M 72 62 C 60 62, 51 71, 51 84 C 51 97, 60 106, 73 106 C 80 106, 85 103, 88 98 L 78 92 C 76 95, 74 96, 72 96 C 65 96, 61 91, 61 84 C 61 77, 65 72, 72 72 C 75 72, 77 74, 79 76 L 88 70 C 84 65, 79 62, 72 62 Z"
-          fill="#1e3a8a"
-        />
-        <path
-          d="M 85 63 L 103 63 C 111 63, 117 68, 117 76 C 117 82, 112 87, 106 88 L 118 106 L 106 106 L 96 90 L 94 90 L 94 106 L 85 106 Z M 94 72 L 94 82 L 102 82 C 106 82, 108 80, 108 77 C 108 74, 106 72, 102 72 Z"
-          fill="#dc2626"
-        />
-      </svg>
+  return (
+    <div
+      className={`store-brand-logo-box ${className}`}
+      style={{
+        width: size,
+        height: size,
+        borderRadius: Math.max(8, Math.round(size * 0.22)),
+        background: '#0f172a',
+        color: '#ffffff',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        fontWeight: 800,
+        fontSize: Math.max(12, Math.round(size * 0.36)),
+        letterSpacing: '-0.02em',
+        flexShrink: 0
+      }}
+    >
+      {initials}
     </div>
   );
 }
@@ -166,26 +175,28 @@ async function fetchServerSession(): Promise<any | null> {
 export function ShopPage() {
   const navigate = useNavigate();
   const { slug: urlSlug } = useParams<{ slug?: string }>();
+  const cartStorageKey = urlSlug ? `frenyer_shop_cart_${urlSlug}` : 'frenyer_shop_cart';
 
   // --- STATE: CATALOG & CONFIG ---
   const [products, setProducts] = useState<Product[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [businessConfig, setBusinessConfig] = useState<PublicBusinessConfig>(() => {
-    const profile = getBusinessProfile();
+    const baseProfile = urlSlug ? DEFAULT_BUSINESS_PROFILE : withBusinessDefaults(getBusinessProfile());
     return {
-      businessName: 'CompuRepuestos Flores Inversiones',
-      rif: profile.rif || 'J-40192837-1',
-      phone: profile.phone || '0412-5551212',
-      email: profile.email || 'ventas@compurepuestos.com',
-      address: profile.address || 'Av. Principal Comercial, Local 14',
-      slogan: 'Materiales, Copias y Repuestos de Motos',
-      logo: profile.logo,
-      favicon: profile.favicon,
-       whatsapp: profile.whatsapp || profile.phone || '0412-5551212',
+      slug: urlSlug || baseProfile.slug,
+      businessName: baseProfile.businessName,
+      rif: baseProfile.rif,
+      phone: baseProfile.phone,
+      email: baseProfile.email,
+      address: baseProfile.address,
+      slogan: baseProfile.slogan,
+      logo: baseProfile.logo,
+      favicon: baseProfile.favicon,
+      whatsapp: baseProfile.whatsapp || baseProfile.phone,
       bcvRate: getActiveExchangeRate(),
       bcvRateDate: 'Actual',
       branches: [
-        { id: 'suc-01', name: 'Sede Principal - Despacho Central', address: profile.address || 'Av. Principal' }
+        { id: 'suc-01', name: 'Sede Principal', address: baseProfile.address }
       ]
     };
   });
@@ -194,32 +205,19 @@ export function ShopPage() {
   const [activeCurrency, setActiveCurrency] = useState<Currency>('USD');
   const [bcvRate, setBcvRate] = useState<number>(() => getActiveExchangeRate());
 
-  // --- STATE: DIVISION & CATEGORY FILTERS ---
-  const [activeDivision, setActiveDivision] = useState<'ALL' | 'MATERIALES' | 'MOTOS'>('ALL');
+  // --- STATE: CATEGORY FILTERS ---
   const [selectedCategory, setSelectedCategory] = useState<string>('ALL');
   const [searchTerm, setSearchTerm] = useState('');
   const [isSearchFocused, setIsSearchFocused] = useState(false);
 
-  const showDivisionProducts = (division: 'MATERIALES' | 'MOTOS') => {
-    setActiveDivision(division);
-    setSelectedCategory('ALL');
-    setSearchTerm('');
-    requestAnimationFrame(() => {
-      document.getElementById('shop-product-catalog')?.scrollIntoView({
-        behavior: 'smooth',
-        block: 'start'
-      });
-    });
-  };
-
   // Mobile drawer menu
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
-  // --- STATE: CART ---
+  // --- STATE: CART (aislado por tienda/slug) ---
   const [cart, setCart] = useState<CartItem[]>(() => {
     if (typeof window !== 'undefined') {
       try {
-        const saved = localStorage.getItem('frenyer_shop_cart');
+        const saved = localStorage.getItem(urlSlug ? `frenyer_shop_cart_${urlSlug}` : 'frenyer_shop_cart');
         return saved ? JSON.parse(saved) : [];
       } catch {
         return [];
@@ -578,20 +576,69 @@ export function ShopPage() {
     })();
   }, [customerDoc, customerName, applyCheckoutCedula]);
 
-  // Sync cart to storage (avisa al guardia global de salida vía evento)
+  // Sync cart to storage (aislado por slug y notifica al guardia global de salida)
   useEffect(() => {
     if (typeof window !== 'undefined') {
-      localStorage.setItem('frenyer_shop_cart', JSON.stringify(cart));
+      localStorage.setItem(cartStorageKey, JSON.stringify(cart));
       window.dispatchEvent(new Event('frenyer:cart-changed'));
     }
-  }, [cart]);
+  }, [cart, cartStorageKey]);
 
-  // Load catalog & bcv rate (Strictly from system database without hardcoded fallbacks)
+  // Recargar carrito si el usuario navega a otra tienda por slug
   useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const saved = localStorage.getItem(cartStorageKey);
+      setCart(saved ? JSON.parse(saved) : []);
+    } catch {
+      setCart([]);
+    }
+  }, [cartStorageKey]);
+
+  // Sincronizar título del navegador y favicon con la configuración de la tienda activa
+  useEffect(() => {
+    applyBrandingToDocument(
+      { businessName: businessConfig.businessName, favicon: businessConfig.favicon },
+      `${businessConfig.businessName} — Tienda Online`
+    );
+  }, [businessConfig.businessName, businessConfig.favicon]);
+
+  // Escuchar cambios guardados desde Configuraciones -> Negocio para reflejo inmediato
+  useEffect(() => {
+    const handleProfileUpdated = (event: Event) => {
+      const custom = event as CustomEvent<any>;
+      const updated = custom?.detail;
+      if (!updated) return;
+      const sameOrg =
+        !businessConfig.organizationId ||
+        !updated.organizationId ||
+        updated.organizationId === businessConfig.organizationId;
+      if (!urlSlug || sameOrg) {
+        setBusinessConfig(prev => ({
+          ...prev,
+          businessName: updated.businessName?.trim() || DEFAULT_BUSINESS_PROFILE.businessName,
+          rif: updated.rif?.trim() || DEFAULT_BUSINESS_PROFILE.rif,
+          email: updated.email?.trim() || DEFAULT_BUSINESS_PROFILE.email,
+          address: updated.address?.trim() || DEFAULT_BUSINESS_PROFILE.address,
+          phone: updated.phone?.trim() || DEFAULT_BUSINESS_PROFILE.phone,
+          whatsapp: updated.whatsapp?.trim() || updated.phone?.trim() || DEFAULT_BUSINESS_PROFILE.whatsapp,
+          slogan: updated.slogan?.trim() || prev.slogan || DEFAULT_BUSINESS_PROFILE.slogan,
+          logo: 'logo' in updated ? updated.logo : prev.logo,
+          favicon: 'favicon' in updated ? updated.favicon : prev.favicon
+        }));
+      }
+    };
+    window.addEventListener('frenyer:business-profile-updated', handleProfileUpdated);
+    return () => window.removeEventListener('frenyer:business-profile-updated', handleProfileUpdated);
+  }, [urlSlug, businessConfig.organizationId]);
+
+  // Load catalog & bcv rate (Strictly from active tenant database without cross-tenant or legacy fallbacks)
+  useEffect(() => {
+    let alive = true;
     const initData = async () => {
       setIsLoading(true);
       try {
-        const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 7000));
+        const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 8000));
         const dataPromise = Promise.all([
           urlSlug ? fetchPublicProductsFromSupabase(urlSlug).catch(() => []) : fetchProductsFromSupabase().catch(() => []),
           urlSlug ? fetchPublicConfigFromApi(urlSlug).catch(() => null) : fetchPublicConfigFromApi().catch(() => null),
@@ -599,43 +646,48 @@ export function ShopPage() {
         ]);
 
         const [dbProds, cfg, bcvRes] = await Promise.race([dataPromise, timeoutPromise]) as any;
+        if (!alive) return;
 
+        let effectiveBcv = bcvRate;
         if (bcvRes) {
           const rateVal = Number(bcvRes.appliedRate) || Number(bcvRes.usdRate) || Number(bcvRes.currentRate);
           if (rateVal && rateVal > 0) {
+            effectiveBcv = rateVal;
             setBcvRate(rateVal);
           }
         }
 
         if (cfg) {
-          setBusinessConfig(prev => ({
-            ...prev,
-            ...cfg,
-            businessName: 'CompuRepuestos Flores Inversiones',
-            bcvRate: cfg.bcvRate || bcvRate
-          }));
+          const resolvedAddress = cfg.address?.trim() || DEFAULT_BUSINESS_PROFILE.address;
+          setBusinessConfig({
+            organizationId: cfg.organizationId,
+            slug: cfg.slug || urlSlug,
+            businessName: cfg.businessName?.trim() || DEFAULT_BUSINESS_PROFILE.businessName,
+            rif: cfg.rif?.trim() || DEFAULT_BUSINESS_PROFILE.rif,
+            phone: cfg.phone?.trim() || DEFAULT_BUSINESS_PROFILE.phone,
+            whatsapp: cfg.whatsapp?.trim() || cfg.phone?.trim() || DEFAULT_BUSINESS_PROFILE.whatsapp,
+            email: cfg.email?.trim() || DEFAULT_BUSINESS_PROFILE.email,
+            address: resolvedAddress,
+            slogan: cfg.slogan?.trim() || DEFAULT_BUSINESS_PROFILE.slogan,
+            logo: cfg.logo || null,
+            favicon: cfg.favicon || null,
+            bcvRate: Number(cfg.bcvRate) || effectiveBcv,
+            bcvRateDate: cfg.bcvRateDate || 'Hoy',
+            branches: Array.isArray(cfg.branches) && cfg.branches.length > 0
+              ? cfg.branches
+              : [{ id: 'suc-01', name: 'Sede Principal', address: resolvedAddress }]
+          });
         }
 
-        const fallbackProducts: Product[] = [
-          { id: '1', sku: 'MOT-0001', name: 'Amortiguador Delantero Reforzado Gas', category: 'Repuestos', brand: 'Monroe', description: 'Amortiguador delantero presurizado con nitrógeno de alta durabilidad para vías venezolanas.', priceUsd: 35.00, costUsd: 25.15, stock: 22, minStock: 5, status: 'Activo' },
-          { id: '2', sku: 'BAT-0002', name: 'Batería Automotriz 12V 800AMP Libre Mantenimiento', category: 'Electricidad', brand: 'Duncan', description: 'Batería sellada de alta capacidad de arranque en frío 800AMP con garantía nacional.', priceUsd: 95.00, costUsd: 72.00, stock: 15, minStock: 3, status: 'Activo' },
-          { id: '3', sku: 'LUB-0003', name: 'Aceite de Motor Sintético 20W50 1 Galón', category: 'Lubricantes', brand: 'Castrol', description: 'Lubricante sintético con aditivos antidesgaste para máxima protección térmica y antifricción.', priceUsd: 12.00, costUsd: 8.50, stock: 45, minStock: 10, status: 'Activo' },
-          { id: '4', sku: 'FRE-0004', name: 'Pastillas de Freno Cerámica Delanteras', category: 'Frenos', brand: 'Wagner', description: 'Juego de pastillas cerámicas de bajo desprendimiento de polvo y frenado suave sin chirridos.', priceUsd: 28.00, costUsd: 19.00, stock: 18, minStock: 4, status: 'Activo' },
-          { id: '5', sku: 'FLT-0005', name: 'Filtro de Aire Alto Rendimiento Flujo Directo', category: 'Filtros', brand: 'K&N', description: 'Filtro de aire de algodón de alta permeabilidad lavable y de flujo óptimo.', priceUsd: 15.00, costUsd: 9.80, stock: 30, minStock: 8, status: 'Activo' },
-          { id: '6', sku: 'BUJ-0006', name: 'Bujías de Iridio Punta Platino (Pack x4)', category: 'Encendido', brand: 'NGK', description: 'Juego de 4 bujías láser con electrodo central de iridio para encendido instantáneo.', priceUsd: 24.00, costUsd: 16.50, stock: 25, minStock: 5, status: 'Activo' },
-          { id: '7', sku: 'LMP-0007', name: 'Bombillo LED H4 Alta y Baja 6000K Blanco Frío', category: 'Iluminación', brand: 'Philips', description: 'Kit de 2 bombillos LED de alta intensidad 12.000 lúmenes con disipador pasivo.', priceUsd: 18.00, costUsd: 11.20, stock: 12, minStock: 4, status: 'Activo' },
-          { id: '8', sku: 'COR-0008', name: 'Correa de Distribución Reforzada HNBR', category: 'Motor', brand: 'Gates', description: 'Correa dentada de caucho sintético reforzado resistente a altas temperaturas y aceites.', priceUsd: 22.00, costUsd: 14.00, stock: 8, minStock: 2, status: 'Activo' }
-        ];
-
-        const rawList = dbProds && dbProds.length > 0 ? dbProds : fallbackProducts;
+        const rawList = Array.isArray(dbProds) ? dbProds : [];
         const mapped: Product[] = rawList.map((p: any) => ({
           id: p.id || p.sku,
           name: p.name,
           sku: p.sku,
           barcode: p.barcode,
           category: p.category || 'General',
-          brand: p.brand || 'CompuRepuestos',
-          description: p.description || 'Producto disponible para despacho y facturación inmediata.',
+          brand: p.brand || '',
+          description: p.description || 'Producto disponible para despacho inmediato.',
           priceUsd: Number(p.price_usd || p.priceUsd) || 0,
           costUsd: Number(p.cost_usd || p.costUsd) || 0,
           stock: Number(p.stock) || 0,
@@ -645,20 +697,15 @@ export function ShopPage() {
         }));
         setProducts(mapped);
       } catch (err) {
-        console.warn('Error cargando catálogo del sistema, usando respaldo:', err);
-        const fallbackProducts: Product[] = [
-          { id: '1', sku: 'MOT-0001', name: 'Amortiguador Delantero Reforzado Gas', category: 'Repuestos', brand: 'Monroe', description: 'Amortiguador delantero presurizado con nitrógeno de alta durabilidad para vías venezolanas.', priceUsd: 35.00, costUsd: 25.15, stock: 22, minStock: 5, status: 'Activo' },
-          { id: '2', sku: 'BAT-0002', name: 'Batería Automotriz 12V 800AMP Libre Mantenimiento', category: 'Electricidad', brand: 'Duncan', description: 'Batería sellada de alta capacidad de arranque en frío 800AMP con garantía nacional.', priceUsd: 95.00, costUsd: 72.00, stock: 15, minStock: 3, status: 'Activo' },
-          { id: '3', sku: 'LUB-0003', name: 'Aceite de Motor Sintético 20W50 1 Galón', category: 'Lubricantes', brand: 'Castrol', description: 'Lubricante sintético con aditivos antidesgaste para máxima protección térmica y antifricción.', priceUsd: 12.00, costUsd: 8.50, stock: 45, minStock: 10, status: 'Activo' },
-          { id: '4', sku: 'FRE-0004', name: 'Pastillas de Freno Cerámica Delanteras', category: 'Frenos', brand: 'Wagner', description: 'Juego de pastillas cerámicas de bajo desprendimiento de polvo y frenado suave sin chirridos.', priceUsd: 28.00, costUsd: 19.00, stock: 18, minStock: 4, status: 'Activo' }
-        ];
-        setProducts(fallbackProducts);
+        console.warn('Error cargando catálogo de la tienda:', err);
+        if (alive) setProducts([]);
       } finally {
-        setIsLoading(false);
+        if (alive) setIsLoading(false);
       }
     };
 
-    initData();
+    void initData();
+    return () => { alive = false; };
   }, [urlSlug]);
 
   // --- SHORTCUT: Ctrl + A + S TO ADMIN ---
@@ -696,7 +743,7 @@ export function ShopPage() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [navigate]);
 
-  // --- CATEGORÍAS 100% GRABADAS EN EL SISTEMA (BASE DE DATOS) ---
+  // --- CATEGORÍAS DINÁMICAS DEL CATÁLOGO DEL TENANT ---
   const systemCategories = useMemo(() => {
     const set = new Set<string>();
     products.forEach(p => {
@@ -706,42 +753,6 @@ export function ShopPage() {
     });
     return Array.from(set).sort();
   }, [products]);
-
-  const materialCategories = useMemo(() => {
-    return systemCategories.filter(cat => {
-      const c = cat.toLowerCase();
-      return (
-        c.includes('material') ||
-        c.includes('copia') ||
-        c.includes('impresión') ||
-        c.includes('impresion') ||
-        c.includes('oficina') ||
-        c.includes('librería') ||
-        c.includes('libreria') ||
-        c.includes('papelería') ||
-        c.includes('papeleria') ||
-        c.includes('papel') ||
-        c.includes('tecno') ||
-        c.includes('station')
-      );
-    });
-  }, [systemCategories]);
-
-  const motoCategories = useMemo(() => {
-    return systemCategories.filter(cat => {
-      const c = cat.toLowerCase();
-      return (
-        c.includes('moto') ||
-        c.includes('repuesto') ||
-        c.includes('techo') ||
-        c.includes('amortiguador') ||
-        c.includes('freno') ||
-        c.includes('motor') ||
-        c.includes('batería') ||
-        c.includes('bateria')
-      );
-    });
-  }, [systemCategories]);
 
   const normalizeText = useCallback((str: string) => {
     return (str || '')
@@ -790,69 +801,19 @@ export function ShopPage() {
   // Filtered catalog with intelligent search
   const filteredProducts = useMemo(() => {
     return products.filter(p => {
-      const catLower = (p.category || '').toLowerCase();
-      const nameLower = p.name.toLowerCase();
-      const brandLower = (p.brand || '').toLowerCase();
-
-      const isMaterial =
-        catLower.includes('material') ||
-        catLower.includes('copia') ||
-        catLower.includes('impresión') ||
-        catLower.includes('impresion') ||
-        catLower.includes('oficina') ||
-        catLower.includes('librería') ||
-        catLower.includes('libreria') ||
-        catLower.includes('papelería') ||
-        catLower.includes('papeleria') ||
-        catLower.includes('papel') ||
-        catLower.includes('tecno') ||
-        catLower.includes('station') ||
-        brandLower.includes('futuro') ||
-        brandLower.includes('flores') ||
-        nameLower.includes('copia') ||
-        nameLower.includes('impresión') ||
-        nameLower.includes('impresion') ||
-        nameLower.includes('papel') ||
-        nameLower.includes('resma') ||
-        nameLower.includes('librería') ||
-        nameLower.includes('libreria') ||
-        nameLower.includes('papelería') ||
-        nameLower.includes('papeleria') ||
-        nameLower.includes('oficina');
-
-      const isMoto =
-        catLower.includes('moto') ||
-        catLower.includes('repuesto') ||
-        catLower.includes('techo') ||
-        catLower.includes('amortiguador') ||
-        catLower.includes('bater') ||
-        catLower.includes('freno') ||
-        catLower.includes('motor') ||
-        brandLower.includes('acelera') ||
-        nameLower.includes('cilindro') ||
-        nameLower.includes('amortiguador') ||
-        nameLower.includes('techo') ||
-        nameLower.includes('rin') ||
-        nameLower.includes('pistón') ||
-        nameLower.includes('moto');
-
-      // 1. Division filter
-      if (activeDivision === 'MATERIALES' && !isMaterial) return false;
-      if (activeDivision === 'MOTOS' && !isMoto) return false;
-
-      // 2. System category chip filter
+      // 1. System category chip filter
       if (selectedCategory !== 'ALL') {
-        if (p.category !== selectedCategory) return false;
+        if ((p.category || '').trim() !== selectedCategory) return false;
       }
 
-      // 3. Intelligent Search query
+      // 2. Intelligent Search query
       if (searchTerm.trim()) {
         if (!intelligentMatch(p, searchTerm)) return false;
       }
 
       return true;
     });
-  }, [products, activeDivision, selectedCategory, searchTerm, intelligentMatch]);
+  }, [products, selectedCategory, searchTerm, intelligentMatch]);
 
   // Cart operations
   const totalCartUnits = useMemo(() => cart.reduce((acc, item) => acc + item.quantity, 0), [cart]);
@@ -929,8 +890,10 @@ export function ShopPage() {
   };
 
   // Open WhatsApp with prefilled message
-  const handleOpenWhatsApp = (message = 'Hola CompuRepuestos Flores Inversiones, me gustaría solicitar información y realizar un pedido.') => {
-    const cleanPhone = (businessConfig.whatsapp || businessConfig.phone || '04125551212').replace(/\D/g, '');
+  const handleOpenWhatsApp = (customMessage?: string) => {
+    const defaultMsg = `Hola ${businessConfig.businessName}, me gustaría solicitar información y realizar un pedido.`;
+    const message = customMessage || defaultMsg;
+    const cleanPhone = (businessConfig.whatsapp || businessConfig.phone || DEFAULT_BUSINESS_PROFILE.whatsapp).replace(/\D/g, '');
     const phoneWithCode = cleanPhone.startsWith('58') ? cleanPhone : `58${cleanPhone.replace(/^0/, '')}`;
     const url = `https://wa.me/${phoneWithCode}?text=${encodeURIComponent(message)}`;
     window.open(url, '_blank', 'noopener,noreferrer');
@@ -955,6 +918,8 @@ export function ShopPage() {
       const branchName = selectedBranch ? selectedBranch.name : 'Sede Principal';
 
       const payload = {
+        store_slug: urlSlug || businessConfig.slug,
+        organization_id: businessConfig.organizationId,
         customer_name: customerName.trim(),
         customer_phone: customerPhone.trim(),
         customer_email: customerEmail.trim() || undefined,
@@ -1029,6 +994,7 @@ export function ShopPage() {
           font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
           position: relative;
           padding-bottom: 74px;
+          overflow-x: clip;
         }
         .cr-store-root button {
           transition:
@@ -1081,50 +1047,34 @@ export function ShopPage() {
           }
         }
 
-        /* 1. Identidad Corporativa exact colors */
+        /* 1. Identidad Corporativa configurable */
         .cr-brand-group {
           display: flex;
           align-items: center;
           gap: 12px;
           cursor: pointer;
           user-select: none;
+          min-width: 0;
         }
         .cr-brand-title {
-          font-size: 17px;
+          font-size: 16px;
           font-weight: 800;
           letter-spacing: -0.02em;
-          display: flex;
-          align-items: center;
-          flex-wrap: wrap;
-          line-height: 1.15;
-          gap: 2px 5px;
+          color: #0f172a;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          max-width: min(50vw, 380px);
         }
         @media (min-width: 640px) {
           .cr-brand-title {
-            font-size: 21px;
+            font-size: 19px;
           }
         }
         @media (min-width: 1024px) {
           .cr-brand-title {
-            font-size: 26px;
+            font-size: 21px;
           }
-        }
-        .cr-title-compu {
-          color: #1e3a8a; /* Azul marino */
-        }
-        .cr-title-repuestos {
-          color: #b91c1c; /* Rojo carmesí */
-        }
-        .cr-brand-divider {
-          color: #cbd5e1;
-          font-weight: 300;
-          margin: 0 2px;
-        }
-        .cr-title-flores {
-          color: #1e3a8a; /* Azul marino */
-        }
-        .cr-title-inversiones {
-          color: #b91c1c; /* Rojo carmesí */
         }
 
         /* Header Right Actions */
@@ -1145,6 +1095,8 @@ export function ShopPage() {
           padding: 6px;
           border-radius: 50%;
           transition: background 0.15s ease;
+          min-width: 36px;
+          min-height: 36px;
         }
         .cr-icon-btn:hover {
           background: #f1f5f9;
@@ -1153,7 +1105,7 @@ export function ShopPage() {
           position: absolute;
           top: -2px;
           right: -4px;
-          background: #dc2626;
+          background: #111827;
           color: #ffffff;
           font-size: 11px;
           font-weight: 700;
@@ -1200,7 +1152,7 @@ export function ShopPage() {
           width: 38px;
           height: 38px;
           border-radius: 50%;
-          background: #dc2626;
+          background: #111827;
           color: #ffffff;
           border: none;
           display: flex;
@@ -1210,7 +1162,7 @@ export function ShopPage() {
           flex-shrink: 0;
         }
 
-        /* 2. Banners Promocionales Duales */
+        /* 2. Storefront Hero (100% configurable por tenant) */
         .cr-hero-section {
           max-width: 1320px;
           margin: 16px auto 20px;
@@ -1219,281 +1171,124 @@ export function ShopPage() {
         }
         @media (min-width: 768px) {
           .cr-hero-section {
-            margin: 24px auto 32px;
+            margin: 24px auto 28px;
             padding: 0 28px;
           }
         }
-
-        .cr-banners-grid {
-          display: grid;
-          grid-template-columns: 1fr 1fr;
-          gap: 12px;
-        }
-        @media (min-width: 768px) {
-          .cr-banners-grid {
-            gap: 22px;
-          }
-        }
-
-        /* Banner 1: Flores Inversiones CompuFuturo (Laptops ocupando el contenedor) */
-        .cr-banner-tech {
-          background: linear-gradient(135deg, #f8fafc 0%, #edf2f7 100%);
+        .store-hero-card {
+          background: linear-gradient(135deg, #f8fafc 0%, #ffffff 55%, #f1f5f9 100%);
           border: 1px solid #e2e8f0;
-          border-radius: 18px;
-          overflow: hidden;
-          padding: 16px;
-          display: flex;
-          flex-direction: column;
-          justify-content: space-between;
-          box-shadow: 0 4px 20px rgba(0,0,0,0.04);
-          position: relative;
-          min-height: 220px;
-          transition: transform 0.2s ease, box-shadow 0.2s ease;
-        }
-        @media (min-width: 768px) {
-          .cr-banner-tech {
-            padding: 24px 28px;
-            min-height: 320px;
-            border-radius: 24px;
-          }
-        }
-        .cr-banner-tech:hover {
-          transform: translateY(-2px);
-          box-shadow: 0 8px 30px rgba(30, 58, 138, 0.08);
-        }
-
-        /* Banner 2: Acelera Motor Partes (Fondo oscuro con moto de alto rendimiento generada) */
-        .cr-banner-moto {
-          background: radial-gradient(circle at 70% 30%, #1e1e24 0%, #0d0d11 100%);
-          border: 1px solid #27272a;
-          border-radius: 18px;
-          overflow: hidden;
-          padding: 16px;
-          display: flex;
-          flex-direction: column;
-          justify-content: space-between;
-          box-shadow: 0 4px 20px rgba(0,0,0,0.15);
-          position: relative;
-          min-height: 220px;
-          color: #ffffff;
-          transition: transform 0.2s ease, box-shadow 0.2s ease;
-        }
-        @media (min-width: 768px) {
-          .cr-banner-moto {
-            padding: 24px 28px;
-            min-height: 320px;
-            border-radius: 24px;
-          }
-        }
-        .cr-banner-moto:hover {
-          transform: translateY(-2px);
-          box-shadow: 0 8px 30px rgba(220, 38, 38, 0.15);
-        }
-
-        .cr-banner-tagline {
-          font-size: 11px;
-          text-transform: uppercase;
-          font-weight: 800;
-          letter-spacing: 0.06em;
-          color: #475569;
-          margin-bottom: 2px;
-          text-align: center;
-        }
-        @media (min-width: 768px) {
-          .cr-banner-tagline {
-            font-size: 13px;
-          }
-        }
-
-        .cr-banner-tech-title {
-          font-size: 18px;
-          font-weight: 800;
-          color: #1e3a8a;
-          text-align: center;
-          margin: 0 0 8px;
-          letter-spacing: -0.02em;
-        }
-        @media (min-width: 768px) {
-          .cr-banner-tech-title {
-            font-size: 26px;
-            margin-bottom: 12px;
-          }
-        }
-
-        .cr-banner-moto-title-group {
-          text-align: center;
-          margin-bottom: 8px;
-        }
-        .cr-banner-moto-brand {
-          font-size: 18px;
-          font-style: italic;
-          font-weight: 900;
-          color: #ffffff;
-          letter-spacing: 0.05em;
-          margin: 0;
-          text-transform: uppercase;
-        }
-        @media (min-width: 768px) {
-          .cr-banner-moto-brand {
-            font-size: 26px;
-          }
-        }
-        .cr-banner-moto-sub {
-          font-size: 11px;
-          font-weight: 800;
-          color: #DC2626;
-          text-transform: uppercase;
-          letter-spacing: 0.1em;
-          margin: 0;
-        }
-        @media (min-width: 768px) {
-          .cr-banner-moto-sub {
-            font-size: 13px;
-          }
-        }
-
-        /* Banner Images filling the container */
-        .cr-banner-image-wrap {
-          flex: 1;
-          width: 100%;
-          min-height: 110px;
-          max-height: 170px;
-          display: flex;
+          border-radius: 20px;
+          padding: 20px;
+          display: grid;
+          grid-template-columns: 1fr;
+          gap: 20px;
           align-items: center;
-          justify-content: center;
-          margin: 6px 0 12px;
-          position: relative;
-          overflow: hidden;
-          border-radius: 12px;
         }
-        @media (min-width: 768px) {
-          .cr-banner-image-wrap {
-            min-height: 150px;
-            max-height: 200px;
-            margin: 8px 0 16px;
+        @media (min-width: 900px) {
+          .store-hero-card {
+            grid-template-columns: 1.55fr 1fr;
+            padding: 28px 34px;
+            gap: 28px;
+            border-radius: 24px;
           }
         }
-        .cr-banner-image-wrap img {
-          width: 100%;
-          height: 100%;
-          object-fit: cover;
-          border-radius: 12px;
-          transition: transform 0.3s ease;
+        .store-hero-title {
+          font-size: clamp(1.5rem, 3vw, 2.35rem);
+          font-weight: 800;
+          letter-spacing: -0.025em;
+          color: #0f172a;
+          margin: 0 0 8px;
+          line-height: 1.15;
+          text-wrap: balance;
         }
-        .cr-banner-tech:hover .cr-banner-image-wrap img,
-        .cr-banner-moto:hover .cr-banner-image-wrap img {
-          transform: scale(1.04);
+        .store-hero-slogan {
+          font-size: 15px;
+          color: #475569;
+          margin: 0 0 14px;
+          line-height: 1.5;
+          max-width: 60ch;
         }
-
-        /* Botón de pastilla azul «Copias y Materiales» */
-        .cr-banner-btn-tech {
-          background: #1e3a8a;
+        .store-hero-meta {
+          display: flex;
+          flex-wrap: wrap;
+          align-items: center;
+          gap: 6px 10px;
+          font-size: 12.5px;
+          color: #64748b;
+          margin-bottom: 18px;
+        }
+        .store-hero-actions {
+          display: flex;
+          flex-wrap: wrap;
+          align-items: center;
+          gap: 10px;
+        }
+        .store-hero-cta {
+          background: #111827;
           color: #ffffff;
           border: none;
-          border-radius: var(--button-radius);
-          padding: 8px 18px;
-          font-size: 12.5px;
+          border-radius: 10px;
+          padding: 10px 20px;
+          font-size: 13px;
           font-weight: 700;
           cursor: pointer;
-          align-self: center;
-          transition: all 0.15s ease;
-          box-shadow: 0 4px 12px rgba(30, 58, 138, 0.25);
+          display: inline-flex;
+          align-items: center;
+          gap: 8px;
+          min-height: 40px;
           white-space: nowrap;
         }
-        @media (min-width: 768px) {
-          .cr-banner-btn-tech {
-            padding: 10px 26px;
-            font-size: 14px;
-          }
+        .store-hero-cta:hover {
+          background: #1e293b;
         }
-        .cr-banner-btn-tech:hover {
-          background: #172554;
-          transform: translateY(-1px);
-        }
-
-        /* Botón de pastilla rojo «Comprar Repuestos» */
-        .cr-banner-btn-moto {
-          background: #dc2626;
-          color: #ffffff;
-          border: none;
-          border-radius: var(--button-radius);
-          padding: 8px 18px;
-          font-size: 12.5px;
-          font-weight: 700;
+        .store-hero-secondary {
+          background: #ffffff;
+          color: #0f172a;
+          border: 1px solid #cbd5e1;
+          border-radius: 10px;
+          padding: 10px 18px;
+          font-size: 13px;
+          font-weight: 600;
           cursor: pointer;
-          align-self: center;
-          transition: all 0.15s ease;
-          box-shadow: 0 4px 12px rgba(220, 38, 38, 0.35);
+          display: inline-flex;
+          align-items: center;
+          gap: 8px;
+          min-height: 40px;
           white-space: nowrap;
         }
-        @media (min-width: 768px) {
-          .cr-banner-btn-moto {
-            padding: 10px 26px;
-            font-size: 14px;
-          }
+        .store-hero-secondary:hover {
+          background: #f8fafc;
+          border-color: #94a3b8;
         }
-        .cr-banner-btn-moto:hover {
-          background: #b91c1c;
-          transform: translateY(-1px);
-        }
-
-        /* Carousel Navigation Buttons & Dots */
-        .cr-carousel-arrow {
-          position: absolute;
-          top: 50%;
-          transform: translateY(-50%);
-          width: 38px;
-          height: 38px;
-          border-radius: 50%;
+        .store-hero-summary {
           background: #ffffff;
           border: 1px solid #e2e8f0;
-          color: #334155;
-          display: none;
-          align-items: center;
-          justify-content: center;
-          cursor: pointer;
-          box-shadow: 0 2px 8px rgba(0,0,0,0.08);
-          z-index: 10;
-          transition: all 0.15s ease;
+          border-radius: 16px;
+          padding: 18px;
+          display: flex;
+          flex-direction: column;
+          gap: 12px;
         }
-        @media (min-width: 1024px) {
-          .cr-carousel-arrow {
-            display: flex;
+        @media (max-width: 480px) {
+          .store-hero-card {
+            padding: 14px;
+            gap: 14px;
+            border-radius: 16px;
+          }
+          .store-hero-meta {
+            word-break: break-word;
+          }
+          .store-hero-actions button {
+            width: 100%;
+            justify-content: center;
+          }
+          .store-hero-summary {
+            padding: 14px;
           }
         }
-        .cr-carousel-arrow:hover {
-          background: #f8fafc;
-          border-color: #cbd5e1;
-        }
-        .cr-carousel-arrow.left {
-          left: 4px;
-        }
-        .cr-carousel-arrow.right {
-          right: 4px;
-        }
 
-        .cr-carousel-dots {
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          gap: 6px;
-          margin-top: 10px;
-        }
-        .cr-dot {
-          width: 6px;
-          height: 6px;
-          border-radius: 50%;
-          background: #cbd5e1;
-          cursor: pointer;
-          transition: all 0.2s ease;
-        }
-        .cr-dot.active {
-          width: 8px;
-          height: 8px;
-          background: #1e3a8a;
-        }
-
-        /* 3. Título izquierdo renombrado a "Materiales y Copias" */
+        /* 3. Cabecera de catálogo y buscador */
         .cr-desktop-subhead-row {
           display: none;
         }
@@ -1509,12 +1304,13 @@ export function ShopPage() {
           }
         }
         .cr-title-left {
-          font-size: 20px;
+          font-size: 19px;
           font-weight: 800;
-          color: #1e3a8a;
-          text-transform: uppercase;
-          letter-spacing: -0.01em;
-          flex: 1;
+          color: #0f172a;
+          letter-spacing: -0.015em;
+          display: flex;
+          align-items: baseline;
+          gap: 10px;
         }
         .cr-title-right {
           font-size: 20px;
@@ -2194,18 +1990,13 @@ export function ShopPage() {
           <div
             className="cr-brand-group"
             onClick={() => {
-              setActiveDivision('ALL');
               setSelectedCategory('ALL');
               setSearchTerm('');
             }}
           >
-            <CompuRepuestosLogo size={44} />
+            <StoreBrandLogo logo={businessConfig.logo} businessName={businessConfig.businessName} size={42} />
             <div className="cr-brand-title">
-              <span className="cr-title-compu">Compu</span>
-              <span className="cr-title-repuestos">Repuestos</span>
-              <span className="cr-brand-divider">·</span>
-              <span className="cr-title-flores">Flores</span>
-              <span className="cr-title-inversiones">Inversiones</span>
+              {businessConfig.businessName}
             </div>
           </div>
 
@@ -2717,7 +2508,7 @@ export function ShopPage() {
             <input
               type="text"
               className="cr-desktop-search-input"
-              placeholder="Búsqueda inteligente (ej. aceite, amortiguador, resma)..."
+              placeholder="Buscar productos por nombre, SKU o categoría..."
               value={searchTerm}
               onChange={e => setSearchTerm(e.target.value)}
               onFocus={() => setIsSearchFocused(true)}
@@ -2871,117 +2662,94 @@ export function ShopPage() {
         </div>
       </header>
 
-      {/* 2. BANNERS PROMOCIONALES DUALES */}
+      {/* 2. HERO CONFIGURABLE DEL NEGOCIO */}
       <section className="cr-hero-section">
-        <button
-          type="button"
-          className="cr-carousel-arrow left"
-          onClick={() => {
-            setActiveDivision(prev => (prev === 'ALL' ? 'MOTOS' : prev === 'MOTOS' ? 'MATERIALES' : 'ALL'));
-          }}
-          aria-label="Banner anterior"
-        >
-          <ChevronLeft size={20} />
-        </button>
-
-        <button
-          type="button"
-          className="cr-carousel-arrow right"
-          onClick={() => {
-            setActiveDivision(prev => (prev === 'ALL' ? 'MATERIALES' : prev === 'MATERIALES' ? 'MOTOS' : 'ALL'));
-          }}
-          aria-label="Banner siguiente"
-        >
-          <ChevronRight size={20} />
-        </button>
-
-        <div className="cr-banners-grid">
-          {/* BANNER 1: Flores Inversiones CompuFuturo (Laptops ocupando el contenedor) */}
-          <div
-            className="cr-banner-tech"
-            onClick={() => showDivisionProducts('MATERIALES')}
-          >
-            <div>
-              <div className="cr-banner-tagline">Flores Inversiones</div>
-              <h2 className="cr-banner-tech-title">CompuFuturo</h2>
+        <div className="store-hero-card">
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 14 }}>
+              <StoreBrandLogo logo={businessConfig.logo} businessName={businessConfig.businessName} size={56} />
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 700, color: '#64748b' }}>
+                  Tienda Online Oficial · RIF {businessConfig.rif}
+                </div>
+                <h1 className="store-hero-title">{businessConfig.businessName}</h1>
+              </div>
             </div>
 
-            <div className="cr-banner-image-wrap">
-              <img
-                src="/images/compufuturo_banner_1792208865686.jpg"
-                alt="Flores Inversiones CompuFuturo"
-                loading="lazy"
-              />
+            <p className="store-hero-slogan">
+              {businessConfig.slogan || 'Catálogo digital bimonetario con precios actualizados y despacho directo.'}
+            </p>
+
+            <div className="store-hero-meta">
+              <span>{businessConfig.address}</span>
+              <span aria-hidden="true">·</span>
+              <span>Tel: {businessConfig.phone}</span>
+              <span aria-hidden="true">·</span>
+              <span>{businessConfig.email}</span>
             </div>
 
-            <button
-              type="button"
-              className="cr-banner-btn-tech"
-              onClick={e => {
-                e.stopPropagation();
-                showDivisionProducts('MATERIALES');
-              }}
-            >
-              Copias y Materiales
-            </button>
+            <div className="store-hero-actions">
+              <button
+                type="button"
+                className="store-hero-cta"
+                onClick={() => {
+                  document.getElementById('shop-product-catalog')?.scrollIntoView({
+                    behavior: 'smooth',
+                    block: 'start'
+                  });
+                }}
+              >
+                <span>Explorar catálogo</span>
+                <ArrowRight size={15} />
+              </button>
+              <button
+                type="button"
+                className="store-hero-secondary"
+                onClick={() => handleOpenWhatsApp()}
+              >
+                <MessageCircle size={15} />
+                <span>Atención por WhatsApp</span>
+              </button>
+            </div>
           </div>
 
-          {/* BANNER 2: Acelera Motor Partes (Fondo oscuro con moto de alto rendimiento generada) */}
-          <div
-            className="cr-banner-moto"
-            onClick={() => showDivisionProducts('MOTOS')}
-          >
-            <div className="cr-banner-moto-title-group">
-              <h2 className="cr-banner-moto-brand">Acelera</h2>
-              <div className="cr-banner-moto-sub">Motor Partes</div>
+          <div className="store-hero-summary">
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #f1f5f9', paddingBottom: 10 }}>
+              <span style={{ fontSize: 12, fontWeight: 600, color: '#64748b' }}>Tasa de referencia BCV</span>
+              <span style={{ fontSize: 14, fontWeight: 800, color: '#0f172a', fontVariantNumeric: 'tabular-nums' }}>
+                Bs. {bcvRate.toFixed(2)} / USD
+              </span>
             </div>
-
-            <div className="cr-banner-image-wrap">
-              <img
-                src="/images/acelera_moto_banner_1792208844530.jpg"
-                alt="Acelera Motor Partes Alta Rendimiento"
-                loading="lazy"
-              />
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #f1f5f9', paddingBottom: 10 }}>
+              <span style={{ fontSize: 12, fontWeight: 600, color: '#64748b' }}>Productos disponibles</span>
+              <span style={{ fontSize: 14, fontWeight: 800, color: '#0f172a', fontVariantNumeric: 'tabular-nums' }}>
+                {products.length}
+              </span>
             </div>
-
-            <button
-              type="button"
-              className="cr-banner-btn-moto"
-              onClick={e => {
-                e.stopPropagation();
-                showDivisionProducts('MOTOS');
-              }}
-            >
-              Comprar Repuestos
-            </button>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span style={{ fontSize: 12, fontWeight: 600, color: '#64748b' }}>Categorías activas</span>
+              <span style={{ fontSize: 14, fontWeight: 800, color: '#0f172a', fontVariantNumeric: 'tabular-nums' }}>
+                {systemCategories.length}
+              </span>
+            </div>
           </div>
-        </div>
-
-        <div className="cr-carousel-dots">
-          <span
-            className={`cr-dot ${activeDivision === 'ALL' ? 'active' : ''}`}
-            onClick={() => setActiveDivision('ALL')}
-          />
-          <span
-            className={`cr-dot ${activeDivision === 'MATERIALES' ? 'active' : ''}`}
-            onClick={() => setActiveDivision('MATERIALES')}
-          />
-          <span
-            className={`cr-dot ${activeDivision === 'MOTOS' ? 'active' : ''}`}
-            onClick={() => setActiveDivision('MOTOS')}
-          />
         </div>
       </section>
 
-      {/* 3. TÍTULO IZQUIERDO RENOMBRADO A "Materiales y Copias" Y TÍTULO DERECHO */}
+      {/* 3. ENCABEZADO DE CATÁLOGO Y BUSCADOR */}
       <div className="cr-desktop-subhead-row">
-        <div className="cr-title-left">Materiales y Copias</div>
+        <div className="cr-title-left">
+          <span>Catálogo de productos</span>
+          <span style={{ fontSize: 13, fontWeight: 600, color: '#64748b', fontVariantNumeric: 'tabular-nums' }}>
+            {filteredProducts.length} artículos
+          </span>
+        </div>
 
         <div className="cr-desktop-search-wrap" style={{ position: 'relative' }}>
           <input
             type="text"
             className="cr-desktop-search-input"
-            placeholder="Búsqueda inteligente (ej. aceite, amortiguador, resma)..."
+            placeholder="Buscar productos por nombre, categoría o código..."
             value={searchTerm}
             onChange={e => setSearchTerm(e.target.value)}
             onFocus={() => setIsSearchFocused(true)}
@@ -3133,72 +2901,20 @@ export function ShopPage() {
           )}
         </div>
 
-        <div className="cr-title-right">Repuestos de Motos</div>
       </div>
 
-      {/* 4. PASTILLAS DE FILTRO: CATEGORÍAS ESTRICTAMENTE DEL SISTEMA */}
+      {/* 4. PASTILLAS DE FILTRO: CATEGORÍAS DINÁMICAS DEL NEGOCIO */}
       <div className="cr-chips-container">
-        {/* Mobile Search Bar */}
-        <div style={{ marginBottom: 14 }} className="cr-mobile-simple-search">
-          <div style={{ display: 'flex', alignItems: 'center', border: '1px solid #cbd5e1', borderRadius: 99, background: '#ffffff', padding: '3px 3px 3px 16px' }}>
-            <input
-              type="text"
-              placeholder="Búsqueda inteligente..."
-              value={searchTerm}
-              onChange={e => setSearchTerm(e.target.value)}
-              style={{ flex: 1, border: 'none', outline: 'none', fontSize: 13, background: 'transparent' }}
-            />
-            {searchTerm && (
-              <button type="button" onClick={() => setSearchTerm('')} style={{ border: 'none', background: 'transparent', padding: '0 6px', color: '#94a3b8', cursor: 'pointer' }}>
-                <X size={15} />
-              </button>
-            )}
-            <button type="button" style={{ width: 34, height: 34, borderRadius: '50%', background: '#1e3a8a', color: '#fff', border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
-              <Search size={15} />
-            </button>
-          </div>
-        </div>
-
         <div className="cr-mobile-heading-switcher">
-          <h3
-            className="cr-mobile-heading-title"
-            style={{ color: activeDivision === 'MOTOS' ? '#b91c1c' : '#1e3a8a' }}
-          >
-            {activeDivision === 'MOTOS'
-              ? 'Repuestos de Motos'
-              : activeDivision === 'MATERIALES'
-              ? 'Materiales y Copias'
-              : 'Materiales & Repuestos'}
+          <h3 className="cr-mobile-heading-title" style={{ color: '#0f172a' }}>
+            Catálogo de productos
           </h3>
-
-          <div className="cr-mobile-toggle-group">
-            <button
-              type="button"
-              className={`cr-mobile-tab-btn ${activeDivision === 'MATERIALES' ? 'active-tech' : ''}`}
-              onClick={() => {
-                setActiveDivision(activeDivision === 'MATERIALES' ? 'ALL' : 'MATERIALES');
-                setSelectedCategory('ALL');
-              }}
-            >
-              Materiales y Copias
-            </button>
-            <button
-              type="button"
-              className={`cr-mobile-tab-btn ${activeDivision === 'MOTOS' ? 'active-moto' : ''}`}
-              onClick={() => {
-                setActiveDivision(activeDivision === 'MOTOS' ? 'ALL' : 'MOTOS');
-                setSelectedCategory('ALL');
-              }}
-            >
-              Repuestos de Motos
-            </button>
-          </div>
 
           {/* Mobile categories scroll */}
           <div className="cr-mobile-categories-scroll">
             <button
               type="button"
-              className={`cr-chip ${selectedCategory === 'ALL' ? (activeDivision === 'MOTOS' ? 'active-red' : 'active-blue') : ''}`}
+              className={`cr-chip ${selectedCategory === 'ALL' ? 'active-blue' : ''}`}
               onClick={() => setSelectedCategory('ALL')}
             >
               Todas
@@ -3207,7 +2923,7 @@ export function ShopPage() {
               <button
                 key={cat}
                 type="button"
-                className={`cr-chip ${selectedCategory === cat ? (motoCategories.includes(cat) ? 'active-red' : 'active-blue') : ''}`}
+                className={`cr-chip ${selectedCategory === cat ? 'active-blue' : ''}`}
                 onClick={() => setSelectedCategory(selectedCategory === cat ? 'ALL' : cat)}
               >
                 {cat}
@@ -3221,34 +2937,27 @@ export function ShopPage() {
           <div className="cr-chip-group">
             <button
               type="button"
-              className={`cr-chip ${activeDivision === 'MATERIALES' && selectedCategory === 'ALL' ? 'active-blue' : ''}`}
-              onClick={() => {
-                setActiveDivision('MATERIALES');
-                setSelectedCategory('ALL');
-              }}
+              className={`cr-chip ${selectedCategory === 'ALL' ? 'active-blue' : ''}`}
+              onClick={() => setSelectedCategory('ALL')}
             >
-              Todas (Materiales)
+              Todas ({products.length})
             </button>
-            {materialCategories.map(cat => (
+            {systemCategories.map(cat => (
               <button
                 key={cat}
                 type="button"
                 className={`cr-chip ${selectedCategory === cat ? 'active-blue' : ''}`}
-                onClick={() => {
-                  setActiveDivision('MATERIALES');
-                  setSelectedCategory(selectedCategory === cat ? 'ALL' : cat);
-                }}
+                onClick={() => setSelectedCategory(selectedCategory === cat ? 'ALL' : cat)}
               >
                 {cat}
               </button>
             ))}
           </div>
 
-          {(activeDivision !== 'ALL' || selectedCategory !== 'ALL') && (
+          {(selectedCategory !== 'ALL' || searchTerm.trim() !== '') && (
             <button
               type="button"
               onClick={() => {
-                setActiveDivision('ALL');
                 setSelectedCategory('ALL');
                 setSearchTerm('');
               }}
@@ -3258,84 +2967,61 @@ export function ShopPage() {
                 color: '#64748b',
                 fontSize: 12,
                 fontWeight: 700,
-                cursor: 'pointer'
+                cursor: 'pointer',
+                whiteSpace: 'nowrap'
               }}
             >
-              Ver Todo el Catálogo
+              Ver todo el catálogo
             </button>
           )}
-
-          <div className="cr-chip-group">
-            <button
-              type="button"
-              className={`cr-chip ${activeDivision === 'MOTOS' && selectedCategory === 'ALL' ? 'active-red' : ''}`}
-              onClick={() => {
-                setActiveDivision('MOTOS');
-                setSelectedCategory('ALL');
-              }}
-            >
-              Todas (Motos)
-            </button>
-            {motoCategories.map(cat => (
-              <button
-                key={cat}
-                type="button"
-                className={`cr-chip ${selectedCategory === cat ? 'active-red' : ''}`}
-                onClick={() => {
-                  setActiveDivision('MOTOS');
-                  setSelectedCategory(selectedCategory === cat ? 'ALL' : cat);
-                }}
-              >
-                {cat}
-              </button>
-            ))}
-          </div>
         </div>
       </div>
 
-      {/* 5. CATÁLOGO DE PRODUCTOS (5 estrellas, precios bimonetarios, bordes redondeados) */}
+      {/* 5. CATÁLOGO DE PRODUCTOS */}
       <main id="shop-product-catalog" className="cr-catalog-wrap">
         {isLoading ? (
           <div style={{ textAlign: 'center', padding: '60px 20px', color: '#64748b' }}>
-            Cargando catálogo CompuRepuestos Flores Inversiones...
+            Cargando catálogo de {businessConfig.businessName}...
           </div>
         ) : filteredProducts.length === 0 ? (
-          <div style={{ textAlign: 'center', padding: '60px 20px', color: '#64748b' }}>
-            <Package size={48} style={{ color: '#cbd5e1', margin: '0 auto 12px' }} />
-            <h3 style={{ margin: '0 0 6px', color: '#0f172a' }}>No hay productos en esta categoría del sistema</h3>
-            <p style={{ fontSize: 13, margin: 0 }}>Agregue productos en el módulo de Inventario para visualizarlos aquí en tiempo real.</p>
-            <button
-              type="button"
-              onClick={() => {
-                setActiveDivision('ALL');
-                setSelectedCategory('ALL');
-                setSearchTerm('');
-              }}
-              style={{
-                marginTop: 16,
-                padding: '8px 20px',
-                borderRadius: 9999,
-                background: '#1e3a8a',
-                color: '#fff',
-                border: 'none',
-                cursor: 'pointer',
-                fontWeight: 600
-              }}
-            >
-              Mostrar todo el inventario
-            </button>
+          <div style={{ textAlign: 'center', padding: '60px 20px', color: '#64748b', border: '1px dashed #e2e8f0', borderRadius: 16 }}>
+            <Package size={44} style={{ color: '#cbd5e1', margin: '0 auto 12px' }} />
+            <h3 style={{ margin: '0 0 6px', color: '#0f172a', fontSize: 16 }}>
+              {products.length === 0
+                ? `Aún no hay productos publicados en ${businessConfig.businessName}`
+                : 'No hay productos que coincidan con tu búsqueda'}
+            </h3>
+            <p style={{ fontSize: 13, margin: 0 }}>
+              {products.length === 0
+                ? 'Agrega productos desde el módulo de Inventario para mostrarlos aquí en tiempo real.'
+                : 'Prueba limpiando los filtros o seleccionando otra categoría.'}
+            </p>
+            {(selectedCategory !== 'ALL' || searchTerm.trim() !== '') && (
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectedCategory('ALL');
+                  setSearchTerm('');
+                }}
+                style={{
+                  marginTop: 16,
+                  padding: '8px 20px',
+                  borderRadius: 10,
+                  background: '#111827',
+                  color: '#fff',
+                  border: 'none',
+                  cursor: 'pointer',
+                  fontWeight: 600
+                }}
+              >
+                Mostrar todo el inventario
+              </button>
+            )}
           </div>
         ) : (
           <div className="cr-product-grid">
             {filteredProducts.map(product => {
               const prices = formatPrice(product.priceUsd);
-              const isMaterial =
-                (product.category || '').toLowerCase().includes('material') ||
-                (product.category || '').toLowerCase().includes('copia') ||
-                (product.category || '').toLowerCase().includes('papel') ||
-                (product.category || '').toLowerCase().includes('oficina') ||
-                (product.brand || '').toLowerCase().includes('futuro') ||
-                (product.brand || '').toLowerCase().includes('flores');
 
               return (
                 <div key={product.sku} className="cr-product-card">
@@ -3423,11 +3109,11 @@ export function ShopPage() {
                       type="button"
                       disabled={product.stock <= 0}
                       variant="primary"
-                      className={`cr-card-action-btn ${isMaterial ? 'tech' : 'moto'}`}
+                      className="cr-card-action-btn tech"
                       onClick={() => addToCart(product)}
                     >
                       <ShoppingCart size={13} />
-                      <span>{isMaterial ? 'Copias y Materiales' : 'Comprar Repuestos'}</span>
+                      <span>{product.stock > 0 ? 'Agregar al carrito' : 'Sin stock'}</span>
                     </Button>
                   </div>
                 </div>
@@ -3440,7 +3126,7 @@ export function ShopPage() {
       {/* 6. CALLOUT: SERVICIOS EXPRESOS ENTREGA LOCAL */}
       <div
         className="cr-express-delivery-card"
-        onClick={() => handleOpenWhatsApp('Hola CompuRepuestos Flores Inversiones, me interesa el servicio de entrega local para un pedido.')}
+        onClick={() => handleOpenWhatsApp(`Hola ${businessConfig.businessName}, me interesa el servicio de entrega local para un pedido.`)}
         title="Consultar servicio de despacho local inmediato"
       >
         <div className="cr-truck-icon-wrap">
@@ -3486,7 +3172,6 @@ export function ShopPage() {
           type="button"
           className="cr-bottom-item active"
           onClick={() => {
-            setActiveDivision('ALL');
             setSelectedCategory('ALL');
             window.scrollTo({ top: 0, behavior: 'smooth' });
           }}
@@ -3577,16 +3262,16 @@ export function ShopPage() {
           >
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
               <div className="cr-brand-group">
-                <CompuRepuestosLogo size={36} />
-                <div style={{ fontSize: 15, fontWeight: 800 }}>
-                  <span className="cr-title-compu">Compu</span>
-                  <span className="cr-title-repuestos">Repuestos</span>
+                <StoreBrandLogo logo={businessConfig.logo} businessName={businessConfig.businessName} size={36} />
+                <div style={{ fontSize: 15, fontWeight: 800, color: '#0f172a', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 180 }}>
+                  {businessConfig.businessName}
                 </div>
               </div>
               <button
                 type="button"
                 onClick={() => setIsMobileMenuOpen(false)}
-                style={{ border: 'none', background: 'transparent', cursor: 'pointer' }}
+                style={{ border: 'none', background: 'transparent', cursor: 'pointer', minWidth: 32, minHeight: 32 }}
+                aria-label="Cerrar menú"
               >
                 <X size={20} />
               </button>
@@ -3594,12 +3279,11 @@ export function ShopPage() {
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8, flex: 1 }}>
               <div style={{ fontSize: 11, fontWeight: 800, textTransform: 'uppercase', color: '#94a3b8', margin: '8px 0 4px' }}>
-                Divisiones
+                Catálogo
               </div>
               <button
                 type="button"
                 onClick={() => {
-                  setActiveDivision('ALL');
                   setSelectedCategory('ALL');
                   setIsMobileMenuOpen(false);
                 }}
@@ -3610,7 +3294,7 @@ export function ShopPage() {
                   padding: '10px 14px',
                   borderRadius: 10,
                   border: 'none',
-                  background: activeDivision === 'ALL' ? '#f1f5f9' : 'transparent',
+                  background: selectedCategory === 'ALL' ? '#f1f5f9' : 'transparent',
                   fontWeight: 600,
                   cursor: 'pointer'
                 }}
@@ -3619,56 +3303,8 @@ export function ShopPage() {
                 <span>Todo el Catálogo</span>
               </button>
 
-              <button
-                type="button"
-                onClick={() => {
-                  setActiveDivision('MATERIALES');
-                  setSelectedCategory('ALL');
-                  setIsMobileMenuOpen(false);
-                }}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 10,
-                  padding: '10px 14px',
-                  borderRadius: 10,
-                  border: 'none',
-                  background: activeDivision === 'MATERIALES' ? '#eff6ff' : 'transparent',
-                  color: '#1e3a8a',
-                  fontWeight: 700,
-                  cursor: 'pointer'
-                }}
-              >
-                <Package size={16} />
-                <span>Materiales y Copias</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => {
-                  setActiveDivision('MOTOS');
-                  setSelectedCategory('ALL');
-                  setIsMobileMenuOpen(false);
-                }}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 10,
-                  padding: '10px 14px',
-                  borderRadius: 10,
-                  border: 'none',
-                  background: activeDivision === 'MOTOS' ? '#fef2f2' : 'transparent',
-                  color: '#dc2626',
-                  fontWeight: 700,
-                  cursor: 'pointer'
-                }}
-              >
-                <Truck size={16} />
-                <span>Repuestos de Motos</span>
-              </button>
-
               <div style={{ fontSize: 11, fontWeight: 800, textTransform: 'uppercase', color: '#94a3b8', margin: '18px 0 4px' }}>
-                Categorías del Sistema
+                Categorías
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 4, maxHeight: 180, overflowY: 'auto' }}>
                 {systemCategories.map(cat => (
@@ -3716,8 +3352,8 @@ export function ShopPage() {
               }}
             >
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <ShoppingCart size={20} style={{ color: '#1e3a8a' }} />
-                <h3 style={{ margin: 0, fontSize: 16 }}>Carrito CompuRepuestos</h3>
+                <ShoppingCart size={20} style={{ color: '#0f172a' }} />
+                <h3 style={{ margin: 0, fontSize: 16 }}>Carrito · {businessConfig.businessName}</h3>
                 <span
                   style={{
                     background: '#eff6ff',
@@ -3810,10 +3446,11 @@ export function ShopPage() {
                             <button
                               type="button"
                               onClick={() => updateCartQuantity(item.product.sku, -1)}
+                              aria-label="Disminuir cantidad"
                               style={{
-                                width: 24,
-                                height: 24,
-                                borderRadius: 4,
+                                width: 28,
+                                height: 28,
+                                borderRadius: 6,
                                 border: '1px solid #cbd5e1',
                                 background: '#f8fafc',
                                 display: 'flex',
@@ -3830,10 +3467,11 @@ export function ShopPage() {
                             <button
                               type="button"
                               onClick={() => updateCartQuantity(item.product.sku, 1)}
+                              aria-label="Aumentar cantidad"
                               style={{
-                                width: 24,
-                                height: 24,
-                                borderRadius: 4,
+                                width: 28,
+                                height: 28,
+                                borderRadius: 6,
                                 border: '1px solid #cbd5e1',
                                 background: '#f8fafc',
                                 display: 'flex',
@@ -3969,7 +3607,7 @@ export function ShopPage() {
               <div>
                 <h3 style={{ margin: 0, fontSize: 18 }}>Confirmación de Pedido</h3>
                 <div style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>
-                  CompuRepuestos Flores Inversiones · Pasarela Bimonetaria USD / VES
+                  {businessConfig.businessName} · Pasarela Bimonetaria USD / VES
                 </div>
               </div>
               <button
@@ -4187,7 +3825,7 @@ export function ShopPage() {
                   </div>
                   <h3 style={{ margin: '0 0 6px', fontSize: 20 }}>¡Pedido Recibido con Éxito!</h3>
                   <p style={{ fontSize: 13, color: '#64748b', marginBottom: 20 }}>
-                    Tu orden número <b>{completedOrder.order_number}</b> ha sido registrada en CompuRepuestos Flores Inversiones.
+                    Tu orden número <b>{completedOrder.order_number}</b> ha sido registrada en <b>{businessConfig.businessName}</b>.
                   </p>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                     <button
@@ -4404,7 +4042,7 @@ export function ShopPage() {
                 </span>
                 <h3 style={{ margin: '6px 0 4px', fontSize: 16 }}>{quickViewProduct.name}</h3>
                 <div style={{ fontSize: 12, color: '#64748b' }}>
-                  Código: <b>{quickViewProduct.sku}</b> · Marca: <b>{quickViewProduct.brand || 'CompuRepuestos Flores Inversiones'}</b>
+                  Código: <b>{quickViewProduct.sku}</b> · Marca: <b>{quickViewProduct.brand || businessConfig.businessName}</b>
                 </div>
               </div>
             </div>
@@ -4499,6 +4137,7 @@ export function ShopPage() {
             : selectedTrackingOrder?.order_number || selectedTrackingOrder?.id || ''
         }
         initialOrder={typeof selectedTrackingOrder === 'object' ? selectedTrackingOrder : null}
+        businessProfile={businessConfig}
         onClose={() => {
           setIsOrderTrackerOpen(false);
           setSelectedTrackingOrder(null);
@@ -4929,8 +4568,8 @@ export function ShopPage() {
         }}
       >
         <div style={{ maxWidth: 1320, margin: '0 auto', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
-          <div>
-            © {new Date().getFullYear()} <b>CompuRepuestos · Flores Inversiones</b> · Materiales, Copias y Repuestos de Motos
+          <div style={{ textAlign: 'left' }}>
+            © {new Date().getFullYear()} <b>{businessConfig.businessName}</b> · RIF: {businessConfig.rif} · {businessConfig.address} · {businessConfig.email} · {businessConfig.phone}
           </div>
           <button
             type="button"

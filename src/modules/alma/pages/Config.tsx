@@ -36,7 +36,14 @@ import { useAuth } from '../../../context/AuthContext';
 import { getActiveExchangeRate, setActiveExchangeRate, formatUSD, formatVES } from '../../../lib/currency';
 import { authenticatedFetch } from '../../../lib/supabase/api';
 import { refreshSupabaseStatus } from '../../../lib/supabase/client';
-import { getBusinessProfile, saveBusinessProfile } from '../../../lib/businessProfile';
+import {
+  DEFAULT_BUSINESS_PROFILE,
+  applyBrandingToDocument,
+  getBusinessProfile,
+  saveBusinessProfile,
+  uploadBusinessAsset,
+  withBusinessDefaults
+} from '../../../lib/businessProfile';
 import { getPrintSettings, savePrintSettings, refreshPrintSettingsFromServer } from '../../../lib/printSettings';
 import {
   DbBranch,
@@ -128,7 +135,7 @@ export function ConfigPage() {
   const [activeTab, setActiveTab] = useState<'negocio' | 'almacen' | 'usuarios' | 'auditoria' | 'respaldo'>('negocio');
   const [isBackupLoading, setIsBackupLoading] = useState<'excel' | 'json' | null>(null);
   // Cierre de sesión en todos los dispositivos (revoca el registro de sesiones)
-  const { signOut } = useAuth();
+  const { signOut, activeOrganizationId } = useAuth();
   const [isClosingAllSessions, setIsClosingAllSessions] = useState(false);
   const [logoutAllMessage, setLogoutAllMessage] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
 
@@ -604,7 +611,7 @@ export function ConfigPage() {
   };
 
   // --- BUSINESS INFO STATE ---
-  const initialProfile = getBusinessProfile();
+  const initialProfile = getBusinessProfile(activeOrganizationId);
   const [businessName, setBusinessName] = useState(initialProfile.businessName);
   const [rif, setRif] = useState(initialProfile.rif);
   const [email, setEmail] = useState(initialProfile.email);
@@ -613,112 +620,268 @@ export function ConfigPage() {
   const [whatsapp, setWhatsapp] = useState(initialProfile.whatsapp);
   const [logo, setLogo] = useState<string | null>(initialProfile.logo);
   const [favicon, setFavicon] = useState<string | null>(initialProfile.favicon);
+  const [isLoadingBusiness, setIsLoadingBusiness] = useState(true);
   const [isSavingBusiness, setIsSavingBusiness] = useState(false);
+  const [isUploadingLogo, setIsUploadingLogo] = useState(false);
+  const [isUploadingFavicon, setIsUploadingFavicon] = useState(false);
+  const [businessFieldErrors, setBusinessFieldErrors] = useState<Record<string, string>>({});
+  const [businessFeedback, setBusinessFeedback] = useState<{ tone: 'success' | 'error' | 'info'; text: string } | null>(null);
 
-  // Al montar, sincronizar los campos con la base de datos (fuente de verdad).
+  // Al montar o cambiar de tenant activo, sincronizar los campos con la base de datos (fuente de verdad).
   useEffect(() => {
     let alive = true;
+    setIsLoadingBusiness(true);
+    setBusinessFieldErrors({});
+    setBusinessFeedback(null);
+
     (async () => {
       try {
         const res = await authenticatedFetch('/api/business-profile');
-        const json = await res.json();
-        const profile = json?.data;
-        if (!alive || !res.ok || !json?.success || !profile) return;
-        // Aplicar solo campos con contenido: la BD siempre gana sobre el local.
-        const update: Record<string, string | null> = {};
-        if (profile.businessName) update.businessName = profile.businessName;
-        if (profile.rif) update.rif = profile.rif;
-        if (profile.email) update.email = profile.email;
-        if (profile.address) update.address = profile.address;
-        if (profile.phone) update.phone = profile.phone;
-        if (profile.whatsapp) update.whatsapp = profile.whatsapp;
-        if (profile.logo) update.logo = profile.logo;
-        if (profile.favicon) update.favicon = profile.favicon;
-        const merged = saveBusinessProfile(update);
-        setBusinessName(merged.businessName);
-        setRif(merged.rif);
-        setEmail(merged.email);
-        setAddress(merged.address);
-        setPhone(merged.phone);
-        setWhatsapp(merged.whatsapp);
-        setLogo(merged.logo);
-        setFavicon(merged.favicon);
+        const json = await res.json().catch(() => null);
+        if (!alive) return;
+
+        if (res.ok && json?.success && json?.data) {
+          const normalized = withBusinessDefaults(json.data);
+          const merged = saveBusinessProfile(normalized, activeOrganizationId || json.data.organizationId);
+          setBusinessName(merged.businessName);
+          setRif(merged.rif);
+          setEmail(merged.email);
+          setAddress(merged.address);
+          setPhone(merged.phone);
+          setWhatsapp(merged.whatsapp);
+          setLogo(merged.logo);
+          setFavicon(merged.favicon);
+          applyBrandingToDocument(merged);
+        } else {
+          const fallback = withBusinessDefaults(getBusinessProfile(activeOrganizationId));
+          setBusinessName(fallback.businessName);
+          setRif(fallback.rif);
+          setEmail(fallback.email);
+          setAddress(fallback.address);
+          setPhone(fallback.phone);
+          setWhatsapp(fallback.whatsapp);
+          setLogo(fallback.logo);
+          setFavicon(fallback.favicon);
+        }
       } catch {
-        // Sin conexión a la BD: se mantienen los valores locales.
+        if (!alive) return;
+        const fallback = withBusinessDefaults(getBusinessProfile(activeOrganizationId));
+        setBusinessName(fallback.businessName);
+        setRif(fallback.rif);
+        setEmail(fallback.email);
+        setAddress(fallback.address);
+        setPhone(fallback.phone);
+        setWhatsapp(fallback.whatsapp);
+        setLogo(fallback.logo);
+        setFavicon(fallback.favicon);
+        setBusinessFeedback({
+          tone: 'error',
+          text: 'No se pudo cargar el perfil desde el servidor; se muestran los datos locales del negocio.'
+        });
+      } finally {
+        if (alive) setIsLoadingBusiness(false);
       }
     })();
-    return () => { alive = false; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
-  const handleLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    return () => { alive = false; };
+  }, [activeOrganizationId]);
+
+  const clearBusinessFieldError = (field: string) => {
+    setBusinessFieldErrors(prev => {
+      if (!prev[field]) return prev;
+      const next = { ...prev };
+      delete next[field];
+      return next;
+    });
+  };
+
+  const validateBusinessFields = (): Record<string, string> => {
+    const errors: Record<string, string> = {};
+    if (!businessName.trim() || businessName.trim().length < 2) {
+      errors.businessName = 'Ingresa el nombre del negocio (mínimo 2 caracteres).';
+    }
+    if (!rif.trim() || !/^[JVGPE]-?\d{7,9}(-\d)?$/i.test(rif.trim())) {
+      errors.rif = 'Formato fiscal inválido. Ejemplo válido: J-00000000-1.';
+    }
+    if (!email.trim() || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
+      errors.email = 'Ingresa un correo electrónico válido.';
+    }
+    if (!address.trim() || address.trim().length < 3) {
+      errors.address = 'Ingresa la dirección fiscal del negocio.';
+    }
+    if (!phone.trim() || phone.replace(/\D/g, '').length < 7) {
+      errors.phone = 'Ingresa un número de teléfono válido.';
+    }
+    if (whatsapp.trim() && whatsapp.replace(/\D/g, '').length < 7) {
+      errors.whatsapp = 'Ingresa un número de WhatsApp válido.';
+    }
+    return errors;
+  };
+
+  const handleLogoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onload = (event) => {
-        setLogo(event.target?.result as string);
-      };
-      reader.readAsDataURL(file);
+    e.target.value = '';
+    if (!file) return;
+
+    clearBusinessFieldError('logo');
+    const allowedTypes = ['image/png', 'image/jpeg', 'image/jpg', 'image/webp'];
+    if (!allowedTypes.includes(file.type.toLowerCase())) {
+      setBusinessFieldErrors(prev => ({ ...prev, logo: 'Formato inválido. Sube una imagen PNG o JPG.' }));
+      return;
+    }
+    if (file.size > 2 * 1024 * 1024) {
+      setBusinessFieldErrors(prev => ({ ...prev, logo: 'El logo no debe superar los 2 MB.' }));
+      return;
+    }
+
+    setIsUploadingLogo(true);
+    setBusinessFeedback(null);
+    try {
+      const publicUrl = await uploadBusinessAsset('logo', file);
+      setLogo(publicUrl);
+      showNotification('Logo cargado correctamente. Haz clic en Guardar para aplicarlo.');
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'No se pudo subir el logo.';
+      setBusinessFieldErrors(prev => ({ ...prev, logo: msg }));
+    } finally {
+      setIsUploadingLogo(false);
     }
   };
 
-  const handleFaviconUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFaviconUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onload = (event) => {
-        setFavicon(event.target?.result as string);
-      };
-      reader.readAsDataURL(file);
+    e.target.value = '';
+    if (!file) return;
+
+    clearBusinessFieldError('favicon');
+    const allowedTypes = [
+      'image/png',
+      'image/jpeg',
+      'image/jpg',
+      'image/webp',
+      'image/x-icon',
+      'image/vnd.microsoft.icon',
+      'image/svg+xml'
+    ];
+    if (!allowedTypes.includes(file.type.toLowerCase())) {
+      setBusinessFieldErrors(prev => ({ ...prev, favicon: 'Usa formato PNG, JPG, ICO o SVG para el favicon.' }));
+      return;
+    }
+    if (file.size > 512 * 1024) {
+      setBusinessFieldErrors(prev => ({ ...prev, favicon: 'El favicon debe pesar máximo 512 KB.' }));
+      return;
+    }
+
+    // Verificar proporción cuadrada para PNG/JPG
+    if (file.type !== 'image/svg+xml' && file.type !== 'image/x-icon' && file.type !== 'image/vnd.microsoft.icon') {
+      const isSquare = await new Promise<boolean>((resolve) => {
+        const img = new Image();
+        const objectUrl = URL.createObjectURL(file);
+        img.onload = () => {
+          URL.revokeObjectURL(objectUrl);
+          resolve(Math.abs(img.naturalWidth - img.naturalHeight) <= 4);
+        };
+        img.onerror = () => {
+          URL.revokeObjectURL(objectUrl);
+          resolve(true);
+        };
+        img.src = objectUrl;
+      });
+      if (!isSquare) {
+        setBusinessFieldErrors(prev => ({
+          ...prev,
+          favicon: 'El favicon debe ser cuadrado (recomendado 64x64 px).'
+        }));
+        return;
+      }
+    }
+
+    setIsUploadingFavicon(true);
+    setBusinessFeedback(null);
+    try {
+      const publicUrl = await uploadBusinessAsset('favicon', file);
+      setFavicon(publicUrl);
+      showNotification('Favicon cargado correctamente. Haz clic en Guardar para aplicarlo.');
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'No se pudo subir el favicon.';
+      setBusinessFieldErrors(prev => ({ ...prev, favicon: msg }));
+    } finally {
+      setIsUploadingFavicon(false);
     }
   };
 
   const handleSaveBusiness = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (isSavingBusiness) return;
+    if (isSavingBusiness || isUploadingLogo || isUploadingFavicon) return;
+
+    const errors = validateBusinessFields();
+    setBusinessFieldErrors(errors);
+    if (Object.keys(errors).length > 0) {
+      setBusinessFeedback({
+        tone: 'error',
+        text: 'Revisa los campos marcados antes de guardar la identidad del negocio.'
+      });
+      return;
+    }
+
     setIsSavingBusiness(true);
+    setBusinessFeedback(null);
     try {
-      // Actualización local inmediata para todo el sistema (facturas, ecommerce...).
-      saveBusinessProfile({
-        businessName,
-        rif,
-        email,
-        address,
-        phone,
-        whatsapp,
+      const payload = {
+        businessName: businessName.trim(),
+        rif: rif.trim().toUpperCase(),
+        email: email.trim(),
+        address: address.trim(),
+        phone: phone.trim(),
+        whatsapp: whatsapp.trim() || phone.trim(),
+        slogan: getBusinessProfile(activeOrganizationId).slogan || DEFAULT_BUSINESS_PROFILE.slogan,
         logo,
         favicon
-      });
+      };
 
       // Persistencia definitiva en Supabase (tabla organizations).
       const res = await authenticatedFetch('/api/business-profile', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          businessName,
-          rif,
-          email,
-          address,
-          phone,
-          whatsapp,
-          slogan: getBusinessProfile().slogan,
-          logo,
-          favicon
-        })
+        body: JSON.stringify(payload)
       });
-      const json = await res.json();
+      const json = await res.json().catch(() => null);
       if (!res.ok || json?.success === false) {
         throw new Error(json?.error || 'No se pudo guardar en la base de datos.');
       }
+
+      const savedData = withBusinessDefaults(json?.data || payload);
+      savedData.logo = json?.data && 'logo' in json.data ? json.data.logo : payload.logo;
+      savedData.favicon = json?.data && 'favicon' in json.data ? json.data.favicon : payload.favicon;
+
+      // Actualizar caché del tenant activo, título, favicon y tienda pública al instante
+      saveBusinessProfile(savedData, activeOrganizationId || savedData.organizationId);
+      applyBrandingToDocument(savedData);
+
+      setBusinessName(savedData.businessName);
+      setRif(savedData.rif);
+      setEmail(savedData.email);
+      setAddress(savedData.address);
+      setPhone(savedData.phone);
+      setWhatsapp(savedData.whatsapp);
+      setLogo(savedData.logo);
+      setFavicon(savedData.favicon);
+
       const warnings: string[] = json?.warnings || [];
       if (warnings.length > 0) {
-        showNotification(`Identidad guardada en Supabase (nombre, RIF, dirección y teléfono). ${warnings[0]}`, 'info');
+        setBusinessFeedback({ tone: 'info', text: warnings[0] });
+        showNotification(`Identidad guardada. ${warnings[0]}`, 'info');
       } else {
-        showNotification('Identidad y datos fiscales guardados en Supabase y aplicados en facturas, notas, ecommerce y otros.');
+        setBusinessFeedback({
+          tone: 'success',
+          text: 'Identidad y perfil de tienda guardados correctamente. Los cambios ya están activos en la tienda pública, pestaña del navegador y comprobantes.'
+        });
+        showNotification('Identidad y datos fiscales guardados y aplicados en todo el sistema.');
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Error al guardar el perfil del negocio.';
-      showNotification(`Guardado solo en este equipo. ${msg}`, 'info');
+      setBusinessFeedback({ tone: 'error', text: msg });
+      showNotification(msg, 'info');
     } finally {
       setIsSavingBusiness(false);
     }
@@ -1160,89 +1323,198 @@ export function ConfigPage() {
       </div>
 
       {activeTab === 'negocio' && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 16, height: '800px' }}>
-          
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
           {/* Section 1: Identidad y datos fiscales */}
           <Card>
-            <form onSubmit={handleSaveBusiness}>
-              <div style={{ marginBottom: 16 }}>
-                <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700 }}>
-                  Identidad y datos fiscales
-                </h3>
-                <span className="muted small">
-                  Se usan en facturas, tickets y en la tienda pública
-                </span>
+            <form onSubmit={handleSaveBusiness} noValidate>
+              <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 8 }}>
+                <div>
+                  <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700 }}>
+                    Identidad y datos fiscales
+                  </h3>
+                  <span className="muted small">
+                    Se usan en facturas, tickets y en la tienda pública
+                  </span>
+                </div>
+                {isLoadingBusiness && (
+                  <span className="muted small" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontWeight: 600 }}>
+                    <RefreshCw size={13} className="animate-spin" /> Cargando perfil activo...
+                  </span>
+                )}
               </div>
 
-              <div className="form-grid">
+              {businessFeedback && (
+                <div
+                  role="status"
+                  style={{
+                    marginBottom: 16,
+                    padding: '10px 14px',
+                    borderRadius: 10,
+                    fontSize: 12.5,
+                    fontWeight: 600,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 8,
+                    border:
+                      businessFeedback.tone === 'success'
+                        ? '1px solid #bbf7d0'
+                        : businessFeedback.tone === 'error'
+                        ? '1px solid #fecaca'
+                        : '1px solid #ddd6fe',
+                    background:
+                      businessFeedback.tone === 'success'
+                        ? '#f0fdf4'
+                        : businessFeedback.tone === 'error'
+                        ? '#fef2f2'
+                        : '#f5f3ff',
+                    color:
+                      businessFeedback.tone === 'success'
+                        ? '#15803d'
+                        : businessFeedback.tone === 'error'
+                        ? '#b91c1c'
+                        : '#5b21b6'
+                  }}
+                >
+                  {businessFeedback.tone === 'error' ? <AlertTriangle size={16} /> : <CheckCircle size={16} />}
+                  <span>{businessFeedback.text}</span>
+                </div>
+              )}
+
+              <div className="form-grid" style={{ opacity: isLoadingBusiness ? 0.65 : 1, transition: 'opacity 0.15s ease' }}>
                 <div className="field full">
-                  <label>Nombre del negocio</label>
+                  <label htmlFor="cfg-business-name">Nombre del negocio *</label>
                   <input
+                    id="cfg-business-name"
                     className="input"
                     value={businessName}
-                    onChange={(e) => setBusinessName(e.target.value)}
-                    placeholder="Nombre de la empresa"
+                    onChange={(e) => {
+                      setBusinessName(e.target.value);
+                      clearBusinessFieldError('businessName');
+                    }}
+                    placeholder={DEFAULT_BUSINESS_PROFILE.businessName}
+                    disabled={isLoadingBusiness}
+                    required
                   />
+                  {businessFieldErrors.businessName && (
+                    <span style={{ color: '#dc2626', fontSize: 11.5, fontWeight: 600 }}>
+                      {businessFieldErrors.businessName}
+                    </span>
+                  )}
                 </div>
 
                 <div className="field">
-                  <label>RIF</label>
+                  <label htmlFor="cfg-business-rif">RIF *</label>
                   <input
+                    id="cfg-business-rif"
                     className="input"
                     value={rif}
-                    onChange={(e) => setRif(e.target.value)}
-                    placeholder="Ej: J-123456789"
+                    onChange={(e) => {
+                      setRif(e.target.value.toUpperCase());
+                      clearBusinessFieldError('rif');
+                    }}
+                    placeholder={DEFAULT_BUSINESS_PROFILE.rif}
+                    disabled={isLoadingBusiness}
+                    required
                   />
+                  {businessFieldErrors.rif && (
+                    <span style={{ color: '#dc2626', fontSize: 11.5, fontWeight: 600 }}>
+                      {businessFieldErrors.rif}
+                    </span>
+                  )}
                 </div>
 
                 <div className="field">
-                  <label>Correo</label>
+                  <label htmlFor="cfg-business-email">Correo *</label>
                   <input
+                    id="cfg-business-email"
+                    type="email"
                     className="input"
                     value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    placeholder="empresa@correo.com"
+                    onChange={(e) => {
+                      setEmail(e.target.value);
+                      clearBusinessFieldError('email');
+                    }}
+                    placeholder={DEFAULT_BUSINESS_PROFILE.email}
+                    disabled={isLoadingBusiness}
+                    required
                   />
+                  {businessFieldErrors.email && (
+                    <span style={{ color: '#dc2626', fontSize: 11.5, fontWeight: 600 }}>
+                      {businessFieldErrors.email}
+                    </span>
+                  )}
                 </div>
 
                 <div className="field full">
-                  <label>Dirección fiscal</label>
+                  <label htmlFor="cfg-business-address">Dirección fiscal *</label>
                   <textarea
+                    id="cfg-business-address"
                     className="input"
                     style={{ height: 80, padding: 12, resize: 'vertical' }}
                     value={address}
-                    onChange={(e) => setAddress(e.target.value)}
-                    placeholder="Ubicación comercial"
+                    onChange={(e) => {
+                      setAddress(e.target.value);
+                      clearBusinessFieldError('address');
+                    }}
+                    placeholder={DEFAULT_BUSINESS_PROFILE.address}
+                    disabled={isLoadingBusiness}
+                    required
                   />
+                  {businessFieldErrors.address && (
+                    <span style={{ color: '#dc2626', fontSize: 11.5, fontWeight: 600 }}>
+                      {businessFieldErrors.address}
+                    </span>
+                  )}
                 </div>
 
                 <div className="field">
-                  <label>Teléfono</label>
+                  <label htmlFor="cfg-business-phone">Teléfono *</label>
                   <input
+                    id="cfg-business-phone"
                     className="input"
                     value={phone}
-                    onChange={(e) => setPhone(e.target.value)}
-                    placeholder="Código de área y número"
+                    onChange={(e) => {
+                      setPhone(e.target.value);
+                      clearBusinessFieldError('phone');
+                    }}
+                    placeholder={DEFAULT_BUSINESS_PROFILE.phone}
+                    disabled={isLoadingBusiness}
+                    required
                   />
+                  {businessFieldErrors.phone && (
+                    <span style={{ color: '#dc2626', fontSize: 11.5, fontWeight: 600 }}>
+                      {businessFieldErrors.phone}
+                    </span>
+                  )}
                 </div>
 
                 <div className="field">
-                  <label>WhatsApp</label>
+                  <label htmlFor="cfg-business-whatsapp">WhatsApp</label>
                   <input
+                    id="cfg-business-whatsapp"
                     className="input"
                     value={whatsapp}
-                    onChange={(e) => setWhatsapp(e.target.value)}
-                    placeholder="Ej: +58412..."
+                    onChange={(e) => {
+                      setWhatsapp(e.target.value);
+                      clearBusinessFieldError('whatsapp');
+                    }}
+                    placeholder={`Ej: ${DEFAULT_BUSINESS_PROFILE.whatsapp}`}
+                    disabled={isLoadingBusiness}
                   />
+                  {businessFieldErrors.whatsapp && (
+                    <span style={{ color: '#dc2626', fontSize: 11.5, fontWeight: 600 }}>
+                      {businessFieldErrors.whatsapp}
+                    </span>
+                  )}
                 </div>
 
                 {/* Logo upload slot */}
                 <div className="field">
                   <label>Logo</label>
-                  <div className="upload-slot" style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                    <div className="preview-box" style={{ width: 60, height: 60, border: '1px solid var(--border)', borderRadius: 8, display: 'grid', placeItems: 'center', overflow: 'hidden', background: '#fafbfc' }}>
+                  <div className="upload-slot" style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+                    <div className="preview-box" style={{ width: 64, height: 64, border: '1px solid var(--border)', borderRadius: 10, display: 'grid', placeItems: 'center', overflow: 'hidden', background: '#fafbfc', flexShrink: 0 }}>
                       {logo ? (
-                        <img src={logo} alt="Logo" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                        <img src={logo} alt="Logo del negocio" referrerPolicy="no-referrer" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
                       ) : (
                         <span className="muted" style={{ fontSize: 11 }}>Logo</span>
                       )}
@@ -1250,7 +1522,7 @@ export function ConfigPage() {
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                       <input
                         type="file"
-                        accept="image/*"
+                        accept="image/png,image/jpeg,image/webp"
                         id="logo-upload-input"
                         style={{ display: 'none' }}
                         onChange={handleLogoUpload}
@@ -1258,34 +1530,43 @@ export function ConfigPage() {
                       <Button
                         type="button"
                         variant="primary"
-                        style={{ background: 'var(--brand-accent)', color: '#111827', borderColor: '#FDF06F', height: 34, fontSize: 11, fontWeight: 800 }}
+                        disabled={isUploadingLogo || isLoadingBusiness}
+                        style={{ background: 'var(--brand-accent)', color: '#111827', borderColor: '#FDF06F', minHeight: 36, fontSize: 12, fontWeight: 800 }}
                         onClick={() => document.getElementById('logo-upload-input')?.click()}
                       >
-                        <Upload size={12} /> {logo ? 'Cambiar imagen' : 'Subir imagen'}
+                        <Upload size={13} /> {isUploadingLogo ? 'Subiendo...' : logo ? 'Cambiar imagen' : 'Subir imagen'}
                       </Button>
                       {logo && (
                         <button
                           type="button"
-                          onClick={() => setLogo(null)}
-                          style={{ background: 'transparent', border: 'none', color: '#DC2626', fontSize: 11, cursor: 'pointer', textAlign: 'left', padding: 0 }}
+                          onClick={() => {
+                            setLogo(null);
+                            clearBusinessFieldError('logo');
+                          }}
+                          style={{ background: 'transparent', border: 'none', color: '#DC2626', fontSize: 12, fontWeight: 600, cursor: 'pointer', textAlign: 'left', padding: '4px 0', minHeight: 28 }}
                         >
                           Quitar imagen
                         </button>
                       )}
                     </div>
                   </div>
+                  {businessFieldErrors.logo && (
+                    <span style={{ color: '#dc2626', fontSize: 11.5, fontWeight: 600 }}>
+                      {businessFieldErrors.logo}
+                    </span>
+                  )}
                   <span className="muted small" style={{ fontSize: 11, marginTop: 4 }}>
-                    Se usa en facturas, tickets y en la tienda. PNG o JPG.
+                    Se usa en facturas, tickets y en la tienda pública. PNG o JPG (máx. 2 MB).
                   </span>
                 </div>
 
                 {/* Favicon upload slot */}
                 <div className="field">
                   <label>Favicon</label>
-                  <div className="upload-slot" style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                    <div className="preview-box" style={{ width: 40, height: 40, border: '1px solid var(--border)', borderRadius: 8, display: 'grid', placeItems: 'center', overflow: 'hidden', background: '#fafbfc' }}>
+                  <div className="upload-slot" style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+                    <div className="preview-box" style={{ width: 48, height: 48, border: '1px solid var(--border)', borderRadius: 10, display: 'grid', placeItems: 'center', overflow: 'hidden', background: '#fafbfc', flexShrink: 0 }}>
                       {favicon ? (
-                        <img src={favicon} alt="Favicon" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                        <img src={favicon} alt="Favicon del navegador" referrerPolicy="no-referrer" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
                       ) : (
                         <span className="muted" style={{ fontSize: 11 }}>64x64</span>
                       )}
@@ -1293,7 +1574,7 @@ export function ConfigPage() {
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                       <input
                         type="file"
-                        accept="image/*"
+                        accept="image/png,image/jpeg,image/webp,image/x-icon,image/svg+xml"
                         id="favicon-upload-input"
                         style={{ display: 'none' }}
                         onChange={handleFaviconUpload}
@@ -1301,38 +1582,52 @@ export function ConfigPage() {
                       <Button
                         type="button"
                         variant="primary"
-                        style={{ background: 'var(--brand-accent)', color: '#111827', borderColor: '#FDF06F', height: 34, fontSize: 11, fontWeight: 800 }}
+                        disabled={isUploadingFavicon || isLoadingBusiness}
+                        style={{ background: 'var(--brand-accent)', color: '#111827', borderColor: '#FDF06F', minHeight: 36, fontSize: 12, fontWeight: 800 }}
                         onClick={() => document.getElementById('favicon-upload-input')?.click()}
                       >
-                        <Upload size={12} /> {favicon ? 'Cambiar ícono' : 'Subir ícono'}
+                        <Upload size={13} /> {isUploadingFavicon ? 'Subiendo...' : favicon ? 'Cambiar ícono' : 'Subir ícono'}
                       </Button>
                       {favicon && (
                         <button
                           type="button"
-                          onClick={() => setFavicon(null)}
-                          style={{ background: 'transparent', border: 'none', color: '#DC2626', fontSize: 11, cursor: 'pointer', textAlign: 'left', padding: 0 }}
+                          onClick={() => {
+                            setFavicon(null);
+                            clearBusinessFieldError('favicon');
+                          }}
+                          style={{ background: 'transparent', border: 'none', color: '#DC2626', fontSize: 12, fontWeight: 600, cursor: 'pointer', textAlign: 'left', padding: '4px 0', minHeight: 28 }}
                         >
                           Quitar ícono
                         </button>
                       )}
                     </div>
                   </div>
+                  {businessFieldErrors.favicon && (
+                    <span style={{ color: '#dc2626', fontSize: 11.5, fontWeight: 600 }}>
+                      {businessFieldErrors.favicon}
+                    </span>
+                  )}
                   <span className="muted small" style={{ fontSize: 11, marginTop: 4 }}>
-                    Ícono de la pestaña del navegador. Cuadrado, 64x64 px.
+                    Ícono cuadrado de 64x64 px para la pestaña del navegador (máx. 512 KB).
                   </span>
                 </div>
               </div>
 
-              <div style={{ marginTop: 24, display: 'flex', justifyContent: 'flex-end' }}>
-                <Button type="submit" variant="primary" disabled={isSavingBusiness} style={{ display: 'flex', alignItems: 'center', gap: 6, height: 40, padding: '0 20px' }}>
+              <div style={{ marginTop: 24, display: 'flex', justifyContent: 'flex-end', flexWrap: 'wrap', gap: 10 }}>
+                <Button
+                  type="submit"
+                  variant="primary"
+                  disabled={isSavingBusiness || isLoadingBusiness || isUploadingLogo || isUploadingFavicon}
+                  style={{ display: 'flex', alignItems: 'center', gap: 6, minHeight: 42, padding: '0 22px' }}
+                >
                   <Save size={16} /> {isSavingBusiness ? 'Guardando...' : 'Guardar'}
                 </Button>
               </div>
             </form>
           </Card>
 
-          {/* Section 2: Tasa de Cambio Diaria (Image 2) */}
-          <div style={{ height: '800px', overflowY: 'auto' }}>
+          {/* Section 2: Tasa de Cambio Diaria */}
+          <div>
             {/* Dark Blue Active Rate Card */}
             <div className="rate-display-card" style={{ backgroundColor: '#111827' }}>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>

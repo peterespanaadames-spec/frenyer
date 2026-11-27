@@ -27,11 +27,11 @@ export function DashboardLayout() {
   const { signOut, profile: authProfile, userOrganizations, activeOrganizationId } = useAuth();
 
   // Business Profile State (Nombre del negocio, RIF, etc.)
-  const [businessProfile, setBusinessProfile] = useState<BusinessProfile>(() => getBusinessProfile());
+  const [businessProfile, setBusinessProfile] = useState<BusinessProfile>(() => getBusinessProfile(activeOrganizationId));
 
   useEffect(() => {
     const handleProfileSync = () => {
-      setBusinessProfile(getBusinessProfile());
+      setBusinessProfile(getBusinessProfile(activeOrganizationId));
     };
     window.addEventListener('frenyer:business-profile-updated', handleProfileSync);
     window.addEventListener('storage', handleProfileSync);
@@ -39,11 +39,12 @@ export function DashboardLayout() {
       window.removeEventListener('frenyer:business-profile-updated', handleProfileSync);
       window.removeEventListener('storage', handleProfileSync);
     };
-  }, []);
+  }, [activeOrganizationId]);
 
   useEffect(() => {
-    refreshBusinessProfileFromServer().then((p) => setBusinessProfile(p)).catch(() => {});
-  }, []);
+    setBusinessProfile(getBusinessProfile(activeOrganizationId));
+    refreshBusinessProfileFromServer(activeOrganizationId).then((p) => setBusinessProfile(p)).catch(() => {});
+  }, [activeOrganizationId]);
 
   // Estado de la sesion activa: solo se usa para el guard de rol
   useEffect(() => {

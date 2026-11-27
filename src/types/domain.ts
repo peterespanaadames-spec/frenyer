@@ -101,6 +101,8 @@ export interface CartItem {
 }
 
 export interface PublicBusinessConfig {
+  organizationId?: string;
+  slug?: string;
   businessName: string;
   rif: string;
   phone: string;

@@ -10,14 +10,22 @@ import { useExitGuard } from '../modules/shop/hooks/useExitGuard';
 function readShopCartUnits(): number {
   if (typeof window === 'undefined') return 0;
   try {
-    const raw = window.localStorage.getItem('frenyer_shop_cart');
-    if (!raw) return 0;
-    const parsedCart = JSON.parse(raw);
-    if (!Array.isArray(parsedCart)) return 0;
-    return parsedCart.reduce(
-      (acc: number, item: any) => acc + (Number(item?.quantity) || 0),
-      0
-    );
+    let totalUnits = 0;
+    for (let i = 0; i < window.localStorage.length; i += 1) {
+      const key = window.localStorage.key(i);
+      if (!key || (key !== 'frenyer_shop_cart' && !key.startsWith('frenyer_shop_cart_'))) {
+        continue;
+      }
+      const raw = window.localStorage.getItem(key);
+      if (!raw) continue;
+      const parsedCart = JSON.parse(raw);
+      if (!Array.isArray(parsedCart)) continue;
+      totalUnits += parsedCart.reduce(
+        (acc: number, item: any) => acc + (Number(item?.quantity) || 0),
+        0
+      );
+    }
+    return totalUnits;
   } catch {
     return 0;
   }

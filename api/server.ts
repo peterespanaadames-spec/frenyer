@@ -2657,13 +2657,30 @@ app.post('/api/orders', async (req, res) => {
 
     const effectiveRate = Number(exchange_rate) || lastCertifiedRate?.appliedRate || 877.90;
 
-    // 0. ValidaciÃ³n previa de existencia en inventario (bloquear stock insuficiente o negativo)
+    // Resolver organización del pedido: sesión autenticada > store_slug / organization_id público > default
+    let orderOrgId = (res as AuthenticatedResponse).locals?.supabaseContext?.organizationId || '';
+    const requestedSlug = typeof req.body?.store_slug === 'string' ? req.body.store_slug.trim() : '';
+    const requestedOrgId = typeof req.body?.organization_id === 'string' ? req.body.organization_id.trim() : '';
+    if (!orderOrgId && requestedSlug) {
+      const matchedOrg = await findOrganizationBySlug(requestedSlug, 'id');
+      if (matchedOrg?.id) orderOrgId = matchedOrg.id;
+    }
+    if (!orderOrgId && requestedOrgId && /^[0-9a-f-]{36}$/i.test(requestedOrgId)) {
+      orderOrgId = requestedOrgId;
+    }
+    if (!orderOrgId) {
+      orderOrgId = '00000000-0000-0000-0000-000000000001';
+    }
+
+    // 0. Validación previa de existencia en inventario (bloquear stock insuficiente o negativo)
     for (const rawItem of items) {
       const itemSku = rawItem.sku;
       const reqQty = Math.max(1, Number(rawItem.quantity) || 1);
       if (!itemSku) continue;
 
-      const prodRes = await supabaseRestRequest(`products?sku=eq.${encodeURIComponent(itemSku)}&limit=1`);
+      const prodRes = await supabaseServiceRestRequest(
+        `products?sku=eq.${encodeURIComponent(itemSku)}&organization_id=eq.${encodeURIComponent(orderOrgId)}&limit=1`
+      );
       if (!prodRes.error && Array.isArray(prodRes.data) && prodRes.data[0]) {
         const prod = prodRes.data[0];
         const currentStock = Number(prod.stock) || 0;
@@ -2709,7 +2726,7 @@ app.post('/api/orders', async (req, res) => {
 
     const newOrder = {
       id: orderId,
-      organization_id: (res as AuthenticatedResponse).locals?.supabaseContext?.organizationId || '00000000-0000-0000-0000-000000000001',
+      organization_id: orderOrgId,
       branch_id,
       branch_name,
       order_number: orderNumber,
@@ -2752,12 +2769,16 @@ app.post('/api/orders', async (req, res) => {
     for (const it of processedItems) {
       if (!it.sku) continue;
       try {
-        const prodRes = await supabaseRestRequest(`products?sku=eq.${encodeURIComponent(it.sku)}&limit=1`);
+        const prodRes = await supabaseServiceRestRequest(
+          `products?sku=eq.${encodeURIComponent(it.sku)}&organization_id=eq.${encodeURIComponent(orderOrgId)}&limit=1`
+        );
         if (!prodRes.error && Array.isArray(prodRes.data) && prodRes.data[0]) {
           const currentProd = prodRes.data[0];
           const prevStock = Number(currentProd.stock) || 0;
           const newStock = Math.max(0, prevStock - it.quantity);
-          await supabaseRestRequest(`products?sku=eq.${encodeURIComponent(it.sku)}`, {
+          await supabaseServiceRestRequest(
+            `products?sku=eq.${encodeURIComponent(it.sku)}&organization_id=eq.${encodeURIComponent(orderOrgId)}`,
+            {
             method: 'PATCH',
             body: { stock: newStock }
           });
@@ -2979,6 +3000,101 @@ app.patch('/api/orders/:id/payment-status', async (req, res) => {
   }
 });
 
+const DEFAULT_PUBLIC_BUSINESS_PROFILE = {
+  businessName: 'Shop Frenyer',
+  rif: 'J-00000000-1',
+  phone: '+584120000000',
+  whatsapp: '+58412000000',
+  email: 'frenyer@correo.com',
+  address: 'Barinas',
+  slogan: 'Tienda Online Oficial',
+  logo: null as string | null,
+  favicon: null as string | null
+};
+
+function buildSlugFromName(text?: string | null): string {
+  const clean = String(text || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim()
+    .replace(/\s+/g, '-')
+    .replace(/[^\w-]+/g, '')
+    .replace(/--+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  return clean || 'shop-frenyer';
+}
+
+async function findOrganizationBySlug(slug: string, selectCols: string): Promise<any | null> {
+  const cleanSlug = buildSlugFromName(slug);
+  const directRes = await supabaseServiceRestRequest(
+    `organizations?select=${selectCols}&slug=eq.${encodeURIComponent(slug)}&limit=1`
+  );
+  if (!directRes.error && Array.isArray(directRes.data) && directRes.data.length > 0) {
+    return directRes.data[0];
+  }
+  if (cleanSlug !== slug) {
+    const normRes = await supabaseServiceRestRequest(
+      `organizations?select=${selectCols}&slug=eq.${encodeURIComponent(cleanSlug)}&limit=1`
+    );
+    if (!normRes.error && Array.isArray(normRes.data) && normRes.data.length > 0) {
+      return normRes.data[0];
+    }
+  }
+  const allRes = await supabaseServiceRestRequest(`organizations?select=${selectCols}&limit=200`);
+  if (!allRes.error && Array.isArray(allRes.data)) {
+    const matched = allRes.data.find((org: any) => buildSlugFromName(org?.name) === cleanSlug);
+    if (matched) return matched;
+    if (slug === 'tienda-demo' || slug === 'shop-frenyer') {
+      const defaultOrg = allRes.data.find((org: any) => org?.id === '00000000-0000-0000-0000-000000000001');
+      if (defaultOrg) return defaultOrg;
+    }
+  }
+  return null;
+}
+
+const TENANT_ASSETS_BUCKET = 'tenant-assets';
+const TENANT_ASSETS_DIR = path.resolve(DATA_DIR, 'tenant-assets');
+
+const ALLOWED_ASSET_MIME: Record<string, { ext: string; maxBytes: number; allowFaviconOnly?: boolean }> = {
+  'image/png': { ext: 'png', maxBytes: 2 * 1024 * 1024 },
+  'image/jpeg': { ext: 'jpg', maxBytes: 2 * 1024 * 1024 },
+  'image/jpg': { ext: 'jpg', maxBytes: 2 * 1024 * 1024 },
+  'image/webp': { ext: 'webp', maxBytes: 2 * 1024 * 1024 },
+  'image/x-icon': { ext: 'ico', maxBytes: 512 * 1024, allowFaviconOnly: true },
+  'image/vnd.microsoft.icon': { ext: 'ico', maxBytes: 512 * 1024, allowFaviconOnly: true },
+  'image/svg+xml': { ext: 'svg', maxBytes: 512 * 1024, allowFaviconOnly: true }
+};
+
+const ASSET_EXT_CONTENT_TYPE: Record<string, string> = {
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  webp: 'image/webp',
+  ico: 'image/x-icon',
+  svg: 'image/svg+xml'
+};
+
+app.get('/api/public/tenant-assets/:orgId/:fileName', (req, res) => {
+  const orgId = String(req.params.orgId || '').trim();
+  const fileName = String(req.params.fileName || '').trim();
+  if (!/^[a-zA-Z0-9_-]{2,64}$/.test(orgId) || !/^[a-zA-Z0-9._-]{3,128}$/.test(fileName)) {
+    return res.status(400).json({ success: false, error: 'Ruta de archivo inválida.' });
+  }
+  const baseDir = path.resolve(TENANT_ASSETS_DIR);
+  const resolvedPath = path.resolve(baseDir, orgId, fileName);
+  if (!resolvedPath.startsWith(baseDir + path.sep)) {
+    return res.status(403).json({ success: false, error: 'Acceso denegado.' });
+  }
+  if (!fs.existsSync(resolvedPath)) {
+    return res.status(404).json({ success: false, error: 'Archivo no encontrado.' });
+  }
+  const ext = path.extname(fileName).replace(/^\./, '').toLowerCase();
+  res.setHeader('Content-Type', ASSET_EXT_CONTENT_TYPE[ext] || 'application/octet-stream');
+  res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+  return res.sendFile(resolvedPath);
+});
+
 app.get('/api/public/organization', async (_req, res) => {
   let organizationId = '00000000-0000-0000-0000-000000000001';
 
@@ -2996,52 +3112,52 @@ app.get('/api/public/config', async (_req, res) => {
   const effectiveRate = lastCertifiedRate?.appliedRate || 877.90;
   const rateDate = lastCertifiedRate?.valueDate || 'Hoy';
 
-  // Intentar obtener el logo/favicon desde la tabla organizations (service role,
-  // ya que este endpoint es público y no hay sesión de usuario).
-  let orgLogo: string | null = null;
-  let orgFavicon: string | null = null;
-  let orgName: string | null = null;
-  let orgPhone: string | null = null;
-  let orgWhatsapp: string | null = null;
-  let orgEmail: string | null = null;
-  let orgAddress: string | null = null;
-  let orgSlogan: string | null = null;
+  let o: any = null;
+  let branches: Array<{ id: string; name: string; address?: string }> = [];
   try {
-    const orgRes = await supabaseServiceRestRequest('organizations?select=name,phone,whatsapp,email,address,slogan,logo,favicon&limit=1');
+    let orgRes = await supabaseServiceRestRequest(
+      'organizations?select=id,name,slug,rif,phone,whatsapp,email,address,slogan,logo,favicon&id=eq.00000000-0000-0000-0000-000000000001&limit=1'
+    );
+    if (orgRes.error || !Array.isArray(orgRes.data) || orgRes.data.length === 0) {
+      orgRes = await supabaseServiceRestRequest(
+        'organizations?select=id,name,slug,rif,phone,whatsapp,email,address,slogan,logo,favicon&order=created_at.asc&limit=1'
+      );
+    }
     if (!orgRes.error && Array.isArray(orgRes.data) && orgRes.data.length > 0) {
-      const o = orgRes.data[0];
-      orgLogo = o.logo || null;
-      orgFavicon = o.favicon || null;
-      orgName = o.name || null;
-      orgPhone = o.phone || null;
-      orgWhatsapp = o.whatsapp || null;
-      orgEmail = o.email || null;
-      orgAddress = o.address || null;
-      orgSlogan = o.slogan || null;
+      o = orgRes.data[0];
+      if (o?.id) {
+        const brRes = await supabaseServiceRestRequest(
+          `branches?select=id,name,address&organization_id=eq.${encodeURIComponent(o.id)}&order=name.asc`
+        );
+        if (!brRes.error && Array.isArray(brRes.data) && brRes.data.length > 0) {
+          branches = brRes.data.map((b: any) => ({ id: b.id, name: b.name, address: b.address || '' }));
+        }
+      }
     }
   } catch {
     // ignore
   }
 
+  const resolvedAddress = o?.address?.trim() || DEFAULT_PUBLIC_BUSINESS_PROFILE.address;
   return res.json({
     success: true,
     data: {
-      businessName: orgName || 'Frenyer, C.A.',
-      rif: 'J-123456789',
-      phone: orgPhone || '+58 212 555 1212',
-      whatsapp: orgWhatsapp || '+58 412 000 0000',
-      email: orgEmail || 'contacto@frenyer.com',
-      address: orgAddress || 'Av. Francisco de Miranda, Centro Financiero, Caracas, Venezuela',
-      slogan: orgSlogan || 'Tu aliado comercial bimonetario',
-      logo: orgLogo,
-      favicon: orgFavicon,
+      organizationId: o?.id || '00000000-0000-0000-0000-000000000001',
+      slug: o?.slug || buildSlugFromName(o?.name || DEFAULT_PUBLIC_BUSINESS_PROFILE.businessName),
+      businessName: o?.name?.trim() || DEFAULT_PUBLIC_BUSINESS_PROFILE.businessName,
+      rif: o?.rif?.trim() || DEFAULT_PUBLIC_BUSINESS_PROFILE.rif,
+      phone: o?.phone?.trim() || DEFAULT_PUBLIC_BUSINESS_PROFILE.phone,
+      whatsapp: o?.whatsapp?.trim() || DEFAULT_PUBLIC_BUSINESS_PROFILE.whatsapp,
+      email: o?.email?.trim() || DEFAULT_PUBLIC_BUSINESS_PROFILE.email,
+      address: resolvedAddress,
+      slogan: o?.slogan?.trim() || DEFAULT_PUBLIC_BUSINESS_PROFILE.slogan,
+      logo: o?.logo || null,
+      favicon: o?.favicon || null,
       bcvRate: effectiveRate,
       bcvRateDate: rateDate,
-      branches: [
-        { id: 'suc-01', name: 'Sede Principal - Despacho Central', address: 'Av. Francisco de Miranda, Caracas' },
-        { id: 'suc-02', name: 'Sucursal Chacao', address: 'Calle BolÃ­var, Chacao' },
-        { id: 'suc-03', name: 'AlmacÃ©n Los Ruices', address: 'Zona Industrial Los Ruices' }
-      ]
+      branches: branches.length > 0
+        ? branches
+        : [{ id: 'suc-01', name: 'Sede Principal', address: resolvedAddress }]
     }
   });
 });
@@ -3053,13 +3169,18 @@ app.get('/api/public/organization/:slug', async (_req, res) => {
     return res.status(400).json({ success: false, error: 'Slug requerido.' });
   }
   try {
-    const result = await supabaseServiceRestRequest(
-      `organizations?select=id,name,slug&slug=eq.${encodeURIComponent(slug)}&limit=1`
-    );
-    if (result.error || !Array.isArray(result.data) || result.data.length === 0) {
+    const org = await findOrganizationBySlug(slug, 'id,name,slug');
+    if (!org) {
       return res.status(404).json({ success: false, error: 'Organización no encontrada.' });
     }
-    return res.json({ success: true, data: result.data[0] });
+    return res.json({
+      success: true,
+      data: {
+        id: org.id,
+        name: org.name,
+        slug: org.slug || buildSlugFromName(org.name)
+      }
+    });
   } catch {
     return res.status(500).json({ success: false, error: 'Error consultando organización.' });
   }
@@ -3075,32 +3196,44 @@ app.get('/api/public/config/:slug', async (_req, res) => {
   const rateDate = lastCertifiedRate?.valueDate || 'Hoy';
 
   try {
-    const orgRes = await supabaseServiceRestRequest(
-      `organizations?select=name,phone,whatsapp,email,address,slogan,logo,favicon&slug=eq.${encodeURIComponent(slug)}&limit=1`
+    const o = await findOrganizationBySlug(
+      slug,
+      'id,name,slug,rif,phone,whatsapp,email,address,slogan,logo,favicon'
     );
-    if (orgRes.error || !Array.isArray(orgRes.data) || orgRes.data.length === 0) {
+    if (!o) {
       return res.status(404).json({ success: false, error: 'Tienda no encontrada.' });
     }
-    const o = orgRes.data[0];
 
+    let branches: Array<{ id: string; name: string; address?: string }> = [];
+    if (o.id) {
+      const brRes = await supabaseServiceRestRequest(
+        `branches?select=id,name,address&organization_id=eq.${encodeURIComponent(o.id)}&order=name.asc`
+      );
+      if (!brRes.error && Array.isArray(brRes.data) && brRes.data.length > 0) {
+        branches = brRes.data.map((b: any) => ({ id: b.id, name: b.name, address: b.address || '' }));
+      }
+    }
+
+    const resolvedAddress = o.address?.trim() || DEFAULT_PUBLIC_BUSINESS_PROFILE.address;
     return res.json({
       success: true,
       data: {
         organizationId: o.id,
-        businessName: o.name || 'Frenyer, C.A.',
-        rif: 'J-123456789',
-        phone: o.phone || '+58 212 555 1212',
-        whatsapp: o.whatsapp || '+58 412 000 0000',
-        email: o.email || 'contacto@frenyer.com',
-        address: o.address || 'Av. Francisco de Miranda, Centro Financiero, Caracas, Venezuela',
-        slogan: o.slogan || 'Tu aliado comercial bimonetario',
+        slug: o.slug || buildSlugFromName(o.name),
+        businessName: o.name?.trim() || DEFAULT_PUBLIC_BUSINESS_PROFILE.businessName,
+        rif: o.rif?.trim() || DEFAULT_PUBLIC_BUSINESS_PROFILE.rif,
+        phone: o.phone?.trim() || DEFAULT_PUBLIC_BUSINESS_PROFILE.phone,
+        whatsapp: o.whatsapp?.trim() || DEFAULT_PUBLIC_BUSINESS_PROFILE.whatsapp,
+        email: o.email?.trim() || DEFAULT_PUBLIC_BUSINESS_PROFILE.email,
+        address: resolvedAddress,
+        slogan: o.slogan?.trim() || DEFAULT_PUBLIC_BUSINESS_PROFILE.slogan,
         logo: o.logo || null,
         favicon: o.favicon || null,
         bcvRate: effectiveRate,
         bcvRateDate: rateDate,
-        branches: [
-          { id: 'suc-01', name: 'Sede Principal - Despacho Central', address: o.address || 'Av. Francisco de Miranda, Caracas' }
-        ]
+        branches: branches.length > 0
+          ? branches
+          : [{ id: 'suc-01', name: 'Sede Principal', address: resolvedAddress }]
       }
     });
   } catch {
@@ -3115,15 +3248,13 @@ app.get('/api/public/products/:slug', async (_req, res) => {
     return res.status(400).json({ success: false, error: 'Slug requerido.' });
   }
   try {
-    const orgRes = await supabaseServiceRestRequest(
-      `organizations?select=id&slug=eq.${encodeURIComponent(slug)}&limit=1`
-    );
-    if (orgRes.error || !Array.isArray(orgRes.data) || orgRes.data.length === 0) {
+    const org = await findOrganizationBySlug(slug, 'id');
+    if (!org?.id) {
       return res.status(404).json({ success: false, error: 'Tienda no encontrada.' });
     }
-    const orgId = orgRes.data[0].id;
+    const orgId = org.id;
 
-    const result = await supabaseRestRequest(
+    const result = await supabaseServiceRestRequest(
       `products?select=*&organization_id=eq.${encodeURIComponent(orgId)}&order=name.asc`
     );
     if (!result.error && Array.isArray(result.data) && result.data.length > 0) {
@@ -7688,6 +7819,8 @@ app.get('/api/customer-advances/:id/movements', async (req, res: AuthenticatedRe
 function mapOrganizationToProfile(row: any) {
   if (!row) return null;
   return {
+    organizationId: row.id || undefined,
+    slug: row.slug || (row.name ? buildSlugFromName(row.name) : undefined),
     businessName: row.name || '',
     slogan: row.slogan || '',
     rif: row.rif || '',
@@ -7699,6 +7832,110 @@ function mapOrganizationToProfile(row: any) {
     favicon: row.favicon || null
   };
 }
+
+function isValidBusinessAssetUrl(value: unknown): boolean {
+  if (value === null || value === undefined || value === '') return true;
+  if (typeof value !== 'string') return false;
+  const trimmed = value.trim();
+  if (/^https?:\/\/[^\s]+$/i.test(trimmed)) return true;
+  if (trimmed.startsWith('/api/public/tenant-assets/')) return true;
+  if (/^data:image\/(png|jpeg|jpg|webp|x-icon|vnd\.microsoft\.icon|svg\+xml);base64,[A-Za-z0-9+/=]+$/i.test(trimmed)) {
+    return trimmed.length <= 3 * 1024 * 1024;
+  }
+  return false;
+}
+
+app.post('/api/business-profile/upload', async (req, res: AuthenticatedResponse) => {
+  try {
+    const orgId = res.locals.supabaseContext!.organizationId;
+    if (!orgId || !/^[a-zA-Z0-9_-]{2,64}$/.test(orgId)) {
+      return res.status(400).json({ success: false, error: 'Organización activa inválida.' });
+    }
+
+    const kind = req.body?.kind === 'favicon' ? 'favicon' : req.body?.kind === 'logo' ? 'logo' : null;
+    const mimeType = String(req.body?.mimeType || '').trim().toLowerCase();
+    const rawBase64 = String(req.body?.dataBase64 || '').trim();
+
+    if (!kind) {
+      return res.status(400).json({ success: false, error: 'Tipo de recurso inválido (logo o favicon).' });
+    }
+
+    const rule = ALLOWED_ASSET_MIME[mimeType];
+    if (!rule || (kind === 'logo' && rule.allowFaviconOnly)) {
+      return res.status(400).json({
+        success: false,
+        error: kind === 'logo'
+          ? 'El logo debe ser una imagen PNG, JPG o WEBP.'
+          : 'El favicon debe ser PNG, JPG, ICO, SVG o WEBP.'
+      });
+    }
+
+    const cleanBase64 = rawBase64.replace(/^data:[^;]+;base64,/, '');
+    if (!cleanBase64 || !/^[A-Za-z0-9+/=\r\n]+$/.test(cleanBase64)) {
+      return res.status(400).json({ success: false, error: 'Contenido de imagen inválido.' });
+    }
+
+    const buffer = Buffer.from(cleanBase64, 'base64');
+    const maxBytes = kind === 'favicon' ? 512 * 1024 : rule.maxBytes;
+    if (buffer.length === 0 || buffer.length > maxBytes) {
+      const maxLabel = kind === 'favicon' ? '512 KB' : '2 MB';
+      return res.status(400).json({
+        success: false,
+        error: `El archivo excede el tamaño máximo permitido (${maxLabel}).`
+      });
+    }
+
+    const fileName = `${kind}-${Date.now()}-${crypto.randomBytes(4).toString('hex')}.${rule.ext}`;
+    const storagePath = `${orgId}/${fileName}`;
+
+    // 1. Intentar subir al bucket de almacenamiento asociado al tenant (Supabase Storage)
+    if (isSupabaseConfigured && SUPABASE_SERVICE_ROLE_KEY) {
+      try {
+        let uploadRes = await supabaseServer.storage
+          .from(TENANT_ASSETS_BUCKET)
+          .upload(storagePath, buffer, { contentType: mimeType, upsert: true });
+
+        if (uploadRes.error && /not found|bucket/i.test(uploadRes.error.message || '')) {
+          await supabaseServer.storage.createBucket(TENANT_ASSETS_BUCKET, {
+            public: true,
+            fileSizeLimit: 2 * 1024 * 1024
+          });
+          uploadRes = await supabaseServer.storage
+            .from(TENANT_ASSETS_BUCKET)
+            .upload(storagePath, buffer, { contentType: mimeType, upsert: true });
+        }
+
+        if (!uploadRes.error) {
+          const publicUrlRes = supabaseServer.storage.from(TENANT_ASSETS_BUCKET).getPublicUrl(storagePath);
+          const publicUrl = publicUrlRes?.data?.publicUrl;
+          if (publicUrl) {
+            return res.json({ success: true, data: { url: publicUrl, storage: 'supabase' } });
+          }
+        }
+      } catch (storageErr) {
+        console.warn('Aviso subiendo recurso a Supabase Storage, usando respaldo local:', storageErr);
+      }
+    }
+
+    // 2. Respaldo seguro en disco por tenant si Storage no está habilitado
+    const baseDir = path.resolve(TENANT_ASSETS_DIR);
+    const tenantDir = path.resolve(baseDir, orgId);
+    const resolvedFile = path.resolve(tenantDir, fileName);
+    if (!resolvedFile.startsWith(baseDir + path.sep)) {
+      return res.status(403).json({ success: false, error: 'Ruta de almacenamiento inválida.' });
+    }
+    fs.mkdirSync(tenantDir, { recursive: true });
+    fs.writeFileSync(resolvedFile, buffer);
+
+    const localPublicUrl = `/api/public/tenant-assets/${encodeURIComponent(orgId)}/${encodeURIComponent(fileName)}`;
+    return res.json({ success: true, data: { url: localPublicUrl, storage: 'local' } });
+  } catch (err) {
+    return res.status(500).json({
+      success: false,
+      error: err instanceof Error ? err.message : 'Error subiendo la imagen del negocio.'
+    });
+  }
+});
 
 app.get('/api/business-profile', async (_req, res: AuthenticatedResponse) => {
   try {
@@ -7718,7 +7955,7 @@ app.get('/api/business-profile', async (_req, res: AuthenticatedResponse) => {
     // 2. Respaldo: esquema base (migración 0026 no aplicada aún)
     const core = await authenticatedSupabaseRestRequest(
       res,
-      `organizations?id=eq.${encodeURIComponent(orgId)}&select=name,rif,phone,address&limit=1`
+      `organizations?id=eq.${encodeURIComponent(orgId)}&select=id,name,rif,phone,address&limit=1`
     );
     if (!core.error && Array.isArray(core.data) && core.data.length > 0) {
       const row = core.data[0];
@@ -7740,24 +7977,52 @@ app.put('/api/business-profile', async (req, res: AuthenticatedResponse) => {
   try {
     const orgId = res.locals.supabaseContext!.organizationId;
     const raw = req.body || {};
-    const fullPayload = {
-      name: String(raw.businessName ?? raw.name ?? '').trim(),
-      slogan: String(raw.slogan ?? '').trim(),
-      rif: String(raw.rif ?? '').trim(),
-      email: String(raw.email ?? '').trim(),
-      address: String(raw.address ?? '').trim(),
-      phone: String(raw.phone ?? '').trim(),
-      whatsapp: String(raw.whatsapp ?? '').trim(),
-      logo: raw.logo ?? null,
-      favicon: raw.favicon ?? null
-    };
+    const businessName = String(raw.businessName ?? raw.name ?? '').trim();
+    const rif = String(raw.rif ?? '').trim().toUpperCase();
+    const email = String(raw.email ?? '').trim();
+    const address = String(raw.address ?? '').trim();
+    const phone = String(raw.phone ?? '').trim();
+    const whatsapp = String(raw.whatsapp ?? '').trim();
+    const slogan = String(raw.slogan ?? '').trim();
+    const logo = raw.logo ? String(raw.logo).trim() : null;
+    const favicon = raw.favicon ? String(raw.favicon).trim() : null;
 
-    if (!fullPayload.name) {
+    if (!businessName || businessName.length < 2) {
       return res.status(400).json({ success: false, error: 'El nombre del negocio es obligatorio.' });
     }
+    if (!rif || !/^[JVGPE]-?\d{7,9}(-\d)?$/i.test(rif)) {
+      return res.status(400).json({ success: false, error: 'El RIF debe tener un formato fiscal válido (ej. J-00000000-1).' });
+    }
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return res.status(400).json({ success: false, error: 'Ingresa un correo electrónico válido.' });
+    }
+    if (!address || address.length < 3) {
+      return res.status(400).json({ success: false, error: 'La dirección fiscal es obligatoria.' });
+    }
+    if (!phone || phone.replace(/\D/g, '').length < 7) {
+      return res.status(400).json({ success: false, error: 'Ingresa un número de teléfono válido.' });
+    }
+    if (whatsapp && whatsapp.replace(/\D/g, '').length < 7) {
+      return res.status(400).json({ success: false, error: 'El número de WhatsApp no es válido.' });
+    }
+    if (!isValidBusinessAssetUrl(logo) || !isValidBusinessAssetUrl(favicon)) {
+      return res.status(400).json({ success: false, error: 'La URL del logo o favicon no es válida.' });
+    }
+
+    const fullPayload = {
+      name: businessName,
+      slogan,
+      rif,
+      email,
+      address,
+      phone,
+      whatsapp,
+      logo,
+      favicon
+    };
 
     const headers = { Prefer: 'return=representation' };
-    let result = await authenticatedSupabaseRestRequest(res, `organizations?id=eq.${encodeURIComponent(orgId)}`, {
+    const result = await authenticatedSupabaseRestRequest(res, `organizations?id=eq.${encodeURIComponent(orgId)}`, {
       method: 'PATCH',
       headers,
       body: fullPayload
@@ -7781,7 +8046,7 @@ app.put('/api/business-profile', async (req, res: AuthenticatedResponse) => {
         return res.status(502).json({ success: false, error: coreResult.error || 'Error al guardar en la base de datos.' });
       }
       savedFields = ['businessName', 'rif', 'address', 'phone'];
-      warnings = ['Migración 0026 pendiente: email, WhatsApp, eslogan, logo y favicon se guardaron solo en este equipo.'];
+      warnings = ['Migración 0026 pendiente: algunos campos extendidos requieren aplicar las columnas nuevas en organizations.'];
       const createdRow = Array.isArray(coreResult.data) && coreResult.data.length > 0
         ? coreResult.data[0]
         : { id: orgId, ...fullPayload };
@@ -7789,7 +8054,6 @@ app.put('/api/business-profile', async (req, res: AuthenticatedResponse) => {
     }
 
     const createdRow = Array.isArray(result.data) && result.data.length > 0 ? result.data[0] : { id: orgId, ...fullPayload };
-    // espejo local eliminado en Fase 6: la base de datos es la fuente de verdad
     return res.json({ success: true, data: mapOrganizationToProfile(createdRow), savedFields, warnings });
   } catch (err) {
     return res.status(500).json({ success: false, error: err instanceof Error ? err.message : 'Error al guardar el perfil de negocio.' });
@@ -9684,10 +9948,12 @@ app.get('/api/auth/organizations', authenticateSupabaseRequest, async (req, res:
     }
     const { data: org } = await supabaseServer
       .from('organizations')
-      .select('id, name')
+      .select('id, name, slug')
       .eq('id', orgId)
       .maybeSingle();
-    const single = org ? [{ id: org.id, name: org.name, role: res.locals.supabaseContext?.role || 'admin', isActive: true }] : [];
+    const single = org
+      ? [{ id: org.id, name: org.name, slug: org.slug || buildSlugFromName(org.name), role: res.locals.supabaseContext?.role || 'admin', isActive: true }]
+      : [];
     return res.json({ success: true, data: single, activeOrganizationId: org?.id || null });
   }
 

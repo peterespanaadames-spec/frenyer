@@ -16,7 +16,7 @@ import {
   ExternalLink
 } from 'lucide-react';
 import { formatUSD, formatVES } from '../../../lib/currency';
-import { getBusinessProfile } from '../../../lib/businessProfile';
+import { BusinessProfile, getBusinessProfile } from '../../../lib/businessProfile';
 
 export interface TrackerOrderData {
   id?: string;
@@ -47,6 +47,7 @@ interface OrderTrackerModalProps {
   isOpen: boolean;
   orderIdOrNumber?: string;
   initialOrder?: TrackerOrderData | null;
+  businessProfile?: Partial<Pick<BusinessProfile, 'whatsapp' | 'phone' | 'businessName'>>;
   onClose: () => void;
 }
 
@@ -81,6 +82,7 @@ export function OrderTrackerModal({
   isOpen,
   orderIdOrNumber,
   initialOrder,
+  businessProfile,
   onClose
 }: OrderTrackerModalProps) {
   const [order, setOrder] = useState<TrackerOrderData | null>(initialOrder || null);
@@ -162,7 +164,7 @@ export function OrderTrackerModal({
     .replace(/\D/g, '')
     .padStart(7, '0');
 
-  const business = getBusinessProfile();
+  const business = businessProfile || getBusinessProfile();
   const whatsappPhone = (business.whatsapp || business.phone || '584120000000').replace(/\D/g, '');
   const whatsappMessage = encodeURIComponent(
     `Hola, quisiera consultar el estatus de mi pedido #${formattedOrderNumber} a nombre de ${order?.customer_name || 'Cliente'}.`
