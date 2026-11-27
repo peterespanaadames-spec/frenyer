@@ -41,6 +41,7 @@ interface AuthErrorLike {
 export interface UserOrganization {
   id: string;
   name: string;
+  slug?: string | null;
   role: string;
   isActive: boolean;
 }

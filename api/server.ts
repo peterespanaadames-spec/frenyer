@@ -9530,10 +9530,16 @@ app.post('/api/auth/register', async (req, res) => {
       const orgName = (typeof companyName === 'string' && companyName.trim())
         || (typeof fullName === 'string' && fullName.trim())
         || cleanEmail.split('@')[0];
+      // Generar slug URL-safe a partir del nombre de la empresa.
+      const slugBase = orgName.toLowerCase().trim()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '')
+        .slice(0, 40) || 'tienda';
+      const slug = slugBase + '-' + Date.now().toString(36);
       const { data: org } = await supabaseServer
         .from('organizations')
-        .insert({ name: orgName.slice(0, 80) })
-        .select('id')
+        .insert({ name: orgName.slice(0, 80), slug })
+        .select('id, slug')
         .single();
       if (org?.id) {
         try {
@@ -9703,7 +9709,7 @@ app.get('/api/auth/organizations', authenticateSupabaseRequest, async (req, res:
 
     const { data: orgs, error: orgsError } = await supabaseServer
       .from('organizations')
-      .select('id, name, created_at')
+      .select('id, name, slug, created_at')
       .in('id', orgIds)
       .order('name');
 
@@ -9721,6 +9727,7 @@ app.get('/api/auth/organizations', authenticateSupabaseRequest, async (req, res:
     const data = (orgs || []).map((org: any) => ({
       id: org.id,
       name: org.name,
+      slug: org.slug || null,
       role: members.find((m: any) => m.organization_id === org.id)?.role || 'miembro',
       isActive: org.id === activeOrgId
     }));

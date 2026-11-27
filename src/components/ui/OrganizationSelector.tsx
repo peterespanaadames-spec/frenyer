@@ -96,6 +96,11 @@ export function OrganizationSelector() {
               <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                 {org.name}
               </span>
+              {org.slug && (
+                <span style={{ fontSize: 11, color: '#64748b', marginLeft: 8 }}>
+                  /tienda/{org.slug}
+                </span>
+              )}
               <span
                 style={{
                   fontSize: 11,
