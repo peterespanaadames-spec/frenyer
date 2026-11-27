@@ -8,7 +8,7 @@ import { MobileMoreSheet } from '../components/mobile/MobileMoreSheet';
 import { ManualBcvRateModal } from '../components/modals/ManualBcvRateModal';
 import { OrganizationSelector } from '../components/ui/OrganizationSelector';
 import { getActiveExchangeRate, setActiveExchangeRate, isFutureExchangeRate } from '../lib/currency';
-import { getBusinessProfile, BusinessProfile, refreshBusinessProfileFromServer } from '../lib/businessProfile';
+import { getBusinessProfile, BusinessProfile, refreshBusinessProfileFromServer, getStoreSlug } from '../lib/businessProfile';
 import { useAuth } from '../context/AuthContext';
 import { InactivityLock } from '../components/auth/InactivityLock';
 import { isInternalRole, defaultPermissionsForRole } from '../lib/auth/roles';
@@ -285,7 +285,7 @@ export function DashboardLayout() {
               type="button"
               onClick={() => {
                 const activeOrg = userOrganizations.find(o => o.isActive) || userOrganizations.find(o => o.id === activeOrganizationId) || userOrganizations[0];
-                const slug = activeOrg?.slug || 'demostras';
+                const slug = getStoreSlug(activeOrg?.slug);
                 navigate(`/tienda/${slug}`);
               }}
               style={{

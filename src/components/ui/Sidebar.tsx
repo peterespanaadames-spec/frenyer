@@ -29,7 +29,7 @@ import {
   ChevronDown,
   Store
 } from 'lucide-react';
-import { getBusinessProfile, BusinessProfile, refreshBusinessProfileFromServer } from '../../lib/businessProfile';
+import { getBusinessProfile, BusinessProfile, refreshBusinessProfileFromServer, getStoreSlug } from '../../lib/businessProfile';
 
 interface SidebarItem {
   label: string;
@@ -53,7 +53,7 @@ export function Sidebar({ isMobileOpen = false, onNavigate }: SidebarProps) {
   const location = useLocation();
   const { userOrganizations, activeOrganizationId } = useAuth();
   const activeOrg = userOrganizations.find(o => o.isActive) || userOrganizations.find(o => o.id === activeOrganizationId) || userOrganizations[0];
-  const slug = activeOrg?.slug || 'demostras';
+  const slug = getStoreSlug(activeOrg?.slug);
 
   // Permisos del usuario activo (RBAC)
   const [userPermissions, setUserPermissions] = useState<string[]>(() => {

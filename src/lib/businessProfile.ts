@@ -12,6 +12,30 @@ export interface BusinessProfile {
   favicon: string | null;
 }
 
+export function slugify(text: string): string {
+  if (!text) return 'tienda-demo';
+  return text
+    .toString()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim()
+    .replace(/\s+/g, '-')
+    .replace(/[^\w-]+/g, '')
+    .replace(/--+/g, '-');
+}
+
+export function getStoreSlug(activeOrgSlug?: string | null): string {
+  if (activeOrgSlug && activeOrgSlug !== 'demostras' && activeOrgSlug !== 'tienda-demo') {
+    return activeOrgSlug;
+  }
+  const bp = getBusinessProfile();
+  if (bp.businessName && bp.businessName !== 'Frenyer') {
+    return slugify(bp.businessName);
+  }
+  return 'tienda-demo';
+}
+
 export async function refreshBusinessProfileFromServer(): Promise<BusinessProfile> {
   try {
     const res = await authenticatedFetch('/api/business-profile');

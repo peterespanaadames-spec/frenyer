@@ -1,5 +1,6 @@
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
+import { getStoreSlug } from '../../lib/businessProfile';
 import {
   ClipboardList, FileText, Inbox, ArrowLeftRight, FileText as FileText2,
   Landmark, Building, Receipt, CreditCard, FileSpreadsheet, Coins, Users, User, Truck,
@@ -44,7 +45,7 @@ export function MobileMoreSheet({ open, onClose, permissions }: { open: boolean;
   const navigate = useNavigate();
   const { userOrganizations, activeOrganizationId } = useAuth();
   const activeOrg = userOrganizations.find(o => o.isActive) || userOrganizations.find(o => o.id === activeOrganizationId) || userOrganizations[0];
-  const slug = activeOrg?.slug || 'demostras';
+  const slug = getStoreSlug(activeOrg?.slug);
   if (!open) return null;
 
   const hasPerm = (k?: string) => !k || permissions.includes(k);

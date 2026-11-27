@@ -709,13 +709,14 @@ export function LoginPage() {
         }
         @media (min-width: 1024px) {
           .auth-hero-col { width: 60% !important; border-right: 1px solid #F1F5F9; border-bottom: none !important; }
-          .auth-right-col { width: 40% !important; }
+          .auth-right-col { width: 40% !important; justify-content: space-between !important; }
           .auth-mobile-header { display: none !important; }
           .auth-float-card { margin-left: 16px !important; }
         }
         @media (max-width: 1023px) {
           .auth-hero-col { display: none !important; }
           .auth-mobile-header { display: flex !important; }
+          .auth-right-col { width: 100% !important; min-height: 100vh !important; display: flex !important; flex-direction: column !important; justify-content: center !important; align-items: center !important; padding: 24px 16px !important; }
         }
         input:focus {
           background: #FFFFFF !important;
