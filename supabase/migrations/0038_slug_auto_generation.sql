@@ -9,7 +9,7 @@
 create or replace function public.generate_org_slug(p_name text)
 returns text
 language plpgsql
-immutable
+volatile
 as $$
 declare
     v_base text;
