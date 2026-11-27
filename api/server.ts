@@ -702,10 +702,39 @@ async function resolveSessionUser(accessToken: string): Promise<{
   ]);
 
   const profileRow = (profileQueryResult as any)?.data || null;
-  const membership = (membershipQueryResult as any)?.data || null;
+  let membership = (membershipQueryResult as any)?.data || null;
+
+  // Auto-backfill para usuarios legacy creados antes del modelo multi-tenant:
+  // si no tienen membresia, se les asigna la organizacion por defecto una sola vez.
+  // Esto evita que un usuario real quede sin tenant y tambien evita depender de
+  // un fallback silencioso a la org compartida.
+  if (!membership?.organization_id && userData.user?.id) {
+    try {
+      const { data: created } = await supabaseServer
+        .from('organization_members')
+        .insert({
+          organization_id: '00000000-0000-0000-0000-000000000001',
+          user_id: userData.user.id,
+          role: 'admin'
+        })
+        .select('organization_id, role')
+        .maybeSingle();
+      if (created?.organization_id) {
+        membership = created;
+      }
+    } catch (backfillErr) {
+      console.warn('Aviso en backfill de organization_members:', backfillErr);
+    }
+  }
+
   const profileRole: string | undefined = profileRow?.role;
-  const membershipOrgId: string = membership?.organization_id || '00000000-0000-0000-0000-000000000001';
+  const membershipOrgId: string | null = membership?.organization_id || null;
   const membershipRole: string | undefined = membership?.role;
+
+  // Si aun no hay tenant, la sesion no es valida: no se permite caer en la org compartida.
+  if (!membershipOrgId) {
+    return null;
+  }
 
   // 3. Consultar metadata del usuario en Auth
   const metadataRole = userData.user.user_metadata?.role;
@@ -800,6 +829,14 @@ async function authenticateSupabaseRequest(
   }
 
   applySessionContext(res, session);
+  if (!res.locals.supabaseContext?.organizationId) {
+    res.status(403).json({
+      success: false,
+      error: 'Tu usuario no tiene una organización asignada. Contacta al administrador.',
+      code: 'NO_ORGANIZATION'
+    });
+    return;
+  }
   next();
 }
 
@@ -1598,6 +1635,14 @@ async function authenticatedSupabaseRestRequest(
     });
   }
 
+  const TENANT_TABLES_WITH_ORG_COLUMN = new Set([
+    'products', 'customers', 'sales', 'bank_accounts', 'accounts_receivable',
+    'exchange_rates', 'bank_movements', 'payment_methods', 'suppliers',
+    'accounts_payable', 'purchases', 'branches', 'expenses', 'expense_categories',
+    'expense_payments', 'inventory_movements', 'customer_advances',
+    'customer_advance_movements'
+  ]);
+
   const method = options.method || 'GET';
   const table = endpoint.split('?')[0].split('/')[0];
   let body = options.body;
@@ -1614,6 +1659,16 @@ async function authenticatedSupabaseRestRequest(
       (row as { organization_id?: string }).organization_id = context.organizationId;
     }
     body = Array.isArray(body) ? rows : rows[0];
+  }
+
+  // Aislamiento multi-tenant en GET: toda tabla con organization_id se filtra
+  // automaticamente por el tenant de la sesion, sin depender de que cada
+  // endpoint recuerde anadir el filtro (evita fugas cross-tenant).
+  if (method === 'GET' && TENANT_TABLES_WITH_ORG_COLUMN.has(table) && context.organizationId) {
+    if (!/[?&]organization_id=/.test(endpoint)) {
+      const sep = endpoint.includes('?') ? '&' : '?';
+      endpoint = `${endpoint}${sep}organization_id=eq.${encodeURIComponent(context.organizationId)}`;
+    }
   }
 
   const res_supa = await supabaseRestRequest(endpoint, { ...options, body }, context.accessToken);
@@ -1778,11 +1833,21 @@ const DEFAULT_CATALOG_PRODUCTS = [
 
 app.get('/api/products', async (req, res: AuthenticatedResponse) => {
   try {
+    // Resolver la sesion si viene cookie (para filtrar por tenant en el dashboard).
+    if (!res.locals?.supabaseContext) {
+      const session = await resolveRequestSession(req, res);
+      if (session) applySessionContext(res, session);
+    }
+    const orgId = res.locals?.supabaseContext?.organizationId;
+    const endpoint = orgId
+      ? `products?select=*&organization_id=eq.${encodeURIComponent(orgId)}&order=name.asc`
+      : 'products?select=*&order=name.asc';
+
     let result;
     if (res.locals?.supabaseContext) {
-      result = await authenticatedSupabaseRestRequest(res, 'products?select=*&order=name.asc');
+      result = await authenticatedSupabaseRestRequest(res, endpoint);
     } else {
-      result = await supabaseRestRequest('products?select=*&order=name.asc');
+      result = await supabaseRestRequest(endpoint);
     }
 
     if (!result.error && Array.isArray(result.data) && result.data.length > 0) {
@@ -1795,10 +1860,16 @@ app.get('/api/products', async (req, res: AuthenticatedResponse) => {
       return res.json({ success: true, data: Array.from(map.values()) });
     }
 
-    // Fallback resiliente si la tabla estÃ¡ vacÃ­a o inaccesible sin sesiÃ³n
-    return res.json({ success: true, data: DEFAULT_CATALOG_PRODUCTS });
+    // Fallback de catalogo demo solo para acceso no autenticado (legacy).
+    if (!res.locals?.supabaseContext) {
+      return res.json({ success: true, data: DEFAULT_CATALOG_PRODUCTS });
+    }
+    return res.json({ success: true, data: [] });
   } catch (err: any) {
-    return res.status(200).json({ success: true, data: DEFAULT_CATALOG_PRODUCTS });
+    if (!res.locals?.supabaseContext) {
+      return res.status(200).json({ success: true, data: DEFAULT_CATALOG_PRODUCTS });
+    }
+    return res.status(200).json({ success: true, data: [] });
   }
 });
 
@@ -3002,10 +3073,11 @@ function resolveCustomerSession(res: AuthenticatedResponse): { email: string; us
   if (!context) return null;
   const email = (context.userEmail || '').trim().toLowerCase();
   if (!email) return null;
+  if (!context.organizationId) return null;
   return {
     email,
     userId: context.userId || '',
-    organizationId: context.organizationId || '00000000-0000-0000-0000-000000000001'
+    organizationId: context.organizationId
   };
 }
 
@@ -3920,15 +3992,21 @@ function savePersistedBankAccount(account: any) {
   }
 }
 
-app.get('/api/bank-accounts', async (_req, res) => {
+app.get('/api/bank-accounts', async (req, res: AuthenticatedResponse) => {
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
   try {
-    const local = loadPersistedBankAccounts();
+    if (!res.locals?.supabaseContext) {
+      const session = await resolveRequestSession(req, res);
+      if (session) applySessionContext(res, session);
+    }
+    const orgId = res.locals?.supabaseContext?.organizationId || null;
+    const localAll = loadPersistedBankAccounts();
+    const local = orgId ? localAll.filter((a: any) => !a.organization_id || a.organization_id === orgId) : localAll;
+
     try {
-      const result = await authenticatedSupabaseRestRequest(res, 'bank_accounts?select=*&order=bank_name.asc');
-      if (process.env.FRENYER_DEBUG_LOGS === 'on') {
-        console.log('DEBUG: authenticatedSupabaseRestRequest bank_accounts result:', result);
-      }
+      const result = await (res.locals?.supabaseContext
+        ? authenticatedSupabaseRestRequest(res, 'bank_accounts?select=*&order=bank_name.asc')
+        : supabaseRestRequest('bank_accounts?select=*&order=bank_name.asc'));
       if (!result.error && Array.isArray(result.data) && result.data.length > 0) {
         const map = new Map<string, any>();
         for (const item of local) map.set(item.id, item);
@@ -4689,7 +4767,7 @@ function loadPersistedSuppliers(orgId?: string): any[] {
       if (Array.isArray(list)) {
         if (orgId) {
           const filtered = list.filter((s: any) => !s.organization_id || s.organization_id === orgId);
-          return filtered.length > 0 ? filtered : list;
+          return filtered;
         }
         return list;
       }
@@ -4862,17 +4940,24 @@ function autoReconcileSuppliers(orgId: string): any[] {
 
 app.get('/api/suppliers', async (req, res: AuthenticatedResponse) => {
   try {
-    const orgId = res.locals.supabaseContext?.organizationId || '00000000-0000-0000-0000-000000000001';
+    const orgId = res.locals.supabaseContext?.organizationId;
+    if (!orgId) {
+      return res.status(403).json({ success: false, error: 'Sin organizaciÃ³n asignada.' });
+    }
     const authHeader = req.headers.authorization;
     const token = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : undefined;
-    
-    // 1. Auto-conciliar proveedores de forma segura y sin duplicar
-    const autoSuppliers = autoReconcileSuppliers(orgId);
+
+    // 1. Auto-conciliar proveedores de forma segura y sin duplicar (solo legado)
+    const isLegacyOrg = orgId === '00000000-0000-0000-0000-000000000001';
+    const autoSuppliers = isLegacyOrg ? autoReconcileSuppliers(orgId) : [];
 
     // 2. Consultar tabla suppliers en Supabase si estÃ¡ disponible
     let dbSuppliers: any[] = [];
     try {
-      const result = await supabaseRestRequest('suppliers?select=*&order=created_at.desc', {}, token);
+      const result = await authenticatedSupabaseRestRequest(
+        res,
+        `suppliers?select=*&organization_id=eq.${encodeURIComponent(orgId)}&order=created_at.desc`
+      );
       if (!result.error && Array.isArray(result.data)) {
         dbSuppliers = result.data;
       }
@@ -9153,9 +9238,15 @@ app.post('/api/auth/login', async (req, res) => {
   resetRateLimit(`login:${ip}`);
 
   const resolved = await resolveSessionUser(result.data.access_token);
-  const resolvedRole = resolved?.role || 'admin';
-  const resolvedOrgId = resolved?.organizationId || '00000000-0000-0000-0000-000000000001';
-  const resolvedUserId = resolved?.user?.id || '';
+  if (!resolved) {
+    return res.status(401).json({
+      success: false,
+      error: 'Tu usuario no tiene una organización asignada. Contacta al administrador.'
+    });
+  }
+  const resolvedRole = resolved.role || 'admin';
+  const resolvedOrgId = resolved.organizationId;
+  const resolvedUserId = resolved.user?.id || '';
 
   // Cierra cualquier sesion abierta en otro dispositivo/navegador y abre solo esta.
   await enforceSingleSessionOnLogin(
@@ -9258,6 +9349,47 @@ app.post('/api/auth/register', async (req, res) => {
     }
   }
 
+  let resolvedOrgId: string = '00000000-0000-0000-0000-000000000001';
+  const newUserId = result.data?.user?.id;
+  if (newUserId && isSupabaseConfigured) {
+    for (let attempt = 0; attempt < 10 && resolvedOrgId === '00000000-0000-0000-0000-000000000001'; attempt++) {
+      const { data: mem } = await supabaseServer
+        .from('organization_members')
+        .select('organization_id')
+        .eq('user_id', newUserId)
+        .order('created_at', { ascending: true })
+        .limit(1)
+        .maybeSingle();
+      if (mem?.organization_id) {
+        resolvedOrgId = mem.organization_id;
+        break;
+      }
+      await new Promise((r) => setTimeout(r, 200));
+    }
+    if (resolvedOrgId === '00000000-0000-0000-0000-000000000001') {
+      const orgName = (typeof companyName === 'string' && companyName.trim())
+        || (typeof fullName === 'string' && fullName.trim())
+        || cleanEmail.split('@')[0];
+      const { data: org } = await supabaseServer
+        .from('organizations')
+        .insert({ name: orgName.slice(0, 80) })
+        .select('id')
+        .single();
+      if (org?.id) {
+        try {
+          await supabaseServer.from('organization_members').insert({
+            organization_id: org.id,
+            user_id: newUserId,
+            role: 'admin'
+          });
+        } catch {
+          // ignore duplicate/conflict
+        }
+        resolvedOrgId = org.id;
+      }
+    }
+  }
+
   let sessionId: string | undefined;
   if (token) {
     await enforceSingleSessionOnLogin(
@@ -9265,7 +9397,7 @@ app.post('/api/auth/register', async (req, res) => {
       token,
       result.data?.user?.id || '',
       targetRole,
-      '00000000-0000-0000-0000-000000000001',
+      resolvedOrgId,
       cleanEmail
     );
     setSessionCookie(res, SESSION_COOKIE, token, req);
@@ -9298,7 +9430,7 @@ app.post('/api/auth/register', async (req, res) => {
     data: {
       user: { email: cleanEmail, id: result.data?.user?.id || '' },
       role: targetRole,
-      organizationId: '00000000-0000-0000-0000-000000000001',
+      organizationId: resolvedOrgId,
       ...(sessionId ? { sessionId } : {})
     }
   });
@@ -9584,13 +9716,16 @@ app.get('/api/auth/google/callback', async (req, res) => {
   }
 
   const resolved = await resolveSessionUser(result.data.access_token);
+  if (!resolved) {
+    return res.redirect(`/login?error=${encodeURIComponent('Tu usuario no tiene una organización asignada.')}`);
+  }
   await enforceSingleSessionOnLogin(
     req,
     result.data.access_token,
-    resolved?.user?.id || '',
-    resolved?.role || 'cliente',
-    resolved?.organizationId || '00000000-0000-0000-0000-000000000001',
-    resolved?.user?.email || ''
+    resolved.user?.id || '',
+    resolved.role || 'cliente',
+    resolved.organizationId,
+    resolved.user?.email || ''
   );
 
   setSessionCookie(res, SESSION_COOKIE, result.data.access_token, req);
