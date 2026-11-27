@@ -3760,7 +3760,7 @@ app.delete('/api/customers/:id', async (req, res: AuthenticatedResponse) => {
 
 app.get('/api/quotes', async (_req, res: AuthenticatedResponse) => {
   try {
-    const orgId = res.locals.supabaseContext?.organizationId || '00000000-0000-0000-0000-000000000001';
+    const orgId = res.locals.supabaseContext!.organizationId;
     let dbQuotes: any[] = [];
     try {
       let result = await authenticatedSupabaseRestRequest(
@@ -3813,7 +3813,10 @@ app.get('/api/quotes/migration-sql', (_req, res) => {
 
 app.post('/api/quotes', async (req, res: AuthenticatedResponse) => {
   try {
-    const orgId = res.locals.supabaseContext?.organizationId || req.body.organizationId || '00000000-0000-0000-0000-000000000001';
+    const orgId = res.locals.supabaseContext?.organizationId;
+    if (!orgId) {
+      return res.status(403).json({ success: false, error: 'Sin organizaciÃ³n asignada.' });
+    }
     const { customerId, validityDays, notes, items, exchangeRate, rateSource, isFutureRate, rateValueDate } = req.body;
 
     if (!customerId || !Array.isArray(items) || items.length === 0) {
@@ -3959,7 +3962,7 @@ app.post('/api/quotes', async (req, res: AuthenticatedResponse) => {
 app.patch('/api/quotes/:id', async (req, res: AuthenticatedResponse) => {
   try {
     const quoteId = req.params.id;
-    const orgId = res.locals.supabaseContext?.organizationId || '00000000-0000-0000-0000-000000000001';
+    const orgId = res.locals.supabaseContext!.organizationId;
     const { customerId, validityDays, notes, items, exchangeRate } = req.body || {};
 
     if (!Array.isArray(items) || items.length === 0) {
@@ -4035,7 +4038,7 @@ app.patch('/api/quotes/:id', async (req, res: AuthenticatedResponse) => {
 app.patch('/api/quotes/:id/status', async (req, res: AuthenticatedResponse) => {
   try {
     const quoteId = req.params.id;
-    const orgId = res.locals.supabaseContext?.organizationId || '00000000-0000-0000-0000-000000000001';
+    const orgId = res.locals.supabaseContext!.organizationId;
     const { status } = req.body || {};
 
     if (!status) {
@@ -4080,7 +4083,7 @@ app.patch('/api/quotes/:id/status', async (req, res: AuthenticatedResponse) => {
 app.delete('/api/quotes/:id', async (req, res: AuthenticatedResponse) => {
   try {
     const quoteId = req.params.id;
-    const orgId = res.locals.supabaseContext?.organizationId || '00000000-0000-0000-0000-000000000001';
+    const orgId = res.locals.supabaseContext!.organizationId;
 
     await authenticatedSupabaseRestRequest(res, `sale_items?sale_id=eq.${encodeURIComponent(quoteId)}`, {
       method: 'DELETE'
@@ -4617,7 +4620,7 @@ app.post('/api/bank-movements', async (req, res: AuthenticatedResponse) => {
 
       createdMovement = {
         id: typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : 'mov-' + Date.now() + '-' + Math.random().toString(36).substring(2, 6),
-        organization_id: targetAccount.organization_id || res.locals.supabaseContext?.organizationId || '00000000-0000-0000-0000-000000000001',
+        organization_id: targetAccount.organization_id || res.locals.supabaseContext!.organizationId,
         bank_account_id: resolvedAccountId,
         type,
         concept,
@@ -4804,7 +4807,7 @@ app.post('/api/bank-transfers', async (req, res: AuthenticatedResponse) => {
 
     if (effectiveCommission > 0) {
       try {
-        const orgId = res.locals.supabaseContext?.organizationId || '00000000-0000-0000-0000-000000000001';
+        const orgId = res.locals.supabaseContext!.organizationId;
         let sourceCurrency = 'USD';
         let srcBankName = 'Cuenta Origen';
         try {
@@ -5148,7 +5151,7 @@ app.get('/api/suppliers', async (req, res: AuthenticatedResponse) => {
 
 app.post('/api/suppliers', async (req, res: AuthenticatedResponse) => {
   try {
-    const orgId = res.locals.supabaseContext?.organizationId || '00000000-0000-0000-0000-000000000001';
+    const orgId = res.locals.supabaseContext!.organizationId;
     const authHeader = req.headers.authorization;
     const token = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : undefined;
     const rawSupplier = req.body || {};
@@ -5418,7 +5421,7 @@ function deletePersistedBranch(id: string) {
 
 app.get('/api/branches', async (_req, res: AuthenticatedResponse) => {
   try {
-    const orgId = res.locals.supabaseContext?.organizationId || '00000000-0000-0000-0000-000000000001';
+    const orgId = res.locals.supabaseContext!.organizationId;
     
     // 1. Consultar tabla branches en Supabase en tiempo real
     const result = await (res.locals?.supabaseContext
@@ -5444,7 +5447,7 @@ app.get('/api/branches', async (_req, res: AuthenticatedResponse) => {
 
 app.post('/api/branches', async (req, res: AuthenticatedResponse) => {
   try {
-    const orgId = res.locals.supabaseContext?.organizationId || '00000000-0000-0000-0000-000000000001';
+    const orgId = res.locals.supabaseContext!.organizationId;
     const rawBranch = req.body || {};
     const branchId = (rawBranch.id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(rawBranch.id))
       ? rawBranch.id
@@ -5781,7 +5784,7 @@ app.get('/api/users', async (_req, res: AuthenticatedResponse) => {
 
 app.post('/api/users', async (req, res: AuthenticatedResponse) => {
   try {
-    const orgId = res.locals.supabaseContext?.organizationId || '00000000-0000-0000-0000-000000000001';
+    const orgId = res.locals.supabaseContext!.organizationId;
     const body = req.body || {};
     
     if (!body.name || !body.email) {
@@ -6846,7 +6849,7 @@ app.post('/api/sales', async (req, res: AuthenticatedResponse) => {
       try {
         savePersistedReceivable({
           id: typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : 'rec-' + Date.now(),
-          organization_id: res.locals.supabaseContext?.organizationId || '00000000-0000-0000-0000-000000000001',
+          organization_id: res.locals.supabaseContext!.organizationId,
           customer_id: null,
           customer_name: 'Cliente sin registrar',
           sale_id: saleId,
@@ -7081,7 +7084,7 @@ async function fetchReconciledAccountsReceivable(orgId: string): Promise<any[]> 
 
 app.get('/api/accounts-receivable', async (_req, res: AuthenticatedResponse) => {
   try {
-    const orgId = res.locals.supabaseContext?.organizationId || '00000000-0000-0000-0000-000000000001';
+    const orgId = res.locals.supabaseContext!.organizationId;
     const data = await fetchReconciledAccountsReceivable(orgId);
     return res.json({ success: true, data });
   } catch {
@@ -7091,7 +7094,7 @@ app.get('/api/accounts-receivable', async (_req, res: AuthenticatedResponse) => 
 
 app.post('/api/accounts-receivable', async (req, res: AuthenticatedResponse) => {
   try {
-    const orgId = res.locals.supabaseContext?.organizationId || '00000000-0000-0000-0000-000000000001';
+    const orgId = res.locals.supabaseContext!.organizationId;
     const raw = req.body || {};
     const newId = (raw.id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(raw.id))
       ? raw.id
@@ -7174,7 +7177,7 @@ app.post('/api/accounts-receivable/:id/payments', async (req, res: Authenticated
       return res.status(400).json({ success: false, error: 'Monto de abono invÃ¡lido' });
     }
 
-    const orgId = res.locals.supabaseContext?.organizationId || '00000000-0000-0000-0000-000000000001';
+    const orgId = res.locals.supabaseContext!.organizationId;
 
     // 1. Obtener registro actual
     let currentRec: any = null;
@@ -7368,7 +7371,7 @@ function customerAdvancesErrorMessage(error: string): string {
 
 app.get('/api/customer-advances', async (req, res: AuthenticatedResponse) => {
   try {
-    const orgId = res.locals.supabaseContext?.organizationId || '00000000-0000-0000-0000-000000000001';
+    const orgId = res.locals.supabaseContext!.organizationId;
     const customerId = typeof req.query.customer_id === 'string' ? req.query.customer_id : '';
     const status = typeof req.query.status === 'string' ? req.query.status : '';
 
@@ -7438,7 +7441,7 @@ app.get('/api/customer-advances', async (req, res: AuthenticatedResponse) => {
 
 app.post('/api/customer-advances', async (req, res: AuthenticatedResponse) => {
   try {
-    const orgId = res.locals.supabaseContext?.organizationId || '00000000-0000-0000-0000-000000000001';
+    const orgId = res.locals.supabaseContext!.organizationId;
     const raw = req.body || {};
     const amount = parseMoney(raw.amount_original);
     const currency = String(raw.currency || 'USD').toUpperCase() === 'VES' ? 'VES' : 'USD';
@@ -7486,7 +7489,7 @@ app.post('/api/customer-advances', async (req, res: AuthenticatedResponse) => {
 
 app.post('/api/customer-advances/:id/apply', async (req, res: AuthenticatedResponse) => {
   try {
-    const orgId = res.locals.supabaseContext?.organizationId || '00000000-0000-0000-0000-000000000001';
+    const orgId = res.locals.supabaseContext!.organizationId;
     const { id } = req.params;
     const raw = req.body || {};
     const amount = parseMoney(raw.amount_usd);
@@ -7526,7 +7529,7 @@ app.post('/api/customer-advances/:id/apply', async (req, res: AuthenticatedRespo
 
 app.post('/api/customer-advances/:id/refund', async (req, res: AuthenticatedResponse) => {
   try {
-    const orgId = res.locals.supabaseContext?.organizationId || '00000000-0000-0000-0000-000000000001';
+    const orgId = res.locals.supabaseContext!.organizationId;
     const { id } = req.params;
     const raw = req.body || {};
     const amount = parseMoney(raw.amount_usd);
@@ -7569,7 +7572,7 @@ app.post('/api/customer-advances/:id/refund', async (req, res: AuthenticatedResp
 
 app.post('/api/customer-advances/:id/void', async (req, res: AuthenticatedResponse) => {
   try {
-    const orgId = res.locals.supabaseContext?.organizationId || '00000000-0000-0000-0000-000000000001';
+    const orgId = res.locals.supabaseContext!.organizationId;
     const { id } = req.params;
     const raw = req.body || {};
 
@@ -7622,7 +7625,7 @@ app.post('/api/customer-advances/:id/void', async (req, res: AuthenticatedRespon
 
 app.get('/api/customer-advances/:id/movements', async (req, res: AuthenticatedResponse) => {
   try {
-    const orgId = res.locals.supabaseContext?.organizationId || '00000000-0000-0000-0000-000000000001';
+    const orgId = res.locals.supabaseContext!.organizationId;
     const { id } = req.params;
     const result = await authenticatedSupabaseRestRequest(
       res,
@@ -7644,34 +7647,7 @@ app.get('/api/customer-advances/:id/movements', async (req, res: AuthenticatedRe
 });
 
 // --- Perfil de negocio (Configuración -> Negocio): persiste en la tabla organizations ---
-const ORGANIZATIONS_MIRROR_FILE = path.resolve(DATA_DIR, 'organizations.json');
-
-function loadPersistedOrganizations(): any[] {
-  try {
-    if (fs.existsSync(ORGANIZATIONS_MIRROR_FILE)) {
-      const list = JSON.parse(fs.readFileSync(ORGANIZATIONS_MIRROR_FILE, 'utf-8'));
-      if (Array.isArray(list)) return list;
-    }
-  } catch (err) {
-    console.warn('Aviso cargando organizaciones locales:', err);
-  }
-  return [];
-}
-
-function savePersistedOrganization(row: any) {
-  try {
-    if (!fs.existsSync(path.dirname(ORGANIZATIONS_MIRROR_FILE))) {
-      fs.mkdirSync(path.dirname(ORGANIZATIONS_MIRROR_FILE), { recursive: true });
-    }
-    const current = loadPersistedOrganizations();
-    const idx = current.findIndex((o: any) => o.id === row.id);
-    if (idx >= 0) current[idx] = { ...current[idx], ...row };
-    else current.unshift(row);
-    fs.writeFileSync(ORGANIZATIONS_MIRROR_FILE, JSON.stringify(current, null, 2), 'utf-8');
-  } catch (err) {
-    console.warn('Aviso guardando organización local:', err);
-  }
-}
+// (espejo local eliminado en Fase 6: la base de datos es la única fuente de verdad)
 
 /** Convierte una fila de organizations al formato del perfil de negocio del cliente. */
 function mapOrganizationToProfile(row: any) {
@@ -7691,7 +7667,7 @@ function mapOrganizationToProfile(row: any) {
 
 app.get('/api/business-profile', async (_req, res: AuthenticatedResponse) => {
   try {
-    const orgId = res.locals.supabaseContext?.organizationId || '00000000-0000-0000-0000-000000000001';
+    const orgId = res.locals.supabaseContext!.organizationId;
 
     // 1. Select completo (requiere la migración 0026 con las columnas extra)
     const full = await authenticatedSupabaseRestRequest(res, `organizations?id=eq.${encodeURIComponent(orgId)}&limit=1`);
@@ -7718,12 +7694,7 @@ app.get('/api/business-profile', async (_req, res: AuthenticatedResponse) => {
       });
     }
 
-    // 3. último recurso: espejo local
-    const local = loadPersistedOrganizations().find((o: any) => o.id === orgId);
-    if (local) {
-      return res.json({ success: true, data: mapOrganizationToProfile(local), completeSchema: Object.prototype.hasOwnProperty.call(local, 'logo') });
-    }
-
+    // 3. Sin datos en la base: devolver 404 para que el frontend muestre estado vacio.
     return res.status(404).json({ success: false, error: 'No se encontró la organización del contexto.' });
   } catch (err) {
     return res.status(500).json({ success: false, error: err instanceof Error ? err.message : 'Error al leer el perfil de negocio.' });
@@ -7732,7 +7703,7 @@ app.get('/api/business-profile', async (_req, res: AuthenticatedResponse) => {
 
 app.put('/api/business-profile', async (req, res: AuthenticatedResponse) => {
   try {
-    const orgId = res.locals.supabaseContext?.organizationId || '00000000-0000-0000-0000-000000000001';
+    const orgId = res.locals.supabaseContext!.organizationId;
     const raw = req.body || {};
     const fullPayload = {
       name: String(raw.businessName ?? raw.name ?? '').trim(),
@@ -7772,7 +7743,6 @@ app.put('/api/business-profile', async (req, res: AuthenticatedResponse) => {
         }
       });
       if (coreResult.error) {
-        savePersistedOrganization({ id: orgId, ...fullPayload });
         return res.status(502).json({ success: false, error: coreResult.error || 'Error al guardar en la base de datos.' });
       }
       savedFields = ['businessName', 'rif', 'address', 'phone'];
@@ -7780,12 +7750,11 @@ app.put('/api/business-profile', async (req, res: AuthenticatedResponse) => {
       const createdRow = Array.isArray(coreResult.data) && coreResult.data.length > 0
         ? coreResult.data[0]
         : { id: orgId, ...fullPayload };
-      savePersistedOrganization({ ...createdRow, ...fullPayload });
       return res.json({ success: true, data: mapOrganizationToProfile(createdRow), savedFields, warnings });
     }
 
     const createdRow = Array.isArray(result.data) && result.data.length > 0 ? result.data[0] : { id: orgId, ...fullPayload };
-    savePersistedOrganization({ ...createdRow, ...fullPayload });
+    // espejo local eliminado en Fase 6: la base de datos es la fuente de verdad
     return res.json({ success: true, data: mapOrganizationToProfile(createdRow), savedFields, warnings });
   } catch (err) {
     return res.status(500).json({ success: false, error: err instanceof Error ? err.message : 'Error al guardar el perfil de negocio.' });
@@ -7821,7 +7790,7 @@ function savePersistedPrintSettings(row: any) {
 
 app.get('/api/print-settings', async (_req, res: AuthenticatedResponse) => {
   try {
-    const orgId = res.locals.supabaseContext?.organizationId || '00000000-0000-0000-0000-000000000001';
+    const orgId = res.locals.supabaseContext!.organizationId;
     const result = await supabaseServiceRestRequest(`print_settings?organization_id=eq.${encodeURIComponent(orgId)}&limit=1`);
     if (!result.error && Array.isArray(result.data) && result.data.length > 0) {
       const row = result.data[0];
@@ -7864,7 +7833,7 @@ app.get('/api/print-settings', async (_req, res: AuthenticatedResponse) => {
 
 app.put('/api/print-settings', async (req, res: AuthenticatedResponse) => {
   try {
-    const orgId = res.locals.supabaseContext?.organizationId || '00000000-0000-0000-0000-000000000001';
+    const orgId = res.locals.supabaseContext!.organizationId;
     const raw = req.body || {};
     const payload = {
       organization_id: orgId,
@@ -8011,7 +7980,7 @@ async function fetchReconciledAccountsPayable(orgId: string): Promise<any[]> {
 
 app.get('/api/accounts-payable', async (_req, res: AuthenticatedResponse) => {
   try {
-    const orgId = res.locals.supabaseContext?.organizationId || '00000000-0000-0000-0000-000000000001';
+    const orgId = res.locals.supabaseContext!.organizationId;
     const data = await fetchReconciledAccountsPayable(orgId);
     return res.json({ success: true, data });
   } catch {
@@ -8025,7 +7994,7 @@ app.get('/api/accounts-payable', async (_req, res: AuthenticatedResponse) => {
 // ---------------------------------------------------------------------------
 app.get('/api/dashboard/summary', async (req, res: AuthenticatedResponse) => {
   try {
-    const orgId = res.locals.supabaseContext?.organizationId || '00000000-0000-0000-0000-000000000001';
+    const orgId = res.locals.supabaseContext!.organizationId;
     const queryRate = Number(req.query.rate);
     const activeRate = Number.isFinite(queryRate) && queryRate > 0
       ? queryRate
@@ -8182,7 +8151,7 @@ app.get('/api/dashboard/summary', async (req, res: AuthenticatedResponse) => {
 
 app.post('/api/accounts-payable', async (req, res: AuthenticatedResponse) => {
   try {
-    const orgId = res.locals.supabaseContext?.organizationId || '00000000-0000-0000-0000-000000000001';
+    const orgId = res.locals.supabaseContext!.organizationId;
     const raw = req.body || {};
     const newId = (raw.id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(raw.id))
       ? raw.id
@@ -8405,7 +8374,7 @@ app.post('/api/accounts-payable/:id/payments', async (req, res: AuthenticatedRes
       return res.status(400).json({ success: false, error: 'Monto de abono invÃ¡lido' });
     }
 
-    const orgId = res.locals.supabaseContext?.organizationId || '00000000-0000-0000-0000-000000000001';
+    const orgId = res.locals.supabaseContext!.organizationId;
 
     // 1. Obtener cuenta por pagar actual
     let currentPay: any = null;
@@ -8537,7 +8506,7 @@ app.post('/api/accounts-payable/:id/payments', async (req, res: AuthenticatedRes
 
 app.get('/api/purchases', async (_req, res: AuthenticatedResponse) => {
   try {
-    const orgId = res.locals.supabaseContext?.organizationId || '00000000-0000-0000-0000-000000000001';
+    const orgId = res.locals.supabaseContext!.organizationId;
     let dbPurchases: any[] = [];
 
     try {
@@ -8575,7 +8544,7 @@ app.get('/api/purchases', async (_req, res: AuthenticatedResponse) => {
 
 app.post('/api/purchases', async (req, res: AuthenticatedResponse) => {
   try {
-    const orgId = res.locals.supabaseContext?.organizationId || '00000000-0000-0000-0000-000000000001';
+    const orgId = res.locals.supabaseContext!.organizationId;
     const body = req.body || {};
     const items = Array.isArray(body.items) ? body.items : (Array.isArray(body.p_items) ? body.p_items : []);
     const subtotalUsd = items.reduce((sum: number, it: any) => sum + ((Number(it.quantity) || 0) * (Number(it.unitCostUSD || it.unit_cost_usd) || 0)), 0);

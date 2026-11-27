@@ -68,7 +68,8 @@
 
 ## Pendiente
 - 2026-11-27: Fases 2-4 código implementado y verificado (build/lint ok). Migraciones 0034/0035 aplicadas por el usuario; 0036 ya estaba aplicada. Endpoints /api/auth/organizations y /api/auth/organization/active funcionando.
-- 2026-11-27: FASE 5 (aislamiento verificable): auditor estático `scripts/audit-tenant-isolation.mjs` (exit 0, solo advertencias documentadas) + prueba end-to-end `scripts/test-tenant-isolation.mjs` (PASS: dos tenants no se ven entre sí; ni por listado ni por id directo). Se corrigieron fugas en `/api/products/:sku`, `/api/products/:sku/stock`, `/api/suppliers`, `/api/branches`, `/api/bank-accounts`, `/api/public/products` y en `fetchReconciledAccountsReceivable/Payable`. Scripts npm: `audit:tenant`, `test:tenant-isolation`.
+- 2026-11-27: FASE 5 (aislamiento verificable): auditor estático + prueba end-to-end PASS. Fugas corregidas en `/api/products/:sku`, stock, suppliers, branches, bank-accounts, public/products, fetchReconciled*. Scripts npm: `audit:tenant`, `test:tenant-isolation`.
+- 2026-11-27: FASE 6 (limpieza legado): eliminados ~30 fallbacks `|| '0000…0001'` a nivel de handler (ahora usan `!` sobre el contexto garantizado por el guard); eliminado `req.body.organizationId` en quotes (seguridad); eliminado el espejo `organizations.json` (`loadPersistedOrganizations`/`savePersistedOrganization`) del perfil de negocio; migración `0037_mark_default_org_as_demo.sql` añade `is_demo` a organizations y marca la org por defecto como demo. Build y lint limpios; auditor y prueba de aislamiento en verde.
 - 2026-11-26: migración `0033_customer_advances.sql` APLICADA y verificada. Falta prueba funcional con datos reales (crear → aplicar → devolver) desde la UI.
 - Pruebas integrales en 320/360/390/430/768 px + escritorio (bloqueadas: sesión expirada sin credenciales de prueba).
 - Ejecutar migración `0032_enable_rls_security.sql` en Supabase tras despliegue de frenyer (pendiente del usuario).
