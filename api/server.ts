@@ -9638,6 +9638,23 @@ app.get('/api/auth/organizations', authenticateSupabaseRequest, async (req, res:
     return res.status(401).json({ success: false, error: 'Usuario no identificado.' });
   }
 
+  // Sesiones locales (admin de desarrollo) no tienen fila en auth.users ni
+  // organization_members: se resuelve la org por defecto del contexto.
+  const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(userId);
+  if (!isUuid) {
+    const orgId = res.locals.supabaseContext?.organizationId;
+    if (!orgId) {
+      return res.json({ success: true, data: [], activeOrganizationId: null });
+    }
+    const { data: org } = await supabaseServer
+      .from('organizations')
+      .select('id, name')
+      .eq('id', orgId)
+      .maybeSingle();
+    const single = org ? [{ id: org.id, name: org.name, role: res.locals.supabaseContext?.role || 'admin', isActive: true }] : [];
+    return res.json({ success: true, data: single, activeOrganizationId: org?.id || null });
+  }
+
   try {
     // Obtener todas las membresias del usuario con datos de la organizacion
     const { data: members, error: membersError } = await supabaseServer

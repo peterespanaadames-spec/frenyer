@@ -67,7 +67,8 @@
 - `src/app/router/index.tsx`: ruta `/tienda/:slug` agregada (mantiene `/` para tienda por defecto/organización legacy)
 
 ## Pendiente
-- 2026-11-26: migración `0033_customer_advances.sql` APLICADA por el usuario y verificada: tablas vacías accesibles, RPC `customer_advance_create|apply|refund` expuestas y validando (rechazan ids inexistentes sin escribir filas), `GET /api/customer-advances` responde `success:true` con resumen en cero. Falta la prueba funcional con datos reales (crear → aplicar → devolver) desde la UI.
+- 2026-11-27: Fases 2-4 código implementado y verificado (build/lint ok). Migraciones 0034/0035 aplicadas por el usuario; 0036 ya estaba aplicada. Endpoints /api/auth/organizations y /api/auth/organization/active funcionando. Pendiente: prueba funcional en navegador (selector de org, onboarding, tienda por slug).
+- 2026-11-26: migración `0033_customer_advances.sql` APLICADA y verificada. Falta prueba funcional con datos reales (crear → aplicar → devolver) desde la UI.
 - Pruebas integrales en 320/360/390/430/768 px + escritorio (bloqueadas: sesión expirada sin credenciales de prueba).
 - Ejecutar migración `0032_enable_rls_security.sql` en Supabase tras despliegue de frenyer (pendiente del usuario).
 - Fase 4: rol por organización (`organization_members.role` en vez de `profiles.role`).
