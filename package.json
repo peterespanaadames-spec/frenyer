@@ -10,7 +10,9 @@
     "preview": "vite preview --host 0.0.0.0 --port 3000",
     "test": "vitest",
     "test:e2e": "playwright test",
-    "lint": "eslint ."
+    "lint": "eslint .",
+  "audit:tenant": "node scripts/audit-tenant-isolation.mjs",
+  "test:tenant-isolation": "node scripts/test-tenant-isolation.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.118.0",

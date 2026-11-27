@@ -1910,7 +1910,7 @@ app.get('/api/products', async (req, res: AuthenticatedResponse) => {
 
 app.get('/api/public/products', async (_req, res) => {
   try {
-    const result = await supabaseRestRequest('products?select=*&order=name.asc');
+    const result = await supabaseRestRequest('products?select=*&organization_id=eq.00000000-0000-0000-0000-000000000001&order=name.asc');
     if (!result.error && Array.isArray(result.data) && result.data.length > 0) {
       const map = new Map<string, any>();
       result.data.forEach((p: any) => {
@@ -2052,21 +2052,31 @@ app.delete('/api/products/:sku', authenticateSupabaseRequest, async (req, res) =
   }
 });
 
-app.get('/api/products/:sku', async (req, res) => {
+app.get('/api/products/:sku', async (req, res: AuthenticatedResponse) => {
   try {
     const { sku } = req.params;
     if (!sku) {
       return res.status(400).json({ success: false, error: 'SKU requerido' });
     }
 
-    const result = await supabaseRestRequest(`products?sku=eq.${encodeURIComponent(sku)}&limit=1`);
+    if (!res.locals?.supabaseContext) {
+      const session = await resolveRequestSession(req, res);
+      if (session) applySessionContext(res, session);
+    }
+
+    const result = res.locals?.supabaseContext
+      ? await authenticatedSupabaseRestRequest(res, `products?sku=eq.${encodeURIComponent(sku)}&limit=1`)
+      : await supabaseRestRequest(`products?sku=eq.${encodeURIComponent(sku)}&organization_id=eq.00000000-0000-0000-0000-000000000001&limit=1`);
+
     if (!result.error && Array.isArray(result.data) && result.data.length > 0) {
       return res.json({ success: true, data: result.data[0] });
     }
 
-    const fallback = DEFAULT_CATALOG_PRODUCTS.find(p => p.sku === sku);
-    if (fallback) {
-      return res.json({ success: true, data: fallback });
+    if (!res.locals?.supabaseContext) {
+      const fallback = DEFAULT_CATALOG_PRODUCTS.find(p => p.sku === sku);
+      if (fallback) {
+        return res.json({ success: true, data: fallback });
+      }
     }
 
     return res.json({
@@ -2085,21 +2095,33 @@ app.get('/api/products/:sku', async (req, res) => {
   }
 });
 
-app.get(['/api/products/:sku/stock', '/api/stock/:sku'], async (req, res) => {
+app.get(['/api/products/:sku/stock', '/api/stock/:sku'], async (req, res: AuthenticatedResponse) => {
   try {
     const { sku } = req.params;
     if (!sku) {
       return res.status(400).json({ success: false, error: 'SKU requerido' });
     }
 
-    const result = await supabaseRestRequest(`products?sku=eq.${encodeURIComponent(sku)}&select=stock&limit=1`);
+    if (!res.locals?.supabaseContext) {
+      const session = await resolveRequestSession(req, res);
+      if (session) applySessionContext(res, session);
+    }
+
+    const result = res.locals?.supabaseContext
+      ? await authenticatedSupabaseRestRequest(res, `products?sku=eq.${encodeURIComponent(sku)}&select=stock&limit=1`)
+      : await supabaseRestRequest(`products?sku=eq.${encodeURIComponent(sku)}&organization_id=eq.00000000-0000-0000-0000-000000000001&select=stock&limit=1`);
+
     if (!result.error && Array.isArray(result.data) && result.data.length > 0) {
       return res.json({ success: true, sku, stock: Number(result.data[0].stock) || 0 });
     }
 
-    const fallback = DEFAULT_CATALOG_PRODUCTS.find(p => p.sku === sku);
-    const stock = fallback ? fallback.stock : 0;
-    return res.json({ success: true, sku, stock });
+    if (!res.locals?.supabaseContext) {
+      const fallback = DEFAULT_CATALOG_PRODUCTS.find(p => p.sku === sku);
+      const stock = fallback ? fallback.stock : 0;
+      return res.json({ success: true, sku, stock });
+    }
+
+    return res.json({ success: true, sku, stock: 0 });
   } catch (err: any) {
     return res.status(200).json({ success: true, sku: req.params.sku, stock: 0 });
   }
@@ -2961,7 +2983,7 @@ app.get('/api/public/organization', async (_req, res) => {
   let organizationId = '00000000-0000-0000-0000-000000000001';
 
   if (isSupabaseConfigured) {
-    const result = await supabaseRestRequest('organizations?select=id&limit=1');
+    const result = await supabaseRestRequest('organizations?select=id&id=eq.00000000-0000-0000-0000-000000000001&limit=1');
     if (!result.error && Array.isArray(result.data) && result.data[0]?.id) {
       organizationId = result.data[0].id;
     }
@@ -3267,7 +3289,7 @@ async function loadCustomerPurchases(email: string, organizationId: string): Pro
     if (customerIds.length > 0) {
       const idsParam = customerIds.map((id) => encodeURIComponent(id)).join(',');
       const salesRes = await supabaseRestRequest(
-        'sales?select=*,sale_items(*)&customer_id=in.(' + idsParam + ')&order=created_at.desc',
+        'sales?select=*,sale_items(*)&customer_id=in.(' + idsParam + ')&organization_id=eq.' + encodeURIComponent(organizationId) + '&order=created_at.desc',
         {}
       );
       if (!salesRes.error && Array.isArray(salesRes.data)) {
@@ -4136,7 +4158,7 @@ app.get('/api/bank-accounts', async (req, res: AuthenticatedResponse) => {
     try {
       const result = await (res.locals?.supabaseContext
         ? authenticatedSupabaseRestRequest(res, 'bank_accounts?select=*&order=bank_name.asc')
-        : supabaseRestRequest('bank_accounts?select=*&order=bank_name.asc'));
+        : supabaseRestRequest('bank_accounts?select=*&organization_id=eq.00000000-0000-0000-0000-000000000001&order=bank_name.asc'));
       if (!result.error && Array.isArray(result.data) && result.data.length > 0) {
         const map = new Map<string, any>();
         for (const item of local) map.set(item.id, item);
@@ -4456,8 +4478,8 @@ app.get('/api/bank-movements', async (req, res) => {
 
 app.get('/api/debug/bank-movements-check', async (req, res) => {
   try {
-    const result = await supabaseRestRequest('bank_movements?select=*');
-    const accountsRes = await supabaseRestRequest('bank_accounts?select=id,bank_name');
+    const result = await supabaseRestRequest('bank_movements?select=*&organization_id=eq.00000000-0000-0000-0000-000000000001');
+    const accountsRes = await supabaseRestRequest('bank_accounts?select=id,bank_name&organization_id=eq.00000000-0000-0000-0000-000000000001');
     
     if (result.error || accountsRes.error) {
       return res.json({ success: false, error: result.error || accountsRes.error });
@@ -4482,7 +4504,7 @@ app.get('/api/debug/bank-movements-check', async (req, res) => {
 
 app.get('/api/debug/accounts-list', async (req, res) => {
   try {
-    const result = await supabaseRestRequest('bank_accounts?select=id,bank_name');
+    const result = await supabaseRestRequest('bank_accounts?select=id,bank_name&organization_id=eq.00000000-0000-0000-0000-000000000001');
     if (result.error) {
       return res.status(200).json({ success: true, data: localExpenses.load(orgId), source: 'local' });
     }
@@ -5399,7 +5421,9 @@ app.get('/api/branches', async (_req, res: AuthenticatedResponse) => {
     const orgId = res.locals.supabaseContext?.organizationId || '00000000-0000-0000-0000-000000000001';
     
     // 1. Consultar tabla branches en Supabase en tiempo real
-    const result = await supabaseRestRequest('branches?select=*&order=created_at.asc');
+    const result = await (res.locals?.supabaseContext
+      ? authenticatedSupabaseRestRequest(res, 'branches?select=*&order=created_at.asc')
+      : supabaseRestRequest(`branches?select=*&organization_id=eq.${encodeURIComponent(orgId)}&order=created_at.asc`));
     if (!result.error && Array.isArray(result.data)) {
       // Sincronizar archivo local con datos reales de Supabase
       try {
@@ -6953,14 +6977,14 @@ async function fetchReconciledAccountsReceivable(orgId: string): Promise<any[]> 
   let dbItems: any[] = [];
   try {
     const [primaryRes, directPaymentsRes] = await Promise.all([
-      supabaseRestRequest('accounts_receivable?select=*,customers(*),receivable_payments(*),sales(*,sale_items(*))&order=created_at.desc'),
+      supabaseRestRequest(`accounts_receivable?select=*,customers(*),receivable_payments(*),sales(*,sale_items(*))&organization_id=eq.${encodeURIComponent(orgId)}&order=created_at.desc`),
       supabaseRestRequest('receivable_payments?select=*&order=payment_date.desc')
     ]);
 
     if (!primaryRes.error && Array.isArray(primaryRes.data)) {
       dbItems = primaryRes.data;
     } else {
-      const fallbackRes = await supabaseRestRequest('accounts_receivable?select=*,customers(*)&order=created_at.desc');
+      const fallbackRes = await supabaseRestRequest(`accounts_receivable?select=*,customers(*)&organization_id=eq.${encodeURIComponent(orgId)}&order=created_at.desc`);
       if (!fallbackRes.error && Array.isArray(fallbackRes.data)) {
         dbItems = fallbackRes.data;
       }
@@ -7887,18 +7911,18 @@ async function fetchReconciledAccountsPayable(orgId: string): Promise<any[]> {
 
   try {
     const [result, directPaymentsRes] = await Promise.all([
-      supabaseRestRequest('accounts_payable?select=*,payable_payments(*),suppliers(id,name,doc_number,phone,email,contact_person)&order=created_at.desc'),
+      supabaseRestRequest(`accounts_payable?select=*,payable_payments(*),suppliers(id,name,doc_number,phone,email,contact_person)&organization_id=eq.${encodeURIComponent(orgId)}&order=created_at.desc`),
       supabaseRestRequest('payable_payments?select=*&order=payment_date.desc')
     ]);
 
     if (!result.error && Array.isArray(result.data)) {
       dbItems = result.data;
     } else {
-      const simpleResult = await supabaseRestRequest('accounts_payable?select=*,payable_payments(*)&order=created_at.desc');
+      const simpleResult = await supabaseRestRequest(`accounts_payable?select=*,payable_payments(*)&organization_id=eq.${encodeURIComponent(orgId)}&order=created_at.desc`);
       if (!simpleResult.error && Array.isArray(simpleResult.data)) {
         dbItems = simpleResult.data;
       } else {
-        const fallbackResult = await supabaseRestRequest('accounts_payable?select=*&order=created_at.desc');
+        const fallbackResult = await supabaseRestRequest(`accounts_payable?select=*&organization_id=eq.${encodeURIComponent(orgId)}&order=created_at.desc`);
         if (!fallbackResult.error && Array.isArray(fallbackResult.data)) {
           dbItems = fallbackResult.data;
         }
@@ -8010,7 +8034,7 @@ app.get('/api/dashboard/summary', async (req, res: AuthenticatedResponse) => {
     const [productsRes, salesRes, saleItemsRes, expensesRes, allReceivables, allPayables] = await Promise.all([
       (res.locals?.supabaseContext
         ? authenticatedSupabaseRestRequest(res, 'products?select=id,sku,name,stock,min_stock,cost_usd,price_usd&order=name.asc')
-        : supabaseRestRequest('products?select=id,sku,name,stock,min_stock,cost_usd,price_usd&order=name.asc')
+        : supabaseRestRequest('products?select=id,sku,name,stock,min_stock,cost_usd,price_usd&organization_id=eq.00000000-0000-0000-0000-000000000001&order=name.asc')
       ).catch(() => ({ error: 'err', data: null })),
       authenticatedSupabaseRestRequest(
         res,
@@ -8517,11 +8541,13 @@ app.get('/api/purchases', async (_req, res: AuthenticatedResponse) => {
     let dbPurchases: any[] = [];
 
     try {
-      const result = await supabaseRestRequest('purchases?select=*,suppliers(id,name,doc_number,phone),purchase_items(*)&order=created_at.desc');
+      const result = await (res.locals?.supabaseContext
+        ? authenticatedSupabaseRestRequest(res, 'purchases?select=*,suppliers(id,name,doc_number,phone),purchase_items(*)&order=created_at.desc')
+        : supabaseRestRequest(`purchases?select=*,suppliers(id,name,doc_number,phone),purchase_items(*)&organization_id=eq.${encodeURIComponent(orgId)}&order=created_at.desc`));
       if (!result.error && Array.isArray(result.data)) {
         dbPurchases = result.data;
       } else {
-        const simple = await supabaseRestRequest('purchases?select=*&order=created_at.desc');
+        const simple = await supabaseRestRequest(`purchases?select=*&organization_id=eq.${encodeURIComponent(orgId)}&order=created_at.desc`);
         if (!simple.error && Array.isArray(simple.data)) {
           dbPurchases = simple.data;
         }
@@ -8715,7 +8741,7 @@ app.get('/api/supabase/status', async (_req, res) => {
   }
 
   try {
-    const testRes = await supabaseRestRequest('organizations?select=id&limit=1');
+    const testRes = await supabaseRestRequest('organizations?select=id&id=eq.00000000-0000-0000-0000-000000000001&limit=1');
     const isConnected = testRes.status < 500;
     const missingTables: string[] = [];
 
@@ -9297,7 +9323,7 @@ app.get('/api/auth/mode', async (_req, res) => {
   let connected = false;
   let missingTables: string[] = [];
   if (isSupabaseConfigured) {
-    const test = await supabaseRestRequest('organizations?select=id&limit=1');
+    const test = await supabaseRestRequest('organizations?select=id&id=eq.00000000-0000-0000-0000-000000000001&limit=1');
     connected = !test.error;
     if (test.error) missingTables.push('organizations');
   }
