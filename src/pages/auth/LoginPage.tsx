@@ -415,18 +415,6 @@ export function LoginPage() {
             </div>
           </div>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, background: 'rgba(255,255,255,0.95)', backdropFilter: 'blur(8px)', padding: '10px 16px', borderRadius: 16, boxShadow: '0 20px 35px -8px rgba(15,23,42,0.16), 0 0 0 1px rgba(226,232,240,0.85)', width: 'fit-content', marginTop: 16, position: 'relative', zIndex: 20 }} className="auth-float-card">
-          <div style={{ width: 36, height: 36, borderRadius: 10, background: 'rgba(16,185,129,0.1)', color: '#059669', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-            <CheckCircle2 className="w-5 h-5" />
-          </div>
-          <div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <span style={{ fontSize: 13, fontWeight: 800, color: C.zinc900 }}>Venta registrada #1048</span>
-              <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 6px', borderRadius: 6, background: C.goldSoft, color: C.zinc900 }}>Bs. / USD</span>
-            </div>
-            <p style={{ fontSize: 11, color: '#64748B', marginTop: 2 }}>+$42.50 USD • Inventario actualizado al instante</p>
-          </div>
-        </div>
       </section>
 
       {/* ============ COLUMNA DERECHA: PANEL DE ACCESO ============ */}
