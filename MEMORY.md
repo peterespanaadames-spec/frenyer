@@ -40,9 +40,38 @@
 - Riesgo abierto: fuga cross-tenant si un GET no filtra `organization_id` (auditar 1-2 días).
 - Frontend sin acceso directo (cliente inerte, clave falsa); realtime muerto; `SaleDetailModal` consulta `sales` directo y probablemente no muestra ventas del POS.
 
+## Fase 2 (Multi-tenant) - Implementada 2026-11-27
+- Migración `0034_add_active_organization_id.sql`: columna `active_organization_id` en `public.profiles` (referencia a `organizations.id`, `on delete set null`).
+- `api/server.ts` `resolveSessionUser`: ahora lee TODAS las membresías del usuario y usa `profiles.active_organization_id` si está seteada y el usuario es miembro de ella; de lo contrario usa la primera membresía por `created_at` (comportamiento legacy).
+- `api/server.ts` nuevos endpoints: `GET /api/auth/organizations` (lista orgs del usuario con rol y cuál está activa) y `PATCH /api/auth/organization/active` (cambia org activa, valida membresía, actualiza `profiles`).
+- `src/context/AuthContext.tsx`: nuevos campos `activeOrganizationId`, `userOrganizations`, `setActiveOrganization`; `bootstrapSession` extraído como `useCallback` reusable; `clearClientSession` reseta org activa.
+- `src/components/ui/OrganizationSelector.tsx`: componente de selector de organización en el topbar (desplegable con todas las orgs del usuario).
+- `src/layouts/DashboardLayout.tsx`: `OrganizationSelector` insertado en la barra superior entre Tienda y Cerrar Sesión.
+- `src/pages/OnboardingPage.tsx`: asistente de 5 pasos (bienvenida → seleccionar org → sucursal → tasa → listo) para usuarios nuevos.
+- `src/app/router/index.tsx`: ruta `/onboarding` agregada dentro de `ProtectedRoute`.
+
+## Fase 3 (Tienda multi-tenant) - Implementada 2026-11-27
+- Migración `0035_shop_multi_tenant.sql`: 
+  - Columna `slug` (única) en `public.organizations`
+  - Columna `organization_id` en `public.shop_customers`, `public.customer_wishlist`, `public.customer_orders` (FK a organizations, on delete cascade)
+  - Backfill: asigna la organización por defecto a filas existentes sin organization_id
+  - Índices en `organization_id` para las 3 tablas de tienda y en `slug` para organizations
+- `api/server.ts` nuevos endpoints públicos por slug:
+  - `GET /api/public/organization/:slug` — resolver organización por slug
+  - `GET /api/public/config/:slug` — configuración pública de tienda por slug (nombre, RIF, teléfono, logo, etc.)
+  - `GET /api/public/products/:slug` — productos filtrados por organización (vía slug)
+- `src/lib/supabase/db.ts`: 
+  - `fetchPublicConfigFromApi(slug?)` — acepta slug opcional para llamar al endpoint por slug
+  - `fetchPublicProductsFromSupabase(slug)` — obtiene productos públicos de una organización por slug
+- `src/modules/shop/pages/ShopPage.tsx`: acepta `slug` desde `useParams`; cuando hay slug, carga productos y configuración desde endpoints públicos por slug; mantien compatibilidad con `/` (tienda por defecto)
+- `src/app/router/index.tsx`: ruta `/tienda/:slug` agregada (mantiene `/` para tienda por defecto/organización legacy)
+
 ## Pendiente
 - 2026-11-26: migración `0033_customer_advances.sql` APLICADA por el usuario y verificada: tablas vacías accesibles, RPC `customer_advance_create|apply|refund` expuestas y validando (rechazan ids inexistentes sin escribir filas), `GET /api/customer-advances` responde `success:true` con resumen en cero. Falta la prueba funcional con datos reales (crear → aplicar → devolver) desde la UI.
 - Pruebas integrales en 320/360/390/430/768 px + escritorio (bloqueadas: sesión expirada sin credenciales de prueba).
+- Ejecutar migración `0032_enable_rls_security.sql` en Supabase tras despliegue de frenyer (pendiente del usuario).
+- Fase 4: rol por organización (`organization_members.role` en vez de `profiles.role`).
+- Fase 5: pruebas de aislamiento cross-tenant (dos organizaciones, verificar que A no ve datos de B).
 - 2026-11-16 (commit 26f6a42): Módulo de FILTROS y BÚSQUEDA de movimientos en la pestaña Bancarias del Reporte de Cuentas (`AccountsReport.tsx`): tarjeta de 2 filas — (1) pestañas de periodo «Hoy / 7 días / Este mes (activa por defecto) / Mes anterior / Histórico completo» estilo píldora (`.acc-period-tabs`, fondo #f0f1f6 + activo blanco con sombra) y selector de Tipo con ícono embudo (Todos / Ingresos (+) / Egresos (-)); (2) Desde/Hasta con `<input type="date">` + ícono calendario y buscador en línea «Referencia, concepto, notas...» + botón Limpiar (aparece solo con filtros activos). Los KPI ahora responden al periodo: saldo inicial = saldo al corte − neto del periodo; saldo al corte = saldo de la cuenta − neto de movimientos posteriores al corte. «Histórico completo» = comportamiento anterior. Fechas comparadas con clave local AAAA-MM-DD (no ISO UTC, desfase UTC-4). Cambiar fecha manual marca periodo «custom». CxC/CxP conservan su buscador simple. CSS: `.acc-filters*` con bloques ≤767px (periodo a ancho, fechas en par, búsqueda completa) y ≤360px (un punto menos). Build y lint limpios. Ambos repos sincronizados.
 - 2026-11-16 (commit 9b146aa): CORRECCIÓN bimonetaria del Reporte de Cuentas (pestaña Bancarias): `bank_accounts.balance` y `bank_movements.amount` están en la MONEDA de la propia cuenta (USD o VES; todos los flujos convierten antes de guardar, `rate` es solo auditoría) y el reporte pintaba todo como dólares. Ahora cada cuenta se muestra en su moneda (chips, KPI, cronología, encabezados Débito/Crédito/Saldo), el equivalente usa la tasa del propio movimiento (si ≤1, la vigente; sin doble conversión), la comisión de egresos entra en el saldo corrido y en el saldo inicial reconstruido, y el Excel incluye moneda/comisión/equivalente. CxC/CxP auditados: `total_usd`/`balance_usd` son USD reales, sin cambios. Caso borde: comisiones Porcentuales viejas vía fallback podrían duplicarse en el saldo inicial reconstruido (aceptado salvo reporte). Build y lint limpios. Ambos repos sincronizados.
 - 2026-11-16 (commit 2fa6a97): REESTRUCTURA del Reporte de Cuentas (`AccountsReport.tsx`, ruta `/cuentas/reporte` intacta): título «Reporte de Cuentas» en una línea en móvil; tres pestañas (Bancarias con chips de cuenta + KPI saldo inicial/ingresos/egresos/saldo al corte + cronología con saldo corrido; CxC con KPI y consolidado por cliente + «Ver estado» desplegable; CxP análogo por proveedor); datos de `/api/bank-accounts|bank-movements|accounts-receivable|accounts-payable` + `/api/bcv/rates`; Excel por pestaña. Móvil con fichas nuevas y tramo ≤360px un punto menos. Build y lint limpios. Ambos repos sincronizados.

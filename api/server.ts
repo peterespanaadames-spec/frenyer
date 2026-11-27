@@ -675,8 +675,8 @@ async function resolveSessionUser(accessToken: string): Promise<{
   const internalAdminEmails = ['sharkvenimport@gmail.com', 'fotocopiasfyp@gmail.com'];
   const isInternalAdminEmail = internalAdminEmails.includes(email);
 
-  // Consultar perfil y membresía en paralelo (ahorra 1 viaje secuencial a Supabase).
-  const [profileQueryResult, membershipQueryResult] = await Promise.all([
+  // Consultar perfil y todas las membresias en paralelo.
+  const [profileQueryResult, membershipsQueryResult] = await Promise.all([
     Promise.resolve(
       supabaseServer
         .from('profiles')
@@ -693,8 +693,6 @@ async function resolveSessionUser(accessToken: string): Promise<{
         .select('organization_id, role')
         .eq('user_id', userData.user.id)
         .order('created_at', { ascending: true })
-        .limit(1)
-        .maybeSingle()
     ).catch((err) => {
       console.warn('Aviso consultando organization_members en resolveSessionUser:', err);
       return { data: null };
@@ -702,13 +700,26 @@ async function resolveSessionUser(accessToken: string): Promise<{
   ]);
 
   const profileRow = (profileQueryResult as any)?.data || null;
-  let membership = (membershipQueryResult as any)?.data || null;
+  const allMemberships: Array<{ organization_id: string; role?: string }> =
+    (membershipsQueryResult as any)?.data || [];
 
-  // Auto-backfill para usuarios legacy creados antes del modelo multi-tenant:
-  // si no tienen membresia, se les asigna la organizacion por defecto una sola vez.
-  // Esto evita que un usuario real quede sin tenant y tambien evita depender de
-  // un fallback silencioso a la org compartida.
-  if (!membership?.organization_id && userData.user?.id) {
+  // Resolver la organizacion activa:
+  // 1) Si el perfil tiene active_organization_id y el usuario es miembro de ella, usarla.
+  // 2) Si no, usar la primera membresia por fecha de creacion (comportamiento actual).
+  // 3) Si no hay ninguna membresia, hacer backfill legacy a la org por defecto.
+  let membershipOrgId: string | null = null;
+  let membershipRole: string | undefined = undefined;
+
+  const activeOrgId = profileRow?.active_organization_id || null;
+  if (activeOrgId && allMemberships.some((m) => m.organization_id === activeOrgId)) {
+    const activeMem = allMemberships.find((m) => m.organization_id === activeOrgId);
+    membershipOrgId = activeOrgId;
+    membershipRole = activeMem?.role;
+  } else if (allMemberships.length > 0) {
+    membershipOrgId = allMemberships[0].organization_id;
+    membershipRole = allMemberships[0].role;
+  } else if (!membershipOrgId && userData.user?.id) {
+    // Auto-backfill para usuarios legacy creados antes del modelo multi-tenant.
     try {
       const { data: created } = await supabaseServer
         .from('organization_members')
@@ -720,7 +731,8 @@ async function resolveSessionUser(accessToken: string): Promise<{
         .select('organization_id, role')
         .maybeSingle();
       if (created?.organization_id) {
-        membership = created;
+        membershipOrgId = created.organization_id;
+        membershipRole = created.role;
       }
     } catch (backfillErr) {
       console.warn('Aviso en backfill de organization_members:', backfillErr);
@@ -728,8 +740,6 @@ async function resolveSessionUser(accessToken: string): Promise<{
   }
 
   const profileRole: string | undefined = profileRow?.role;
-  const membershipOrgId: string | null = membership?.organization_id || null;
-  const membershipRole: string | undefined = membership?.role;
 
   // Si aun no hay tenant, la sesion no es valida: no se permite caer en la org compartida.
   if (!membershipOrgId) {
@@ -747,13 +757,16 @@ async function resolveSessionUser(accessToken: string): Promise<{
     return null;
   }
 
+  // Rol efectivo por organización (RBAC real): la membresía en la organización
+  // activa tiene prioridad sobre el rol global de profiles. Se mantiene
+  // profiles.role como rol global máximo por compatibilidad con código legacy.
   let resolvedRole =
-    (profileRole && profileRole !== 'cliente' ? profileRole : undefined) ||
     (membershipRole && membershipRole !== 'cliente' ? membershipRole : undefined) ||
+    (profileRole && profileRole !== 'cliente' ? profileRole : undefined) ||
     (metadataRole && metadataRole !== 'cliente' ? metadataRole : undefined) ||
     (localMatch?.role && localMatch.role !== 'cliente' ? localMatch.role : undefined) ||
-    profileRole ||
     membershipRole ||
+    profileRole ||
     metadataRole ||
     localMatch?.role;
 
@@ -786,6 +799,28 @@ async function resolveSessionUser(accessToken: string): Promise<{
     permissions: resolvedPermissions,
     active: true
   };
+}
+
+/** Helper: obtiene el rol de un usuario dentro de una organización específica.
+ *  Se usa para RBAC por organización (un usuario puede tener roles diferentes
+ *  en distintas organizaciones). */
+async function getOrgRole(
+  userId: string,
+  organizationId: string
+): Promise<string | null> {
+  if (!userId || !organizationId) return null;
+  try {
+    const { data, error } = await supabaseServer
+      .from('organization_members')
+      .select('role')
+      .eq('user_id', userId)
+      .eq('organization_id', organizationId)
+      .maybeSingle();
+    if (error || !data) return null;
+    return data.role || null;
+  } catch {
+    return null;
+  }
 }
 
 async function authenticateSupabaseRequest(
@@ -2987,6 +3022,101 @@ app.get('/api/public/config', async (_req, res) => {
       ]
     }
   });
+});
+
+/** Obtener una organizacion por su slug (tienda pública). */
+app.get('/api/public/organization/:slug', async (_req, res) => {
+  const slug = String(_req.params.slug || '').trim();
+  if (!slug) {
+    return res.status(400).json({ success: false, error: 'Slug requerido.' });
+  }
+  try {
+    const result = await supabaseServiceRestRequest(
+      `organizations?select=id,name,slug&slug=eq.${encodeURIComponent(slug)}&limit=1`
+    );
+    if (result.error || !Array.isArray(result.data) || result.data.length === 0) {
+      return res.status(404).json({ success: false, error: 'Organización no encontrada.' });
+    }
+    return res.json({ success: true, data: result.data[0] });
+  } catch {
+    return res.status(500).json({ success: false, error: 'Error consultando organización.' });
+  }
+});
+
+/** Configuración pública de una tienda por slug. */
+app.get('/api/public/config/:slug', async (_req, res) => {
+  const slug = String(_req.params.slug || '').trim();
+  if (!slug) {
+    return res.status(400).json({ success: false, error: 'Slug requerido.' });
+  }
+  const effectiveRate = lastCertifiedRate?.appliedRate || 877.90;
+  const rateDate = lastCertifiedRate?.valueDate || 'Hoy';
+
+  try {
+    const orgRes = await supabaseServiceRestRequest(
+      `organizations?select=name,phone,whatsapp,email,address,slogan,logo,favicon&slug=eq.${encodeURIComponent(slug)}&limit=1`
+    );
+    if (orgRes.error || !Array.isArray(orgRes.data) || orgRes.data.length === 0) {
+      return res.status(404).json({ success: false, error: 'Tienda no encontrada.' });
+    }
+    const o = orgRes.data[0];
+
+    return res.json({
+      success: true,
+      data: {
+        organizationId: o.id,
+        businessName: o.name || 'Frenyer, C.A.',
+        rif: 'J-123456789',
+        phone: o.phone || '+58 212 555 1212',
+        whatsapp: o.whatsapp || '+58 412 000 0000',
+        email: o.email || 'contacto@frenyer.com',
+        address: o.address || 'Av. Francisco de Miranda, Centro Financiero, Caracas, Venezuela',
+        slogan: o.slogan || 'Tu aliado comercial bimonetario',
+        logo: o.logo || null,
+        favicon: o.favicon || null,
+        bcvRate: effectiveRate,
+        bcvRateDate: rateDate,
+        branches: [
+          { id: 'suc-01', name: 'Sede Principal - Despacho Central', address: o.address || 'Av. Francisco de Miranda, Caracas' }
+        ]
+      }
+    });
+  } catch {
+    return res.status(500).json({ success: false, error: 'Error cargando configuración de la tienda.' });
+  }
+});
+
+/** Productos públicos de una organización por slug. */
+app.get('/api/public/products/:slug', async (_req, res) => {
+  const slug = String(_req.params.slug || '').trim();
+  if (!slug) {
+    return res.status(400).json({ success: false, error: 'Slug requerido.' });
+  }
+  try {
+    const orgRes = await supabaseServiceRestRequest(
+      `organizations?select=id&slug=eq.${encodeURIComponent(slug)}&limit=1`
+    );
+    if (orgRes.error || !Array.isArray(orgRes.data) || orgRes.data.length === 0) {
+      return res.status(404).json({ success: false, error: 'Tienda no encontrada.' });
+    }
+    const orgId = orgRes.data[0].id;
+
+    const result = await supabaseRestRequest(
+      `products?select=*&organization_id=eq.${encodeURIComponent(orgId)}&order=name.asc`
+    );
+    if (!result.error && Array.isArray(result.data) && result.data.length > 0) {
+      const map = new Map<string, any>();
+      result.data.forEach((p: any) => {
+        if (p.sku && !map.has(p.sku)) {
+          map.set(p.sku, p);
+        }
+      });
+      return res.json({ success: true, data: Array.from(map.values()), organizationId: orgId });
+    }
+    return res.json({ success: true, data: [], organizationId: orgId });
+  } catch {
+    return res.status(500).json({ success: false, error: 'Error cargando productos de la tienda.' });
+  }
 });
 
 // ---------------------------------------------------------------------------
@@ -9499,6 +9629,107 @@ app.get('/api/auth/session', async (req, res) => {
       ...(sessionId ? { sessionId } : {})
     }
   });
+});
+
+/** Lista las organizaciones a las que pertenece el usuario autenticado. */
+app.get('/api/auth/organizations', authenticateSupabaseRequest, async (req, res: AuthenticatedResponse) => {
+  const userId = res.locals.supabaseContext?.userId;
+  if (!userId) {
+    return res.status(401).json({ success: false, error: 'Usuario no identificado.' });
+  }
+
+  try {
+    // Obtener todas las membresias del usuario con datos de la organizacion
+    const { data: members, error: membersError } = await supabaseServer
+      .from('organization_members')
+      .select('organization_id, role, created_at')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: true });
+
+    if (membersError) throw membersError;
+
+    if (!members || members.length === 0) {
+      return res.json({ success: true, data: [], activeOrganizationId: null });
+    }
+
+    const orgIds = members.map((m) => m.organization_id);
+
+    const { data: orgs, error: orgsError } = await supabaseServer
+      .from('organizations')
+      .select('id, name, created_at')
+      .in('id', orgIds)
+      .order('name');
+
+    if (orgsError) throw orgsError;
+
+    // Obtener la organizacion activa del perfil
+    const { data: profile } = await supabaseServer
+      .from('profiles')
+      .select('active_organization_id')
+      .eq('id', userId)
+      .maybeSingle();
+
+    const activeOrgId = profile?.active_organization_id || null;
+
+    const data = (orgs || []).map((org: any) => ({
+      id: org.id,
+      name: org.name,
+      role: members.find((m: any) => m.organization_id === org.id)?.role || 'miembro',
+      isActive: org.id === activeOrgId
+    }));
+
+    return res.json({ success: true, data, activeOrganizationId: activeOrgId });
+  } catch (err: any) {
+    console.warn('Error listando organizaciones del usuario:', err);
+    return res.status(500).json({ success: false, error: 'No se pudieron cargar las organizaciones.' });
+  }
+});
+
+/** Establece la organizacion activa del usuario autenticado. */
+app.patch('/api/auth/organization/active', authenticateSupabaseRequest, async (req, res: AuthenticatedResponse) => {
+  const userId = res.locals.supabaseContext?.userId;
+  const { organizationId } = req.body || {};
+  if (!userId) {
+    return res.status(401).json({ success: false, error: 'Usuario no identificado.' });
+  }
+  if (!organizationId || typeof organizationId !== 'string') {
+    return res.status(400).json({ success: false, error: 'organization_id es obligatorio.' });
+  }
+
+  // Verificar que el usuario es miembro de esa organizacion
+  try {
+    const { data: member, error: memberError } = await supabaseServer
+      .from('organization_members')
+      .select('organization_id')
+      .eq('user_id', userId)
+      .eq('organization_id', organizationId)
+      .maybeSingle();
+
+    if (memberError) throw memberError;
+    if (!member) {
+      return res.status(403).json({ success: false, error: 'No eres miembro de esta organizacion.' });
+    }
+
+    // Actualizar active_organization_id en profiles (upsert por si no existe fila)
+    const { error: upsertError } = await supabaseServer
+      .from('profiles')
+      .upsert(
+        { id: userId, active_organization_id: organizationId },
+        { onConflict: 'id' }
+      );
+
+    if (upsertError) throw upsertError;
+
+    // Invalidar cache de sesion para que la próxima resolveRequestSession use la nueva org
+    sessionCache.delete(req.headers.cookie || '');
+    // No podemos borrar por token facilmente aqui, pero el proximo request
+    // a /api/auth/session refrescara el contexto.
+
+    return res.json({ success: true, data: { organizationId, active: true } });
+  } catch (err: any) {
+    console.warn('Error estableciendo organizacion activa:', err);
+    return res.status(500).json({ success: false, error: 'No se pudo cambiar la organizacion activa.' });
+  }
 });
 
 /** Invalida todo rastro en memoria de un token de sesion. */

@@ -6,6 +6,7 @@ import { MobileHeader } from '../components/mobile/MobileHeader';
 import { MobileBottomNav } from '../components/mobile/MobileBottomNav';
 import { MobileMoreSheet } from '../components/mobile/MobileMoreSheet';
 import { ManualBcvRateModal } from '../components/modals/ManualBcvRateModal';
+import { OrganizationSelector } from '../components/ui/OrganizationSelector';
 import { getActiveExchangeRate, setActiveExchangeRate, isFutureExchangeRate } from '../lib/currency';
 import { getBusinessProfile, BusinessProfile, refreshBusinessProfileFromServer } from '../lib/businessProfile';
 import { useAuth } from '../context/AuthContext';
@@ -302,6 +303,9 @@ export function DashboardLayout() {
               <Store size={14} color="#111827" strokeWidth={2.4} />{' '}
               <span className="topbar-store-label">Tienda Online</span>
             </button>
+
+            {/* Selector de organización activa (solo usuarios con acceso a varias organizaciones) */}
+            <OrganizationSelector />
 
             {/* Botón Cerrar Sesión */}
             <button

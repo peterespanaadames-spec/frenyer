@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import {
   Search,
   ShoppingCart,
@@ -50,6 +50,7 @@ import { getBusinessProfile } from '../../../lib/businessProfile';
 import {
   fetchProductsFromSupabase,
   fetchPublicConfigFromApi,
+  fetchPublicProductsFromSupabase,
   createOrderInApi,
   fetchOrdersFromApi,
   DbProduct
@@ -164,6 +165,7 @@ async function fetchServerSession(): Promise<any | null> {
 
 export function ShopPage() {
   const navigate = useNavigate();
+  const { slug: urlSlug } = useParams<{ slug?: string }>();
 
   // --- STATE: CATALOG & CONFIG ---
   const [products, setProducts] = useState<Product[]>([]);
@@ -591,8 +593,8 @@ export function ShopPage() {
       try {
         const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 7000));
         const dataPromise = Promise.all([
-          fetchProductsFromSupabase().catch(() => []),
-          fetchPublicConfigFromApi().catch(() => null),
+          urlSlug ? fetchPublicProductsFromSupabase(urlSlug).catch(() => []) : fetchProductsFromSupabase().catch(() => []),
+          urlSlug ? fetchPublicConfigFromApi(urlSlug).catch(() => null) : fetchPublicConfigFromApi().catch(() => null),
           fetch('/api/bcv/rates').then(r => r.json()).catch(() => null)
         ]);
 
@@ -657,7 +659,7 @@ export function ShopPage() {
     };
 
     initData();
-  }, []);
+  }, [urlSlug]);
 
   // --- SHORTCUT: Ctrl + A + S TO ADMIN ---
   useEffect(() => {

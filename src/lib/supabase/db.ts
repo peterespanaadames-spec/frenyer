@@ -3598,9 +3598,40 @@ export async function updateOrderPaymentStatusInApi(
   }
 }
 
-export async function fetchPublicConfigFromApi(): Promise<any> {
+export async function fetchPublicProductsFromSupabase(slug: string): Promise<DbProduct[]> {
   try {
-    const res = await fetch('/api/public/config');
+    // 1. Resolver la organización por slug vía endpoint público
+    const orgRes = await fetch(`/api/public/organization/${encodeURIComponent(slug)}`);
+    if (!orgRes.ok) return [];
+    const orgJson = await orgRes.json();
+    if (!orgJson?.success || !orgJson?.data?.id) return [];
+
+    const orgId = orgJson.data.id;
+
+    // 2. Obtener productos de esa organización vía endpoint público
+    const prodRes = await fetch(`/api/public/products/${encodeURIComponent(slug)}`);
+    if (!prodRes.ok) return [];
+    const prodJson = await prodRes.json();
+    if (prodJson?.success && Array.isArray(prodJson.data)) {
+      const map = new Map<string, DbProduct>();
+      prodJson.data.forEach((p: DbProduct) => {
+        if (p.sku && !map.has(p.sku)) {
+          map.set(p.sku, p);
+        }
+      });
+      return Array.from(map.values());
+    }
+    return [];
+  } catch (err) {
+    console.warn('Aviso cargando productos públicos por slug:', err);
+    return [];
+  }
+}
+
+export async function fetchPublicConfigFromApi(slug?: string): Promise<any> {
+  try {
+    const url = slug ? `/api/public/config/${encodeURIComponent(slug)}` : '/api/public/config';
+    const res = await fetch(url);
     if (res.ok) {
       const json = await res.json();
       if (json.success && json.data) {

@@ -38,11 +38,20 @@ interface AuthErrorLike {
   message: string;
 }
 
+export interface UserOrganization {
+  id: string;
+  name: string;
+  role: string;
+  isActive: boolean;
+}
+
 interface AuthContextType {
   user: AuthUser | null;
   session: AuthSession | null;
   profile: UserProfile | null;
   role: string;
+  activeOrganizationId: string | null;
+  userOrganizations: UserOrganization[];
   isLoading: boolean;
   signInWithEmail: (email: string, password: string) => Promise<{ error: AuthErrorLike | null }>;
   signUpWithEmail: (email: string, password: string, fullName: string, role?: string) => Promise<{ error: AuthErrorLike | null }>;
@@ -50,6 +59,7 @@ interface AuthContextType {
   signInWithGoogle: () => Promise<{ error: AuthErrorLike | null }>;
   signOut: () => Promise<void>;
   refreshProfile: () => Promise<void>;
+  setActiveOrganization: (organizationId: string) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -71,8 +81,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [session, setSession] = useState<AuthSession | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
+  const [activeOrganizationId, setActiveOrganizationIdState] = useState<string | null>(null);
+  const [userOrganizations, setUserOrganizations] = useState<UserOrganization[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const authEpochRef = useRef(0);
+  const isMountedRef = useRef(true);
 
   const apiPost = async (endpoint: string, body: object, errorMessage: string) => {
     const res = await fetch(
@@ -87,6 +100,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (!res.ok || !json?.success) throw new Error(json?.error || errorMessage);
     return json;
   };
+
+  const fetchUserOrganizations = useCallback(async (): Promise<void> => {
+    try {
+      const res = await fetch('/api/auth/organizations', withSessionInit());
+      if (!res.ok) return;
+      const json = await res.json();
+      if (json?.success && Array.isArray(json.data)) {
+        setUserOrganizations(json.data);
+        const active = json.data.find((o: UserOrganization) => o.isActive);
+        setActiveOrganizationIdState(active ? active.id : (json.activeOrganizationId || null));
+        if (typeof window !== 'undefined' && active) {
+          localStorage.setItem('frenyer_org_id', active.id);
+        }
+      }
+    } catch {
+      // No bloquear el arranque si falla la carga de organizaciones.
+    }
+  }, [withSessionInit]);
 
   const resolveProfile = useCallback(async (
     currentUser: AuthUser | null,
@@ -174,12 +205,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     setUser(currentUser);
     setSession({ user: currentUser, mode: data?.mode });
+
+    // Establecer organizacion activa desde la sesion del servidor
+    const orgId = data?.activeOrganizationId || data?.organizationId || null;
+    setActiveOrganizationIdState(orgId);
+    if (typeof window !== 'undefined' && orgId) {
+      localStorage.setItem('frenyer_org_id', orgId);
+    }
+
     const p = await resolveProfile(currentUser, data?.role, {
       name: serverName,
       permissions: Array.isArray(data?.permissions) ? data.permissions : undefined
     });
     setProfile(p);
-  }, [resolveProfile]);
+
+    // Cargar organizaciones del usuario para el selector
+    void fetchUserOrganizations();
+  }, [resolveProfile, fetchUserOrganizations]);
 
   const clearClientSession = useCallback(() => {
     authEpochRef.current += 1;
@@ -187,58 +229,61 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUser(null);
     setSession(null);
     setProfile(null);
+    setActiveOrganizationIdState(null);
+    setUserOrganizations([]);
     if (typeof window !== 'undefined' && localStorage.getItem('frenyer_active_user')) {
       clearLocalIdentity();
     }
   }, []);
 
-  useEffect(() => {
-    let isMounted = true;
-
-    const bootstrapSession = async () => {
-      const epoch = ++authEpochRef.current;
-      void refreshSupabaseStatus();
-      try {
-        const res = await fetch('/api/auth/session', withSessionInit());
-        if (!isMounted || epoch !== authEpochRef.current) return;
-        if (res.ok) {
-          const json = await res.json();
-          if (isMounted && epoch === authEpochRef.current && json?.data) {
-            if (json.data.sessionId) {
-              setSessionHandle(json.data.sessionId);
-            }
-            await applySession(json.data);
-            if (isMounted) setIsLoading(false);
-            return;
+  const bootstrapSessionCallback = useCallback(async () => {
+    const epoch = ++authEpochRef.current;
+    if (!isMountedRef.current) return;
+    void refreshSupabaseStatus();
+    try {
+      const res = await fetch('/api/auth/session', withSessionInit());
+      if (!isMountedRef.current || epoch !== authEpochRef.current) return;
+      if (res.ok) {
+        const json = await res.json();
+        if (isMountedRef.current && epoch === authEpochRef.current && json?.data) {
+          if (json.data.sessionId) {
+            setSessionHandle(json.data.sessionId);
           }
-        } else if (res.status === 401) {
-          setSessionHandle(null);
+          await applySession(json.data);
+          if (isMountedRef.current) setIsLoading(false);
+          return;
         }
-      } catch {
-        // Sin sesion: se continua en modo publico.
+      } else if (res.status === 401) {
+        setSessionHandle(null);
       }
+    } catch {
+      // Sin sesion: se continua en modo publico.
+    }
 
-      if (!isMounted || epoch !== authEpochRef.current) return;
+    if (!isMountedRef.current || epoch !== authEpochRef.current) return;
 
-      // Sin sesion en servidor (p. ej. cookies de sesion borradas o sesion
-      // reemplazada desde otro dispositivo): la identidad local residual debe
-      // desaparecer para exigir un nuevo inicio de sesion.
-      if (typeof window !== 'undefined' && localStorage.getItem('frenyer_active_user')) {
-        clearLocalIdentity();
-      }
+    // Sin sesion en servidor: limpiar identidad local residual.
+    if (typeof window !== 'undefined' && localStorage.getItem('frenyer_active_user')) {
+      clearLocalIdentity();
+    }
 
-      setUser(null);
-      setSession(null);
-      setProfile(null);
-      setIsLoading(false);
-    };
+    setUser(null);
+    setSession(null);
+    setProfile(null);
+    setActiveOrganizationIdState(null);
+    setUserOrganizations([]);
+    setIsLoading(false);
+  }, [applySession, clearLocalIdentity, withSessionInit]);
 
-    void bootstrapSession();
+  useEffect(() => {
+    isMountedRef.current = true;
+
+    void bootstrapSessionCallback();
 
     const handleAuthChanged = (event: Event) => {
       const custom = event as CustomEvent<{ skipBootstrap?: boolean } | undefined>;
       if (custom?.detail?.skipBootstrap) return;
-      void bootstrapSession();
+      void bootstrapSessionCallback();
     };
     const handleSessionInvalidated = () => {
       clearClientSession();
@@ -248,11 +293,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     window.addEventListener('frenyer:session-invalidated', handleSessionInvalidated);
 
     return () => {
-      isMounted = false;
+      isMountedRef.current = false;
       window.removeEventListener('frenyer:auth-changed', handleAuthChanged);
       window.removeEventListener('frenyer:session-invalidated', handleSessionInvalidated);
     };
-  }, [applySession, clearClientSession]);
+  }, [bootstrapSessionCallback, clearClientSession]);
 
   // Verifica periodicamente y al recuperar foco si esta sesion fue cerrada
   // por un nuevo inicio de sesion en otro dispositivo o computador.
@@ -364,19 +409,52 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
+  const setActiveOrganization = useCallback(async (organizationId: string) => {
+    try {
+      const res = await fetch('/api/auth/organization/active', withSessionInit({
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ organizationId })
+      }));
+      if (!res.ok) throw new Error('No se pudo cambiar la organización');
+      const json = await res.json();
+      if (!json.success) throw new Error(json.error || 'Error cambiando organización');
+
+      // Actualizar estado local inmediatamente
+      setActiveOrganizationIdState(organizationId);
+      setUserOrganizations(prev => prev.map(org => ({ ...org, isActive: org.id === organizationId })));
+
+      // Persistir en localStorage
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('frenyer_org_id', organizationId);
+      }
+
+      // Notificar a otros componentes
+      window.dispatchEvent(new CustomEvent('frenyer:active-organization-changed', { detail: organizationId }));
+
+      // Refrescar sesion para que el servidor use la nueva org en proximas peticiones
+      await bootstrapSessionCallback();
+    } catch (err: any) {
+      throw new Error(err.message || 'No se pudo cambiar la organización activa.');
+    }
+  }, [bootstrapSessionCallback, withSessionInit]);
+
   const value = useMemo(() => ({
     user,
     session,
     profile,
     role: profile?.role || 'cliente',
+    activeOrganizationId,
+    userOrganizations,
     isLoading,
     signInWithEmail,
     signUpWithEmail,
     signInWithAccessKey,
     signInWithGoogle,
     signOut,
-    refreshProfile
-  }), [user, session, profile, isLoading]);
+    refreshProfile,
+    setActiveOrganization
+  }), [user, session, profile, activeOrganizationId, userOrganizations, isLoading, bootstrapSessionCallback]);
 
   return (
     <AuthContext.Provider value={value}>

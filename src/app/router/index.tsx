@@ -5,6 +5,7 @@ import { lazyRoute } from './lazyRoute';
 
 export const router = createBrowserRouter([
   { path: '/', lazy: lazyRoute(() => import('../../modules/shop/pages/ShopPage').then(m => ({ Component: m.ShopPage }))) },
+  { path: '/tienda/:slug', lazy: lazyRoute(() => import('../../modules/shop/pages/ShopPage').then(m => ({ Component: m.ShopPage }))) },
   { path: '/login', lazy: lazyRoute(() => import('../../pages/auth/LoginPage').then(m => ({ Component: m.LoginPage }))) },
   { path: '/registro', lazy: lazyRoute(() => import('../../pages/auth/LoginPage').then(m => ({ Component: m.LoginPage }))) },
   { path: '/auth/callback', lazy: lazyRoute(() => import('../../pages/auth/AuthCallback').then(m => ({ Component: m.AuthCallback }))) },
@@ -12,6 +13,7 @@ export const router = createBrowserRouter([
     element: <ProtectedRoute><DashboardLayout /></ProtectedRoute>,
     children: [
       { path: 'dashboard', lazy: lazyRoute(() => import('../../pages/Dashboard').then(m => ({ Component: m.Dashboard }))) },
+      { path: 'onboarding', lazy: lazyRoute(() => import('../../pages/OnboardingPage').then(m => ({ Component: m.OnboardingPage }))) },
       { path: 'admin', lazy: lazyRoute(() => import('../../pages/Dashboard').then(m => ({ Component: m.Dashboard }))) },
       { path: 'ventas-flash/ventas', lazy: lazyRoute(() => import('../../modules/sales/pages/Sales').then(m => ({ Component: m.Sales }))) },
       { path: 'ventas-flash/pedidos', lazy: lazyRoute(() => import('../../modules/sales/pages/Orders').then(m => ({ Component: m.OrdersPage }))) },
