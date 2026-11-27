@@ -54,6 +54,7 @@ export function LoginPage() {
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [logo, setLogo] = useState<string | null>(null);
+  const [preview, setPreview] = useState<'dashboard' | 'ventas' | 'tienda'>('dashboard');
 
   useEffect(() => {
     fetch('/api/public/config')
@@ -237,7 +238,183 @@ export function LoginPage() {
           </div>
         </div>
 
-        {/* Tarjeta flotante */}
+        {/* Mockup interactivo */}
+        <div style={{ marginTop: 8, marginBottom: 12 }}>
+          <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 10 }}>
+            <span style={{ fontSize: 12, fontWeight: 600, color: '#64748B' }}>Explora la interfaz real de Frenyer:</span>
+            <div style={{ display: 'inline-flex', padding: 4, borderRadius: 10, background: '#FFFFFF', border: '1px solid #E2E8F0' }}>
+              {(['dashboard', 'ventas', 'tienda'] as const).map((v) => (
+                <button key={v} type="button" onClick={() => setPreview(v)} style={{ padding: '4px 12px', borderRadius: 8, fontSize: 12, fontWeight: 600, border: 'none', cursor: 'pointer', background: preview === v ? C.zinc900 : 'transparent', color: preview === v ? '#FFFFFF' : '#475569', transition: 'all 0.2s' }}>
+                  {v === 'dashboard' ? 'Dashboard' : v === 'ventas' ? 'Ventas Flash' : 'Tienda Online'}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div style={{ background: '#FFFFFF', borderRadius: 16, boxShadow: '0 24px 60px -12px rgba(15,23,42,0.14), 0 0 0 1px rgba(226,232,240,0.9)', overflow: 'hidden' }}>
+            <div style={{ background: 'rgba(248,250,252,0.9)', borderBottom: '1px solid rgba(226,232,240,0.8)', padding: '8px 14px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span style={{ width: 10, height: 10, borderRadius: '50%', background: 'rgba(248,113,113,0.8)' }} />
+                <span style={{ width: 10, height: 10, borderRadius: '50%', background: 'rgba(251,191,36,0.8)' }} />
+                <span style={{ width: 10, height: 10, borderRadius: '50%', background: 'rgba(52,211,153,0.8)' }} />
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 10px', borderRadius: 9999, fontSize: 11, fontWeight: 700, background: C.goldSoft, color: C.zinc900, border: '1px solid rgba(253,224,71,0.8)' }}>Bs. 926.36</span>
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 10px', borderRadius: 9999, fontSize: 11, fontWeight: 500, background: '#FFFFFF', color: '#334155', border: '1px solid #E2E8F0' }}>Tienda Online</span>
+              </div>
+            </div>
+            <div style={{ display: 'flex', minHeight: 260, background: '#F8FAFC' }}>
+              <aside style={{ width: 120, background: '#FFFFFF', borderRight: '1px solid rgba(226,232,240,0.8)', padding: 8, display: 'flex', flexDirection: 'column', justifyContent: 'space-between', flexShrink: 0 }}>
+                <div>
+                  <div style={{ padding: '0 4px 8px', marginBottom: 6, borderBottom: '1px solid #F1F5F9' }}>
+                    <span style={{ fontWeight: 800, fontSize: 13, letterSpacing: '-0.02em', color: C.zinc900 }}>Frenyer<span style={{ display: 'inline-block', width: 5, height: 5, borderRadius: '50%', background: C.gold, marginLeft: 3, verticalAlign: 'middle' }} /></span>
+                  </div>
+                  <p style={{ padding: '0 4px', fontSize: 8, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#94A3B8', marginBottom: 4 }}>Principal</p>
+                  <nav style={{ display: 'flex', flexDirection: 'column', gap: 2, fontSize: 10, fontWeight: 500 }}>
+                    {[
+                      { id: 'dashboard', label: 'Dashboard' },
+                      { id: 'ventas', label: 'Ventas Flash' },
+                      { id: 'tienda', label: 'Tienda Online' }
+                    ].map((item) => (
+                      <button key={item.id} type="button" onClick={() => setPreview(item.id as any)} style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 6, padding: '4px 6px', borderRadius: 6, border: 'none', cursor: 'pointer', background: preview === item.id ? C.zinc900 : 'transparent', color: preview === item.id ? '#FFFFFF' : '#475569', fontWeight: preview === item.id ? 600 : 500, transition: 'all 0.2s', textAlign: 'left' }}>
+                        {item.label}
+                      </button>
+                    ))}
+                  </nav>
+                </div>
+                <div style={{ paddingTop: 6, borderTop: '1px solid #F1F5F9', padding: '6px 4px 0' }}>
+                  <div style={{ fontSize: 9, fontWeight: 700, color: C.zinc900 }}>Frenyer<span style={{ color: C.gold }}>•</span></div>
+                  <div style={{ fontSize: 8, color: '#94A3B8' }}>Bs. / USD Sincronizado</div>
+                </div>
+              </aside>
+              <div style={{ flex: 1, padding: 10, overflow: 'hidden' }}>
+                {preview === 'dashboard' && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6, animation: 'fadeInUp 0.35s cubic-bezier(0.16,1,0.3,1) forwards' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <div>
+                        <h3 style={{ fontSize: 11, fontWeight: 800, color: C.zinc900 }}>Resumen operativo</h3>
+                        <p style={{ fontSize: 8, color: '#64748B' }}>Indicadores clave de tu organización.</p>
+                      </div>
+                      <span style={{ fontSize: 8, fontWeight: 600, padding: '2px 6px', borderRadius: 5, background: '#ECFDF5', color: '#047857', border: '1px solid #A7F3D0' }}>● En línea</span>
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 5 }}>
+                      {[
+                        { label: 'Ventas Totales (7 días)', value: 'USD 373.61', color: '#059669', sub: 'Recibos por ventas' },
+                        { label: 'Utilidad Mensual', value: 'USD 1,240.80', color: C.zinc900, sub: '+18.4% vs mes anterior', subColor: '#059669' },
+                        { label: 'Inventario (Unidades)', value: '63.054', color: C.zinc900, sub: 'En almacén activo' },
+                        { label: 'Productos bajo mínimo', value: '37', color: '#EF4444', sub: 'Requieren reposición' }
+                      ].map((k, i) => (
+                        <div key={i} style={{ background: '#FFFFFF', padding: 6, borderRadius: 7, border: '1px solid rgba(226,232,240,0.8)', boxShadow: '0 1px 2px rgba(15,23,42,0.04)' }}>
+                          <p style={{ fontSize: 7, fontWeight: 500, color: '#64748B' }}>{k.label}</p>
+                          <p style={{ fontSize: 12, fontWeight: 800, color: k.color, marginTop: 1 }}>{k.value}</p>
+                          <p style={{ fontSize: 6, color: k.subColor || '#94A3B8', marginTop: 1, fontWeight: k.subColor ? 500 : 400 }}>{k.sub}</p>
+                        </div>
+                      ))}
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
+                      <div style={{ background: '#FFFFFF', padding: 6, borderRadius: 7, border: '1px solid rgba(226,232,240,0.8)' }}>
+                        <p style={{ fontSize: 9, fontWeight: 700, color: C.zinc900, marginBottom: 3 }}>Top productos más vendidos</p>
+                        {['Multi examen — 85 uds.', 'IMPRESION B/NEGRO — 65 uds.', 'Copias carta — 54 uds.'].map((t, i) => (
+                          <div key={i} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '2px 0', borderBottom: i < 2 ? '1px solid #F1F5F9' : 'none', fontSize: 8 }}>
+                            <span style={{ fontWeight: 500, color: '#334155', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: 3 }}>{t.split(' — ')[0]}</span>
+                            <span style={{ padding: '1px 4px', borderRadius: 9999, background: C.zinc900, color: '#FFFFFF', fontWeight: 700, fontSize: 7, flexShrink: 0 }}>{t.split(' — ')[1]}</span>
+                          </div>
+                        ))}
+                      </div>
+                      <div style={{ background: '#FFFFFF', padding: 6, borderRadius: 7, border: '1px solid rgba(226,232,240,0.8)' }}>
+                        <p style={{ fontSize: 9, fontWeight: 700, color: C.zinc900, marginBottom: 3 }}>Productos con bajo stock</p>
+                        {['CAUCHO 90-90-18 TT 8PR', 'Embobinado 5 cables', 'Hoja de examen'].map((t, i) => (
+                          <div key={i} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '2px 0', borderBottom: i < 2 ? '1px solid #F1F5F9' : 'none', fontSize: 8 }}>
+                            <span style={{ fontWeight: 500, color: '#334155', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: 3 }}>{t}</span>
+                            <span style={{ padding: '1px 4px', borderRadius: 9999, background: '#FEF2F2', color: '#DC2626', fontWeight: 700, fontSize: 7, flexShrink: 0 }}>Stock: 0</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                )}
+                {preview === 'ventas' && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6, animation: 'fadeInUp 0.35s cubic-bezier(0.16,1,0.3,1) forwards' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <div>
+                        <h3 style={{ fontSize: 11, fontWeight: 800, color: C.zinc900 }}>Ventas Flash — Caja Rápida</h3>
+                        <p style={{ fontSize: 8, color: '#64748B' }}>Cobra en USD o Bolívares al instante.</p>
+                      </div>
+                      <span style={{ padding: '2px 6px', borderRadius: 5, background: C.goldSoft, color: C.zinc900, fontWeight: 700, fontSize: 8 }}>1 USD = 926.36 Bs.</span>
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      <div style={{ background: '#FFFFFF', padding: 6, borderRadius: 7, border: '1px solid rgba(226,232,240,0.8)', display: 'flex', flexDirection: 'column', gap: 4 }}>
+                        {[
+                          { name: 'Kit Embobinado 5 Cables', disp: 'Disp: 24 uds • SKU-104', price: '$14.50' },
+                          { name: 'Caucho 90-90-18 Reforzado', disp: 'Disp: 12 uds • SKU-209', price: '$38.00' },
+                          { name: 'Resma Papel Carta 500h', disp: 'Disp: 90 uds • SKU-012', price: '$5.20' }
+                        ].map((p, i) => (
+                          <div key={i} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: '#F8FAFC', padding: '5px 7px', borderRadius: 6, border: '1px solid rgba(226,232,240,0.7)' }}>
+                            <div>
+                              <p style={{ fontSize: 9, fontWeight: 700, color: C.zinc900 }}>{p.name}</p>
+                              <p style={{ fontSize: 7, color: '#64748B' }}>{p.disp}</p>
+                            </div>
+                            <span style={{ fontSize: 10, fontWeight: 800, color: '#059669' }}>{p.price}</span>
+                          </div>
+                        ))}
+                      </div>
+                      <div style={{ background: C.zinc900, color: '#FFFFFF', padding: 8, borderRadius: 7, display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+                        <div>
+                          <p style={{ fontSize: 8, color: '#94A3B8', textTransform: 'uppercase', fontWeight: 600 }}>Total a cobrar</p>
+                          <p style={{ fontSize: 16, fontWeight: 800, color: C.gold, marginTop: 1 }}>$57.70 USD</p>
+                          <p style={{ fontSize: 9, color: '#CBD5E1', fontWeight: 500 }}>Bs. 53,450.97</p>
+                        </div>
+                        <div style={{ marginTop: 6, paddingTop: 5, borderTop: '1px solid #1E293B' }}>
+                          <div style={{ width: '100%', padding: '4px 0', borderRadius: 6, background: '#10B981', color: '#022C22', fontWeight: 800, fontSize: 8, textAlign: 'center' }}>✓ Cobrar y Emitir Recibo</div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+                {preview === 'tienda' && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6, animation: 'fadeInUp 0.35s cubic-bezier(0.16,1,0.3,1) forwards' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <div>
+                        <h3 style={{ fontSize: 11, fontWeight: 800, color: C.zinc900 }}>Catálogo Tienda Online</h3>
+                        <p style={{ fontSize: 8, color: '#64748B' }}>Inventario sincronizado automáticamente con tu almacén.</p>
+                      </div>
+                      <span style={{ padding: '2px 6px', borderRadius: 5, background: C.zinc900, color: C.gold, fontWeight: 700, fontSize: 8 }}>frenyer.store/tu-negocio</span>
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 5 }}>
+                      {[
+                        { emoji: '⚡', name: 'Repuesto Motor', price: '$24.00', badge: 'En stock', badgeBg: '#F1F5F9', badgeFg: '#475569', bg: '#FEF3C7', fg: '#B45309' },
+                        { emoji: '📦', name: 'Pack Papelería', price: '$11.50', badge: 'En stock', badgeBg: '#F1F5F9', badgeFg: '#475569', bg: '#D1FAE5', fg: '#047857' },
+                        { emoji: '🛠️', name: 'Kit Herramientas', price: '$45.00', badge: 'Pedido WhatsApp', badgeBg: '#ECFDF5', badgeFg: '#047857', bg: C.zinc900, fg: C.gold }
+                      ].map((p, i) => (
+                        <div key={i} style={{ background: '#FFFFFF', padding: 6, borderRadius: 7, border: '1px solid rgba(226,232,240,0.8)', textAlign: 'center' }}>
+                          <div style={{ width: 24, height: 24, margin: '0 auto 3px', borderRadius: 6, background: p.bg, color: p.fg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: 10 }}>
+                            {p.emoji}
+                          </div>
+                          <p style={{ fontSize: 8, fontWeight: 700, color: C.zinc900, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.name}</p>
+                          <p style={{ fontSize: 10, fontWeight: 800, color: '#059669', marginTop: 1 }}>{p.price}</p>
+                          <span style={{ display: 'inline-block', marginTop: 2, fontSize: 6, padding: '1px 4px', borderRadius: 9999, background: p.badgeBg, color: p.badgeFg, fontWeight: 600 }}>{p.badge}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Tarjeta flotante */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, background: 'rgba(255,255,255,0.95)', backdropFilter: 'blur(8px)', padding: '10px 16px', borderRadius: 16, boxShadow: '0 20px 35px -8px rgba(15,23,42,0.16), 0 0 0 1px rgba(226,232,240,0.85)', width: 'fit-content', marginTop: 16, position: 'relative', zIndex: 20 }} className="auth-float-card">
+            <div style={{ width: 36, height: 36, borderRadius: 10, background: 'rgba(16,185,129,0.1)', color: '#059669', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+              <CheckCircle2 className="w-5 h-5" />
+            </div>
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={{ fontSize: 13, fontWeight: 800, color: C.zinc900 }}>Venta registrada #1048</span>
+                <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 6px', borderRadius: 6, background: C.goldSoft, color: C.zinc900 }}>Bs. / USD</span>
+              </div>
+              <p style={{ fontSize: 11, color: '#64748B', marginTop: 2 }}>+$42.50 USD • Inventario actualizado al instante</p>
+            </div>
+          </div>
+        </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, background: 'rgba(255,255,255,0.95)', backdropFilter: 'blur(8px)', padding: '10px 16px', borderRadius: 16, boxShadow: '0 20px 35px -8px rgba(15,23,42,0.16), 0 0 0 1px rgba(226,232,240,0.85)', width: 'fit-content', marginTop: 16, position: 'relative', zIndex: 20 }} className="auth-float-card">
           <div style={{ width: 36, height: 36, borderRadius: 10, background: 'rgba(16,185,129,0.1)', color: '#059669', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
             <CheckCircle2 className="w-5 h-5" />
